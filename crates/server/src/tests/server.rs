@@ -407,7 +407,9 @@ fn await_ready_lines() {
             await_ready(child, timeout)
         };
         assert!(ready("echo ready; echo more", Duration::from_secs(1)).await.is_ok());
-        assert!(ready("echo nope", Duration::from_secs(1)).await.is_err(), "wrong line accepted");
+        assert_eq!(ready("echo nope", Duration::from_secs(1)).await, Err(r#"server: holder said "nope\n""#.into()));
+        assert_eq!(ready("printf nope", Duration::from_secs(1)).await, Err("server: holder exited before ready: EOF".into()));
+        assert!(ready("printf ready", Duration::from_secs(1)).await.is_ok(), "ready without a newline");
         assert!(ready("exit 1", Duration::from_secs(1)).await.is_err(), "early exit accepted");
         assert!(ready("sleep 10", Duration::from_millis(50)).await.is_err(), "timeout not reported");
     });
@@ -454,6 +456,7 @@ fn list_keeps_young_refused_socket() {
         // Refused is not gone: the client should retry, not conclude it ended.
         let r = c.call(wire::Request { session: id.clone(), stream: 1, ..req(wire::METHOD_ATTACH) }).await;
         assert_eq!(r.error, wire::ERR_UNAVAILABLE, "attach {r:?}");
+        assert_eq!(r.message, format!("dial unix {}: connect: connection refused", path.display()));
         let r = c.call(wire::Request { session: id.clone(), ..req(wire::METHOD_KILL) }).await;
         assert_eq!(r.error, wire::ERR_UNAVAILABLE, "kill {r:?}");
 
