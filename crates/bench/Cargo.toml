@@ -1,0 +1,31 @@
+[package]
+name = "osewa-bench"
+description = "The e2e benchmarks' helper: workloads, a rendering terminal driver, cold resumes, transfer targets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "osewa-bench"
+path = "src/main.rs"
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-ghostty.workspace = true
+osewa-auth.workspace = true
+osewa-client.workspace = true
+osewa-mirror.workspace = true
+osewa-flag.workspace = true
+base64.workspace = true
+libc.workspace = true
+httparse = "1"
+sha1 = "0.10"
+tokio = { version = "1", features = ["rt", "net", "io-util", "time", "macros", "sync"] }
+
+[dev-dependencies]
+osewa-holder.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -79,6 +79,9 @@ impl Drop for TempDir {
 struct Rig {
     server: Child,
     host: hosts::Host,
+    /// Config.carrier for every dial: "ws", "quic", or "" to race once
+    /// hosts.json knows the QUIC port.
+    carrier: &'static str,
     client_dir: PathBuf,
     run_dir: PathBuf,
     _dir: TempDir,
@@ -107,7 +110,7 @@ impl Rig {
         };
         hosts::save(&client_dir, host.clone()).unwrap();
         let server = Command::new(bin)
-            .args(["server", "--listen", &listen, "--name", tag, "--no-quic"])
+            .args(["server", "--listen", &listen, "--name", tag])
             .env("OSEWA_CONFIG_DIR", &server_dir)
             .env("OSEWA_RUN_DIR", &run_dir)
             .env_remove("OSEWA_HOLDER")
@@ -119,17 +122,21 @@ impl Rig {
             assert!(Instant::now() < deadline, "the server did not start");
             std::thread::sleep(Duration::from_millis(20));
         }
-        Rig { server, host, client_dir, run_dir, _dir: dir }
+        Rig { server, host, carrier: "ws", client_dir, run_dir, _dir: dir }
     }
 
     fn config(&self, client_id: &str) -> Config {
         let h = hosts::find(&self.client_dir, &self.host.name).unwrap();
-        h.config(&self.client_dir, client_id, "rust-test").unwrap()
+        let mut cfg = h.config(&self.client_dir, client_id, "rust-test").unwrap();
+        cfg.carrier = self.carrier.into();
+        cfg
     }
 
     fn dial(&self, client_id: &str) -> Conn {
         let c = run(Conn::dial(self.config(client_id))).unwrap();
         let w = run(c.welcome()).unwrap();
+        let want = if self.carrier.is_empty() { "quic" } else { self.carrier };
+        assert_eq!(c.carrier(), want, "carrier");
         assert!(w.features.iter().any(|f| f == wire::FEATURE_EXEC), "welcome {w:?}");
         c
     }
@@ -202,8 +209,20 @@ fn argv(a: &[&str]) -> Vec<String> {
 }
 
 /// Everything the Rust client does, against one server.
-fn client_against(bin: &Path, tag: &str) {
-    let rig = Rig::start(bin, tag);
+fn client_against(bin: &Path, tag: &str, carrier: &'static str) {
+    let mut rig = Rig::start(bin, tag);
+    if carrier != "ws" {
+        // The first connection learns the QUIC port from WELCOME, and
+        // hosts.json keeps it for the next ones.
+        let c = rig.dial("rust-probe");
+        let deadline = Instant::now() + WAIT;
+        while hosts::find(&rig.client_dir, &rig.host.name).unwrap().quic_port == 0 {
+            assert!(Instant::now() < deadline, "WELCOME's QUIC port not saved");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        run(c.close());
+    }
+    rig.carrier = carrier;
 
     // login's check of the saved host: a full handshake as this device.
     run(osewa_client::login::check_host(&rig.client_dir, &rig.host, Duration::from_secs(5))).unwrap();
@@ -318,13 +337,36 @@ fn client_against(bin: &Path, tag: &str) {
 
 #[test]
 fn rust_client_against_rust_server() {
-    client_against(Path::new(RUST_OSEWA), "rs");
+    client_against(Path::new(RUST_OSEWA), "rs", "ws");
+}
+
+#[test]
+fn rust_client_against_rust_server_quic() {
+    client_against(Path::new(RUST_OSEWA), "rsq", "quic");
+}
+
+/// No carrier asked for and the port known: QUIC wins the race.
+#[test]
+fn rust_client_against_rust_server_race() {
+    client_against(Path::new(RUST_OSEWA), "rsr", "");
 }
 
 #[test]
 fn rust_client_against_go_server() {
     let Some(go) = go_osewa() else { return };
-    client_against(go, "go");
+    client_against(go, "go", "ws");
+}
+
+#[test]
+fn rust_client_against_go_server_quic() {
+    let Some(go) = go_osewa() else { return };
+    client_against(go, "goq", "quic");
+}
+
+#[test]
+fn rust_client_against_go_server_race() {
+    let Some(go) = go_osewa() else { return };
+    client_against(go, "gor", "");
 }
 
 /// A Link survives its connection dropping: the session is resumed by

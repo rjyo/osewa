@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use osewa_carrier::ws;
+use osewa_carrier::{quic, ws};
 use osewa_wire as wire;
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -52,28 +52,31 @@ pub(crate) type TcpDial = Arc<dyn Fn(String) -> LocalBoxFuture<io::Result<Box<dy
 
 type WsConn = ws::Conn<TlsStream<Box<dyn Io>>>;
 
-/// What a connection runs on. QUIC joins as a variant once its carrier is
-/// in osewa-carrier.
+/// What a connection runs on.
 pub(crate) enum Transport {
     Ws(WsConn),
+    Quic(quic::Conn),
 }
 
 impl Transport {
     pub async fn read(&self) -> Result<Vec<u8>, String> {
         match self {
             Transport::Ws(c) => c.read().await.map_err(|e| e.to_string()),
+            Transport::Quic(c) => c.read().await.map_err(|e| e.to_string()),
         }
     }
 
     pub async fn write(&self, b: &[u8]) -> Result<(), String> {
         match self {
             Transport::Ws(c) => c.write(b).await.map_err(|e| e.to_string()),
+            Transport::Quic(c) => c.write(b).await.map_err(|e| e.to_string()),
         }
     }
 
     pub async fn ping(&self) -> Result<(), String> {
         match self {
             Transport::Ws(c) => c.ping().await.map_err(|e| e.to_string()),
+            Transport::Quic(c) => c.ping().await.map_err(|e| e.to_string()),
         }
     }
 
@@ -82,6 +85,7 @@ impl Transport {
             Transport::Ws(c) => {
                 let _ = c.close(code, reason).await;
             }
+            Transport::Quic(c) => c.close(code, reason),
         }
     }
 
@@ -90,6 +94,7 @@ impl Transport {
             Transport::Ws(c) => {
                 let _ = c.close_now();
             }
+            Transport::Quic(c) => c.close_now(),
         }
     }
 }
@@ -169,11 +174,13 @@ pub(crate) async fn dial(cfg: &Config) -> Result<Dialed> {
     Ok(Dialed { transport, carrier: "ws", stats: Some(stats) })
 }
 
-/// Connects over QUIC. The carrier is being built (docs/QUIC.md); until it
-/// lands this fails at once, which makes a race start the WebSocket
-/// without waiting.
-async fn dial_quic(addr: &str, _cfg: &Config) -> Result<Transport> {
-    Err(Error::Other(format!("osewa: QUIC to {addr}: this build has no QUIC carrier")))
+/// Connects over QUIC (docs/QUIC.md). The dial retries a silent path
+/// without end: a race drops it once the WebSocket wins, and a QUIC-only
+/// caller bounds it with its own timeout.
+async fn dial_quic(addr: &str, cfg: &Config) -> Result<Transport> {
+    let tls = cfg.tls.clone().ok_or_else(|| Error::Other("osewa: Config.tls is required".into()))?;
+    let c = quic::dial(addr, Arc::unwrap_or_clone(tls), quic::Congestion::from_env()).await?;
+    Ok(Transport::Quic(c))
 }
 
 /// Dials QUIC and, after QUIC_RACE_AFTER or at once if QUIC fails, the

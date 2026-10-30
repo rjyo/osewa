@@ -88,7 +88,11 @@ pub(crate) async fn serve(listen: String, mut cfg: Config, stop: impl Future<Out
     cfg.devices = Some(osewa_auth::Devices::new(osewa_auth::devices_path()));
     cfg.run_dir = osewa_paths::run_dir();
     let s: Rc<Server> = Server::new(cfg)?;
-    let ln = bind(&listen).await.map_err(|e| format!("listen tcp {listen}: {e}"))?;
+    // Worded as Go's net error, which `osewa server --daemon` relays.
+    let ln = bind(&listen).await.map_err(|e| {
+        let op = if e.raw_os_error().is_some() { "bind: " } else { "" };
+        format!("listen tcp {listen}: {op}{}", osewa_execproc::go_error(&e))
+    })?;
     let mut quic = None;
     if !s.config().no_quic {
         // QUIC on the UDP port of the same number (docs/QUIC.md). A port
