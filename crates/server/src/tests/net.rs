@@ -300,3 +300,58 @@ fn no_compress_flag() {
         assert!(!negotiated_by(&["--no-compress"]).await, "--no-compress still compresses");
     });
 }
+
+// On stop the listener closes at once, while close still waits for exec
+// processes.
+#[test]
+fn stop_refuses_new_connections() {
+    run(async {
+        let e = Env::with(|c| c.tune.exec_grace = Duration::from_secs(2));
+        e.srv.exec_started(); // an exec that won't end
+        let ln = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ln.local_addr().unwrap();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let srv = e.srv.clone();
+        let serving = tokio::task::spawn_local(async move {
+            cli::serve_until(&srv, ln, async {
+                let _ = stop_rx.await;
+            })
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        stop_tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!serving.is_finished(), "close did not wait for the exec");
+        assert!(tokio::net::TcpStream::connect(addr).await.is_err(), "listener still open while closing");
+        serving.await.unwrap().unwrap();
+        e.srv.exec_done();
+    });
+}
+
+// The TLS handshake and the upgrade share one deadline: a client that
+// finishes TLS and never sends its request is dropped when it passes.
+#[test]
+fn handshake_and_upgrade_share_a_deadline() {
+    run(async {
+        let mut e = Env::with(|c| c.tune.handshake_timeout = Duration::from_millis(300));
+        e.listen().await;
+        let (mut s, _) = e.tls(&e.device).await.unwrap();
+        let mut b = Vec::new();
+        let r = tokio::time::timeout(Duration::from_secs(3), s.read_to_end(&mut b)).await;
+        assert!(r.is_ok(), "connection still open past the handshake deadline");
+    });
+}
+
+// HELLO is decoded as Go decodes JSON: invalid UTF-8 becomes U+FFFD.
+#[test]
+fn hello_with_invalid_utf8() {
+    run(async {
+        let e = Env::new();
+        let mut c = e.dial();
+        let mut hello = br#"{"version":0,"client_id":"phone","name":"bad "#.to_vec();
+        hello.extend_from_slice(&[0xff, 0xfe]);
+        hello.extend_from_slice(br#""}"#);
+        c.send(wire::Frame::new(wire::TYPE_HELLO, 0, hello)).await;
+        assert_eq!(c.next().await.ty, wire::TYPE_WELCOME);
+    });
+}
