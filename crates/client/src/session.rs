@@ -468,8 +468,8 @@ impl SessionInner {
             st.sent.push_back(n);
             st.unacked += n;
             st.sent_at.insert(seq, Instant::now());
-            // A pong shows the link carries what was typed; if none comes,
-            // the connection turns suspect within about a second.
+            // An INPUT_ACK shows the link carries what was typed; if none
+            // comes, the connection turns suspect within about a second.
             c.probe_now();
         }
     }
@@ -697,15 +697,16 @@ impl SessionInner {
         }
     }
 
-    /// Sends an ACK once enough is unacked, and otherwise arms the timer
-    /// that sends it later.
+    /// Sends an ACK once enough is unacked; otherwise it rides with the
+    /// CREDIT due for these bytes (credit_sent), in the same write and
+    /// without a timer of its own, or goes when its timer fires.
     fn ack(&self, st: &mut State, c: &Conn) {
         if st.pos - st.acked >= ACK_BYTES {
             st.acked = st.pos;
             let _ = c.send(wire::ack(st.stream, st.gen, st.pos));
             return;
         }
-        if st.ack_timer.is_none() {
+        if st.ack_timer.is_none() && !c.credit_due(st.stream) {
             let s = self.arc();
             st.ack_timer = Some(rt::spawn(async move {
                 tokio::time::sleep(ACK_DELAY).await;
@@ -779,6 +780,22 @@ impl Stream for SessionInner {
 
     fn credits_on_receipt(&self) -> bool {
         !self.manual_credit
+    }
+
+    fn unacked_since(&self, after: Instant) -> Option<Instant> {
+        self.lock().sent_at.values().copied().filter(|&t| t > after).min()
+    }
+
+    fn credit_sent(&self, c: &Conn) {
+        let mut st = self.lock();
+        if st.conn.as_ref() != Some(c) || st.pos == st.acked {
+            return;
+        }
+        if let Some(t) = st.ack_timer.take() {
+            t.abort();
+        }
+        st.acked = st.pos;
+        let _ = c.send(wire::ack(st.stream, st.gen, st.pos));
     }
 }
 

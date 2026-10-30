@@ -24,6 +24,39 @@ fn credit_covers_received_bytes() {
     });
 }
 
+/// An echo's ACK goes out with its CREDIT, in the same write, rather than
+/// on a timer of its own ACK_DELAY later: one wakeup and write fewer per
+/// keystroke on both ends.
+#[test]
+fn ack_rides_with_credit() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let s = attach(&f.dial("a"), &id, Default::default());
+    s.wait_text("");
+    for i in 0..3 {
+        let acked = f.with(&id, |fs| fs.acked);
+        f.output(&id, "x");
+        let credited = || {
+            let (sent, credited) = f.credited(&id);
+            sent == credited
+        };
+        let start = Instant::now();
+        while credited() {
+            assert!(start.elapsed() < WAIT, "echo {i} never sent");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        while !credited() {
+            assert!(start.elapsed() < WAIT, "echo {i} never credited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at = Instant::now();
+        while f.with(&id, |fs| fs.acked) == acked {
+            assert!(at.elapsed() < CREDIT_DELAY / 5, "echo {i}: ACK {:?} after its CREDIT", at.elapsed());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
 /// Credit is sent on receipt: an apply that is stuck (here a blocked
 /// on_output) must not hold back the window.
 #[test]

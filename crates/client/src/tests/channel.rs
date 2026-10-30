@@ -383,7 +383,8 @@ fn exec_odd_end() {
     assert!(Exec::from_channel(ch).wait_now().is_err(), "exited without a code");
 }
 
-/// Keystrokes and replies go out before queued uploads.
+/// Keystrokes and replies go out before queued uploads, together; uploads
+/// one frame at a time.
 #[test]
 fn writer_puts_data_last() {
     let mut q = crate::conn::WriteQ::default();
@@ -396,8 +397,16 @@ fn writer_puts_data_last() {
     ] {
         q.push(&f);
     }
-    let order: Vec<u8> = std::iter::from_fn(|| q.pop()).map(|b| b[0]).collect();
-    assert_eq!(order, [wire::TYPE_INPUT, wire::TYPE_CREDIT, wire::TYPE_DATA, wire::TYPE_EOF, wire::TYPE_DATA]);
+    let batches: Vec<Vec<u8>> = std::iter::from_fn(|| {
+        let mut b = Vec::new();
+        q.pop_batch(&mut b);
+        (!b.is_empty()).then(|| b.iter().map(|f| f[0]).collect())
+    })
+    .collect();
+    assert_eq!(
+        batches,
+        [vec![wire::TYPE_INPUT, wire::TYPE_CREDIT], vec![wire::TYPE_DATA], vec![wire::TYPE_EOF], vec![wire::TYPE_DATA]]
+    );
 }
 
 /// The server keeps uncredited data within an in-flight window as small as

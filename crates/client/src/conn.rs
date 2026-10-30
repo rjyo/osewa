@@ -4,6 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,9 @@ pub(crate) const CREDIT_DELAY: Duration = Duration::from_millis(50);
 /// so a client that can't keep up makes the holder queue (and eventually
 /// resnapshot) instead of us buffering without end.
 const APPLY_MAX: usize = 16 << 20;
+
+/// Bounds the frames the writer sends in one write.
+const BATCH_BYTES: usize = 64 << 10;
 
 /// Paces keepalive pings. A half-open connection (laptop sleep, network
 /// switch, NAT timeout) never reports an error, so two pings without a pong
@@ -82,8 +86,10 @@ pub(crate) struct Inner {
     /// The runtime tasks stop.
     cancel: Latch,
     suspect: Latch,
-    /// Asks keepalive for a ping now.
+    /// Asks keepalive to watch for an answer to input just sent.
     probe: Notify,
+    /// Pings sent, which the tests bound.
+    pub(crate) pings: AtomicU64,
     close: mpsc::UnboundedSender<CloseCmd>,
 
     // Outgoing frames go through a queue drained by one writer, so neither
@@ -130,10 +136,19 @@ impl WriteQ {
         }
     }
 
-    /// The next frame to write: anything before channel DATA and EOF
-    /// (PROTOCOL.md "In flight").
-    pub fn pop(&mut self) -> Option<Vec<u8>> {
-        self.q.pop_front().or_else(|| self.bulk.pop_front())
+    /// The next frames to write together: anything before channel DATA and
+    /// EOF (PROTOCOL.md "In flight"), up to BATCH_BYTES; else one of those,
+    /// which are large and must not hold back a keystroke queued after.
+    pub fn pop_batch(&mut self, out: &mut Vec<Vec<u8>>) {
+        let mut n = 0;
+        while n < BATCH_BYTES {
+            let Some(b) = self.q.pop_front() else { break };
+            n += b.len();
+            out.push(b);
+        }
+        if out.is_empty() {
+            out.extend(self.bulk.pop_front());
+        }
     }
 }
 
@@ -185,6 +200,13 @@ pub(crate) trait Stream: Send + Sync {
     /// Credited on receipt: a session without manual credit. Channels are
     /// credited as their reader consumes.
     fn credits_on_receipt(&self) -> bool;
+    /// When the oldest input sent after `after` and not yet acked went out.
+    fn unacked_since(&self, _after: Instant) -> Option<Instant> {
+        None
+    }
+    /// A CREDIT for the stream was just queued after its delay, for what is
+    /// due to go with it.
+    fn credit_sent(&self, _c: &Conn) {}
 }
 
 impl Conn {
@@ -238,6 +260,7 @@ impl Conn {
             cancel: Latch::default(),
             suspect: Latch::default(),
             probe: Notify::new(),
+            pings: AtomicU64::new(0),
             close: close_tx,
             wq: Mutex::default(),
             wake_writer: Notify::new(),
@@ -567,14 +590,28 @@ impl Conn {
 
     fn flush_credit(&self, stream: u32) {
         let backlogged = self.backlogged();
-        let mut st = self.0.st.lock().unwrap();
-        let Some(cr) = st.credits.get_mut(&stream) else { return };
-        cr.timer = None;
-        if !backlogged {
-            self.send_credit(stream, cr);
-            return;
+        let s = {
+            let mut st = self.0.st.lock().unwrap();
+            let Some(cr) = st.credits.get_mut(&stream) else { return };
+            cr.timer = None;
+            if backlogged {
+                st.held = true;
+            } else {
+                self.send_credit(stream, cr);
+            }
+            st.streams.get(&stream).cloned()
+        };
+        // Outside the lock: the stream takes its own, and holds it while
+        // asking credit_due.
+        if let Some(s) = s {
+            s.credit_sent(self);
         }
-        st.held = true;
+    }
+
+    /// Whether a CREDIT for stream waits on its delay, so what is due to go
+    /// with it (an ACK) can wait for it.
+    pub(crate) fn credit_due(&self, stream: u32) -> bool {
+        self.0.st.lock().unwrap().credits.get(&stream).is_some_and(|cr| cr.timer.is_some())
     }
 
     /// Sends credit held back while the apply queue was full.
@@ -612,30 +649,35 @@ impl Conn {
         Ok(())
     }
 
-    /// The next frame to write; None once closed.
-    fn next_frame(&self) -> Option<Option<Vec<u8>>> {
+    /// The next frames to write into batch; false once closed.
+    fn next_frames(&self, batch: &mut Vec<Vec<u8>>) -> bool {
         let mut wq = self.0.wq.lock().unwrap();
         if wq.closed {
-            return None;
+            return false;
         }
-        Some(wq.pop())
+        wq.pop_batch(batch);
+        true
     }
 
+    /// Writes what is queued. Frames queued together (a CREDIT and the ACK
+    /// riding with it, inputs typed while a write was out) go in one write:
+    /// one TLS record and one syscall, here and at the server.
     async fn write_loop(self, t: Rc<Transport>) {
+        let mut batch = Vec::new();
         loop {
-            let b = match self.next_frame() {
-                None => return,
-                Some(Some(b)) => b,
-                Some(None) => {
-                    tokio::select! {
-                        _ = self.0.cancel.wait() => return,
-                        _ = self.0.wake_writer.notified() => continue,
-                    }
+            batch.clear();
+            if !self.next_frames(&mut batch) {
+                return;
+            }
+            if batch.is_empty() {
+                tokio::select! {
+                    _ = self.0.cancel.wait() => return,
+                    _ = self.0.wake_writer.notified() => continue,
                 }
-            };
+            }
             let r = tokio::select! {
                 _ = self.0.cancel.wait() => return,
-                r = t.write(&b) => r,
+                r = t.write_all(&batch) => r,
             };
             if let Err(e) = r {
                 self.fail(Error::closed(e));
@@ -643,38 +685,58 @@ impl Conn {
                 return;
             }
             if let Some(tr) = &self.0.tr {
-                if b.first() == Some(&wire::TYPE_INPUT) {
-                    tr.input_sent(&b);
+                for b in &batch {
+                    if b.first() == Some(&wire::TYPE_INPUT) {
+                        tr.input_sent(b);
+                    }
                 }
             }
         }
     }
 
-    /// Pings every interval, and at once when asked to probe (after input
-    /// is sent). A ping without a pong for max(3 round trips, 1 s) makes
-    /// the connection suspect, so the session can resume on a fresh one
-    /// while this one may still recover; two pings without one kill it.
+    /// Pings every interval, and when typed input goes unacked (probe_now).
+    /// An INPUT_ACK shows the link carried what was typed, so typing costs
+    /// no ping of its own; only input still unacked at half the suspect
+    /// wait (lost, or parked by the holder) gets one. No INPUT_ACK or pong
+    /// for max(3 round trips, 1 s) after the input, or no pong that long
+    /// after a regular ping, makes the connection suspect, so the session
+    /// can resume on a fresh one while this one may still recover; two
+    /// pings without a pong kill it.
     async fn keepalive(self, t: Rc<Transport>) {
         let ping = self.0.ping;
         let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + ping, ping);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut missed = 0;
         let mut rtt = Duration::ZERO;
+        // Input sent before the last answered ping reached the server: the
+        // main stream is ordered.
+        let mut vouched = Instant::now();
         loop {
-            tokio::select! {
+            let probe = tokio::select! {
                 _ = self.0.cancel.wait() => return,
-                _ = tick.tick() => {}
-                _ = self.0.probe.notified() => {}
+                _ = tick.tick() => false,
+                _ = self.0.probe.notified() => true,
+            };
+            let wait = (rtt * 3).max(SUSPECT_MIN);
+            let mut late = Instant::now() + wait;
+            if probe {
+                let Some(sent) = self.unacked(vouched, wait / 2).await else { return };
+                let Some(sent) = sent else { continue };
+                late = sent + wait;
             }
             let start = Instant::now();
+            self.0.pings.fetch_add(1, Ordering::Relaxed);
             let pong = tokio::time::timeout(ping, t.ping());
             tokio::pin!(pong);
-            let late = tokio::time::sleep((rtt * 3).max(SUSPECT_MIN));
             let res = tokio::select! {
                 _ = self.0.cancel.wait() => return,
                 r = &mut pong => r,
-                _ = late => {
-                    self.mark_suspect();
+                _ = tokio::time::sleep_until(late.into()) => {
+                    // An INPUT_ACK that came in meanwhile answers the input,
+                    // whatever keeps the pong.
+                    if !probe || self.oldest_unacked(vouched).is_some_and(|s| s + wait <= Instant::now()) {
+                        self.mark_suspect();
+                    }
                     tokio::select! {
                         _ = self.0.cancel.wait() => return,
                         r = &mut pong => r,
@@ -687,6 +749,7 @@ impl Conn {
             match res {
                 Ok(Ok(())) => {
                     missed = 0;
+                    vouched = vouched.max(start);
                     let d = start.elapsed();
                     rtt = if rtt.is_zero() {
                         d
@@ -707,7 +770,29 @@ impl Conn {
         }
     }
 
-    /// Asks for a ping soon, unless one is already asked for.
+    /// When the oldest input sent after `after` and still unacked went out.
+    fn oldest_unacked(&self, after: Instant) -> Option<Instant> {
+        let streams: Vec<_> = self.0.st.lock().unwrap().streams.values().cloned().collect();
+        streams.iter().filter_map(|s| s.unacked_since(after)).min()
+    }
+
+    /// Waits until input sent after `after` has been unacked for grace.
+    /// Some(Some(sent)) with when that input went out, Some(None) once all
+    /// of it is acked; None once cancelled.
+    async fn unacked(&self, after: Instant, grace: Duration) -> Option<Option<Instant>> {
+        loop {
+            let Some(sent) = self.oldest_unacked(after) else { return Some(None) };
+            if Instant::now() >= sent + grace {
+                return Some(Some(sent));
+            }
+            tokio::select! {
+                _ = self.0.cancel.wait() => return None,
+                _ = tokio::time::sleep_until((sent + grace).into()) => {}
+            }
+        }
+    }
+
+    /// Has keepalive watch input just sent for its INPUT_ACK.
     pub(crate) fn probe_now(&self) {
         self.0.probe.notify_one();
     }
