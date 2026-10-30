@@ -511,12 +511,18 @@ async fn read_pty(s: &Weak<RefCell<Session>>, master: &AsyncFd<OwnedFd>) {
         match r {
             Ok(Ok(0)) | Ok(Err(_)) => return,
             Ok(Ok(n)) => {
-                let Some(s) = s.upgrade() else { return };
-                let mut s = s.borrow_mut();
-                if s.core.done {
-                    return;
+                {
+                    let Some(s) = s.upgrade() else { return };
+                    let mut s = s.borrow_mut();
+                    if s.core.done {
+                        return;
+                    }
+                    s.handle_output(&buf[..n]);
                 }
-                s.handle_output(&buf[..n]);
+                // Go's loop picks among ready events at random; a PTY that
+                // stays readable under a flood must not starve a keystroke
+                // arriving on a connection, the writers or the echo timers.
+                tokio::task::yield_now().await;
             }
             Err(_) => continue,
         }
