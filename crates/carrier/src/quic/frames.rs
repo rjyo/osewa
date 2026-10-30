@@ -7,7 +7,7 @@ use std::io;
 
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
 use osewa_wire as wire;
-use quinn::{RecvStream, SendStream};
+use quinn::{Connection, RecvStream, SendStream};
 
 /// What a stream yields.
 #[derive(Debug, PartialEq, Eq)]
@@ -148,22 +148,41 @@ pub(crate) fn conn_err(c: quinn::ConnectionError) -> io::Error {
     io::Error::new(kind, c)
 }
 
+/// What quinn may hold written but not yet sent, connection-wide, past
+/// what the congestion window lets go at once: TCP_NOTSENT_LOWAT's 16 KiB,
+/// as the WebSocket's socket has. quic-go's writes return with about a
+/// packet unsent; quinn's would return with up to its whole send window
+/// (all of it unacknowledged data) buffered, where neither the server's
+/// send queue nor its priorities can reach it.
+pub(crate) const LOWAT: u64 = 16 << 10;
+
+/// Bounds quinn's buffer to what is in flight or may go now plus LOWAT.
+/// quinn counts written-but-unacknowledged bytes against its send window
+/// and exposes neither bytes in flight nor a stream's unsent bytes, so the
+/// window follows the congestion window instead: in flight is at most
+/// cwnd, so unsent is at most LOWAT more than cwnd lets out at once. It is
+/// refreshed before every write to quinn, so it follows cwnd as acks come.
+pub(crate) fn bound_unsent(qc: &Connection) {
+    qc.set_send_window(qc.stats().path.cwnd + LOWAT);
+}
+
 /// One direction of a stream: frames appended to a buffer that writes
 /// drain, so a write cancelled midway leaves the rest for the next and
 /// the stream never carries half a frame followed by another.
 pub(crate) struct Writer {
     pub s: SendStream,
+    qc: Connection,
     buf: Vec<u8>,
     off: usize,
     deflate: Option<Compress>,
 }
 
 impl Writer {
-    pub fn new(s: SendStream, deflate: bool) -> Writer {
+    pub fn new(qc: &Connection, s: SendStream, deflate: bool) -> Writer {
         // Level 2, as the WebSocket's deflater (ws/deflate.rs): Go's
         // BestSpeed ratio at about its speed.
         let deflate = deflate.then(|| Compress::new(Compression::new(2), false));
-        Writer { s, buf: Vec::new(), off: 0, deflate }
+        Writer { s, qc: qc.clone(), buf: Vec::new(), off: 0, deflate }
     }
 
     /// Writes frame (empty: a ping) and whatever an earlier cancelled write
@@ -190,6 +209,7 @@ impl Writer {
 
     pub async fn flush(&mut self) -> io::Result<()> {
         while self.off < self.buf.len() {
+            bound_unsent(&self.qc);
             let n = self.s.write(&self.buf[self.off..]).await.map_err(write_err)?;
             self.off += n;
         }

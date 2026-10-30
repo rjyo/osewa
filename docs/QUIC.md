@@ -334,18 +334,54 @@ every controller's sends over the RTT, with no setting.
 | datagrams | off | off |
 | initial RTT | 100 ms | 100 ms (quinn's default is 333) |
 | first congestion window | 32 packets | 32 x 1200 bytes (quinn's default is 10) |
-| send buffer | unbounded | 16 MiB per connection, the WebSocket queue's hard cap |
+| written but unsent | about a packet per stream (a write returns once the rest fits in one) | up to 16 KiB past what cwnd lets out, per connection (below) |
 | UDP socket buffers | 7 MiB asked for | 7 MiB asked for (and forced on Linux where allowed) |
+| dial address | first IPv4 unless an IPv6 literal (`net.ResolveUDPAddr`) | the same |
+
+**What quinn holds unsent.** A write to quinn returns once its bytes are
+in quinn's buffer, which by default may hold megabytes nobody has sent
+yet. Whatever sits there is out of reach of the server's send queue,
+whose whole point is that control frames (INPUT_ACK, RESPONSE, GRANT) go
+ahead of output and that catch-up can drop output that hasn't gone. Over
+TCP, `TCP_NOTSENT_LOWAT` 16 KiB keeps that backlog in the queue; quic-go's
+writes return only with about a packet unsent. quinn exposes neither a
+stream's unsent bytes nor bytes in flight; it bounds what is written but
+unacknowledged by its send window. So before every write to quinn the
+carrier sets that window to cwnd + 16 KiB: in flight is at most cwnd, so
+at most 16 KiB more than cwnd lets out at once waits unsent, across all
+streams (`frames::bound_unsent`). The window follows cwnd as acks come,
+so it doesn't cap a download: 66 MB over a 120 ms relay took 2.5 s either
+way (`far_link_throughput`, ignored; 26 MB/s against 26-28 unbounded).
+
+**Order across streams.** Frames on different streams have no order on
+the wire; the protocol needs one place where it matters: a channel's
+STREAM_END (on its lane, after its data) comes before the stream.close
+RESPONSE that follows it (main stream). A lane's last frame is written
+with the highest priority (2, above the main stream's 1, lanes 0), so
+quinn sends all of that lane's data before what the main stream is given
+afterwards. As in Go this holds for first transmissions; a lost packet's
+retransmission can still come after. A reader that merges the streams
+(ours and Go's: a task or goroutine per stream feeding one queue) can
+also reorder what arrived close together, so a client must not take a
+stream.close RESPONSE as the end of the channel's data.
 
 **Where it differs from Go, on purpose:**
-- The main stream has a higher send priority than lanes, so an echo
-  queued behind a download in quinn's buffers goes first; quic-go
-  round-robins. Lanes keep their own write locks, so a lane blocked on
-  flow control holds up neither the main stream nor another lane.
+- The main stream has a higher send priority than lanes, so an echo goes
+  ahead of the download data quinn holds unsent (at most the 16 KiB
+  above, 130 ms at 1 Mbit/s); quic-go round-robins. Ordering comes first:
+  an ending lane outranks the main stream (above).
+- Each lane has its own write lock, so the carrier never makes a write to
+  one stream wait for another. The server doesn't use that: its write
+  loop (`client.rs` `write_loop`) awaits each frame in turn, so a write
+  blocked on a lane (quinn's send window, the peer's flow control) holds
+  up everything queued behind it, the main stream's frames included, as a
+  blocked socket does on the WebSocket. Credit keeps lanes from blocking
+  on flow control in practice.
 - A dial gives up at once when the server answers no (a refused handshake,
   a closed connection), where Go keeps starting attempts until its
   deadline; on a silent path both start a new attempt every 500 ms, at
-  most four in flight.
+  most four in flight. A dial its caller drops (a timeout, a race the
+  WebSocket won) aborts its attempts at once, as Go's deferred cancel does.
 - quinn holds a handshake until the server takes the connection, so the
   server accepts at once and bounds the wait for the main stream to 10 s,
   as Go does.

@@ -109,9 +109,9 @@ pub fn transport(cc: Congestion) -> TransportConfig {
         // 8 MiB per stream, 64 MiB per connection.
         .stream_receive_window(VarInt::from_u32(8 << 20))
         .receive_window(VarInt::from_u32(64 << 20))
-        // What we buffer unacknowledged across streams: the WebSocket send
-        // queue's hard cap.
-        .send_window(16 << 20)
+        // Written but unacknowledged, across streams; each write moves it
+        // with the congestion window (frames::bound_unsent).
+        .send_window(INITIAL_WINDOW + frames::LOWAT)
         .max_concurrent_uni_streams(VarInt::from_u32(4096))
         .max_concurrent_bidi_streams(VarInt::from_u32(100))
         // quic-go's first RTT guess, so a lost first packet is resent as
@@ -221,58 +221,56 @@ const RACE_MAX: usize = 4;
 /// a silent path; bound it with a timeout. The main stream reaches the
 /// server with its first frame (HELLO).
 pub async fn dial(addr: &str, tls: rustls::ClientConfig, cc: Congestion) -> io::Result<Conn> {
-    let target = tokio::net::lookup_host(addr)
-        .await?
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("quic: no address for {addr}")))?;
     let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h).trim_start_matches('[').trim_end_matches(']');
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host(addr).await?.collect();
+    let target = pick(host, &addrs)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("quic: no address for {addr}")))?;
     // The pin, not the name, authenticates the server; any valid name does.
     let name = if rustls::pki_types::ServerName::try_from(host).is_ok() { host } else { "osewa" };
     let bind: SocketAddr = if target.is_ipv6() { "[::]:0".parse().unwrap() } else { "0.0.0.0:0".parse().unwrap() };
     let mut ep = endpoint(UdpSocket::bind(bind)?, None)?;
     ep.set_default_client_config(client_config(tls, cc)?);
 
-    let (tx, mut rx) = mpsc::channel(RACE_MAX);
-    let mut attempts = Vec::new();
-    let start = |attempts: &mut Vec<tokio::task::JoinHandle<()>>| -> io::Result<()> {
+    // Dropping the set aborts every attempt still in it, so a dial its
+    // caller gave up on (a timeout, a race the WebSocket won) stops
+    // sending at once, as Go's deferred cancel does.
+    let mut attempts = tokio::task::JoinSet::new();
+    let start = |attempts: &mut tokio::task::JoinSet<_>| -> io::Result<()> {
         let connecting = ep.connect(target, name).map_err(io::Error::other)?;
-        let tx = tx.clone();
-        attempts.push(tokio::spawn(async move {
-            let _ = tx.send(connecting.await).await;
-        }));
+        attempts.spawn(connecting);
         Ok(())
     };
     start(&mut attempts)?;
-    let mut in_flight = 1;
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + RACE_AFTER, RACE_AFTER);
     let qc = loop {
         tokio::select! {
-            r = rx.recv() => {
-                in_flight -= 1;
-                match r.expect("a sender is held") {
-                    Ok(qc) => break qc,
-                    // The peer answered: another attempt meets the same
-                    // answer.
-                    Err(e) if refused(&e) => {
-                        attempts.iter().for_each(|a| a.abort());
-                        return Err(conn_err(e));
-                    }
-                    Err(_) => {}
-                }
-            }
+            Some(r) = attempts.join_next() => match r.map_err(io::Error::other)? {
+                Ok(qc) => break qc,
+                // The peer answered: another attempt meets the same answer.
+                Err(e) if refused(&e) => return Err(conn_err(e)),
+                Err(_) => {}
+            },
             _ = tick.tick() => {
-                if in_flight < RACE_MAX {
+                if attempts.len() < RACE_MAX {
                     start(&mut attempts)?;
-                    in_flight += 1;
                 }
             }
         }
     };
-    // The losers are dropped, which closes any that connected meanwhile.
-    attempts.iter().for_each(|a| a.abort());
-    drop(rx);
+    // The losers go with the set, closing any that connected meanwhile.
+    drop(attempts);
     let (send, recv) = qc.open_bi().await.map_err(conn_err)?;
     Ok(Conn::new(qc, send, recv, false))
+}
+
+/// The address to dial among host's, as Go's net.ResolveUDPAddr("udp")
+/// picks it for quic-go: an IPv6 literal's own, else the first IPv4
+/// address, else the first.
+fn pick(host: &str, addrs: &[SocketAddr]) -> Option<SocketAddr> {
+    if host.contains(':') {
+        return addrs.iter().find(|a| a.is_ipv6()).copied();
+    }
+    addrs.iter().find(|a| a.is_ipv4()).or(addrs.first()).copied()
 }
 
 /// Whether a dial failed because the server answered no.
@@ -335,6 +333,10 @@ struct Out {
     lanes: StdMutex<HashMap<u32, Arc<Mutex<Option<Writer>>>>>,
 }
 
+/// quinn sends a higher priority stream's data first. Lanes are 0.
+const PRIORITY_MAIN: i32 = 1;
+const PRIORITY_ENDING: i32 = 2;
+
 /// Frames read but not yet taken by read; past it the readers wait, and
 /// QUIC's flow control pushes back on the peer.
 const INBOUND: usize = 64;
@@ -342,12 +344,13 @@ const INBOUND: usize = 64;
 impl Conn {
     fn new(qc: Connection, send: quinn::SendStream, recv: quinn::RecvStream, server: bool) -> Conn {
         let deflate = alpn(&qc).as_deref() == Some(ALPN_DEFLATE);
-        // The main stream goes ahead of lanes: an echo never waits behind a
-        // download quinn has queued.
-        let _ = send.set_priority(1);
+        // The main stream goes ahead of lanes: an echo waits behind none of
+        // the download data quinn holds unsent (frames::LOWAT of it, 130 ms
+        // at 1 Mbit/s).
+        let _ = send.set_priority(PRIORITY_MAIN);
         let out = Arc::new(Out {
             qc: qc.clone(),
-            main: Mutex::new(Writer::new(send, deflate && server)),
+            main: Mutex::new(Writer::new(&qc, send, deflate && server)),
             lanes: StdMutex::new(HashMap::new()),
         });
         let (tx, rx) = mpsc::channel(INBOUND);
@@ -455,9 +458,15 @@ impl Out {
         let mut w = lane.lock().await;
         if w.is_none() {
             let s = self.qc.open_uni().await.map_err(conn_err)?;
-            *w = Some(Writer::new(s, false));
+            *w = Some(Writer::new(&self.qc, s, false));
         }
         let lw = w.as_mut().unwrap();
+        if last {
+            // A lane's end goes out ahead of what the main stream is given
+            // after it: a stream.close RESPONSE follows its STREAM_END, and
+            // must not overtake it or the channel's last data.
+            let _ = lw.s.set_priority(PRIORITY_ENDING);
+        }
         lw.write(frame).await?;
         if last {
             let _ = lw.s.finish();
