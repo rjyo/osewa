@@ -306,3 +306,18 @@ fn stale_socket_replaced_live_refused() {
     let err = crate::run(cfg2, || {}, false).unwrap_err();
     assert!(err.contains("already served"), "{err}");
 }
+
+// A holder started with signals ignored (nohup, a background job) must
+// still give its child default dispositions: an ignored signal survives
+// exec, and the child would then shrug off Ctrl-C or session.kill.
+#[test]
+fn child_gets_default_signals() {
+    let old = unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+    let h = start(Config { exit_retention: Duration::from_secs(5), ..cfg(sh("sleep 0.2; kill -INT $$; echo alive")) });
+    unsafe { libc::signal(libc::SIGINT, old) };
+    let mut c = h.dial("dev1");
+    c.attach(wire::Request::default());
+    c.wait_for("end", |c| c.ended.is_some());
+    assert_eq!(c.ended.as_ref().unwrap().exit_code, Some(130), "{}", c.text());
+    assert!(!c.text().contains("alive"));
+}

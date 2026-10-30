@@ -326,7 +326,7 @@ impl EventMsg {
 
 /// Encodes an event body.
 pub fn marshal_event(e: &EventMsg) -> Vec<u8> {
-    serde_json::to_vec(e).expect("wire: marshal event")
+    crate::marshal(e)
 }
 
 /// Go's []byte in JSON: standard base64 with padding, null for nil.

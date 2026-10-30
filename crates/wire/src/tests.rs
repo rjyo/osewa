@@ -142,3 +142,16 @@ fn errors_display() {
     let e: io::Error = Error::Short.into();
     assert_eq!(e.kind(), io::ErrorKind::InvalidData);
 }
+
+// What Go's encoding/json accepts and writes, beyond the field shapes.
+#[test]
+fn go_lenient_decoding_and_html_escaping() {
+    let f = Frame::new(TYPE_INPUT, 1, br#"{"seq":5,"Type":"key","key":"KeyA","text":null,"focused":null,"seq":6}"#.to_vec());
+    let i: Input = f.decode().unwrap();
+    assert_eq!((i.seq, i.ty.as_str(), i.text.as_str(), i.focused), (6, "key", "", false));
+    let f = Frame::new(TYPE_INPUT, 1, b"{\"seq\":1,\"type\":\"text\",\"text\":\"a\xffb\"}".to_vec());
+    assert_eq!(f.decode::<Input>().unwrap().text, "a\u{fffd}b");
+    let ev = EventMsg { kind: EVENT_TITLE.into(), title: "a<b>&c\u{2028}".into(), ..Default::default() };
+    assert_eq!(marshal_event(&ev), br#"{"kind":"title","title":"a\u003cb\u003e\u0026c\u2028"}"#);
+    assert_eq!(serde_json::from_slice::<EventMsg>(&marshal_event(&ev)).unwrap(), ev);
+}

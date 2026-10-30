@@ -82,6 +82,13 @@ pub(crate) fn command(
     cmd.stderr(slave.try_clone()?);
     unsafe {
         cmd.pre_exec(|| {
+            // The child starts with default dispositions whatever the holder
+            // inherited (nohup, a background job's ignored SIGINT): an
+            // ignored signal survives exec, and session.kill's SIGHUP and
+            // the user's Ctrl-C must work in the session.
+            for sig in [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM, libc::SIGPIPE] {
+                libc::signal(sig, libc::SIG_DFL);
+            }
             if libc::setsid() < 0 {
                 return Err(io::Error::last_os_error());
             }

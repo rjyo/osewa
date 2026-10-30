@@ -392,6 +392,7 @@ async fn wait_stop(
             Some(_) = async { term.as_mut()?.recv().await } => {}
             Some(_) = async { int.as_mut()?.recv().await } => {}
             Some(_) = async { stop?.await.ok() } => {}
+            else => std::future::pending::<()>().await,
         }
     };
     tokio::select! {
