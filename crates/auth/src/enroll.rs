@@ -35,7 +35,7 @@ pub fn enroll(mut r: impl BufRead, mut w: impl Write, id: &Identity, d: &Devices
     if line.is_empty() {
         return Err(Error::Msg("auth: enroll: read request: EOF".into()));
     }
-    let req: EnrollRequest = serde_json::from_slice(&line).map_err(|e| Error::Msg(format!("auth: enroll: {e}")))?;
+    let req: EnrollRequest = osewa_wire::decode_json(&line).map_err(|e| Error::Msg(format!("auth: enroll: {e}")))?;
     d.add(Device { name: req.name, key: req.key })?;
     let resp = EnrollResponse { server_key: encode_key(&id.public()), port, version: osewa_wire::VERSION };
     let mut out = serde_json::to_vec(&resp).expect("response serializes");

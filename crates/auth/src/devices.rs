@@ -50,7 +50,9 @@ impl Devices {
             if line.is_empty() {
                 continue;
             }
-            let dev = serde_json::from_slice(line)
+            // As lenient as Go's decoder: any key case, last duplicate wins,
+            // invalid UTF-8 as U+FFFD.
+            let dev = osewa_wire::decode_json(line)
                 .map_err(|e| Error::Msg(format!("auth: {}:{}: {e}", self.path.display(), i + 1)))?;
             out.push(dev);
         }
