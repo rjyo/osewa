@@ -18,7 +18,7 @@ osewa-auth.workspace = true
 
 [dev-dependencies]
 libc.workspace = true
-osewa-client.workspace = true
-osewa-mirror.workspace = true
 osewa-carrier.workspace = true
 tokio = { version = "1", features = ["rt", "time", "macros"] }
+osewa-client.workspace = true
+osewa-mirror.workspace = true
