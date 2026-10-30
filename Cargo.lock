@@ -396,6 +396,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "osewa-client"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "osewa-auth",
+ "osewa-carrier",
+ "osewa-ghostty",
+ "osewa-paths",
+ "osewa-wire",
+ "rand",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "osewa-execproc"
 version = "0.1.0"
 dependencies = [
