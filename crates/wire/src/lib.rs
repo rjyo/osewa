@@ -266,6 +266,30 @@ pub fn marshal<T: serde::Serialize>(v: &T) -> Vec<u8> {
     out
 }
 
+/// Quotes s as Go's %q does, for error messages a Go peer would word the
+/// same way.
+pub fn go_quote(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            '\x0b' => out.push_str("\\v"),
+            c if (c as u32) < 0x20 || c == '\x7f' => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Decodes JSON as leniently as Go's encoding/json, which Go peers rely on:
 /// invalid UTF-8 becomes U+FFFD, `null` leaves a field at its zero value,
 /// keys match case-insensitively (every osewa key is lowercase) and the

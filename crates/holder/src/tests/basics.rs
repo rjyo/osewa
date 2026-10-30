@@ -321,3 +321,17 @@ fn child_gets_default_signals() {
     assert_eq!(c.ended.as_ref().unwrap().exit_code, Some(130), "{}", c.text());
     assert!(!c.text().contains("alive"));
 }
+
+#[test]
+fn negative_idle_timeout_disables() {
+    let args: Vec<String> = ["--id", "x", "--idle-timeout", "-1s"].iter().map(|s| s.to_string()).collect();
+    assert!(crate::parse_flags(&args).unwrap().idle.is_zero());
+}
+
+// After the session stops, the socket refuses connections at once.
+#[test]
+fn socket_refuses_after_stop() {
+    let mut h = start(Config { exit_retention: Duration::from_millis(200), ..cfg(sh("exit 0")) });
+    h.done(Duration::from_secs(5)).unwrap();
+    assert!(std::os::unix::net::UnixStream::connect(&h.sock).is_err());
+}

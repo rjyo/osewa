@@ -155,3 +155,9 @@ fn go_lenient_decoding_and_html_escaping() {
     assert_eq!(marshal_event(&ev), br#"{"kind":"title","title":"a\u003cb\u003e\u0026c\u2028"}"#);
     assert_eq!(serde_json::from_slice::<EventMsg>(&marshal_event(&ev)).unwrap(), ev);
 }
+
+#[test]
+fn go_quoting() {
+    assert_eq!(go_quote("nope"), "\"nope\"");
+    assert_eq!(go_quote("a\x1b\"\\\n\u{85}é"), r#""a\x1b\"\\\n\u0085é""#);
+}
