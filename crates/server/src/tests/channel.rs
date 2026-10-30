@@ -154,7 +154,9 @@ fn forward_errors() {
             let ln = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             ln.local_addr().unwrap().port()
         };
-        assert_eq!(c.forward(1, port).await.error, wire::ERR_UNREACHABLE, "closed port");
+        let r = c.forward(1, port).await;
+        assert_eq!(r.error, wire::ERR_UNREACHABLE, "closed port");
+        assert_eq!(r.message, format!("dial tcp 127.0.0.1:{port}: connect: connection refused"));
         for r in [
             wire::Request { port: 80, ..stream_req(wire::METHOD_FORWARD_OPEN, 1) },
             wire::Request { host: "localhost".into(), port: 70000, ..stream_req(wire::METHOD_FORWARD_OPEN, 1) },
@@ -713,4 +715,44 @@ fn grant_before_stream_end() {
         assert_eq!(pop_types(&c, 2), [wire::TYPE_GRANT, wire::TYPE_STREAM_END]);
         assert!(c.send.try_pop().is_none(), "GRANT after STREAM_END");
     });
+}
+
+// When the process exits, its stdin is released: a sink blocked writing to
+// a pipe a background child holds, and never reads, ends with the stream.
+#[test]
+fn exec_exit_releases_stdin() {
+    run(async {
+        let dir = TempDir::new();
+        let pid_file = dir.path().join("pid");
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        let script = format!("sleep 1000 <&0 >/dev/null 2>&1 & echo $! > {}; sleep 0.3; exit 0", pid_file.display());
+        assert!(c.exec(1, &["sh", "-c", &script]).await.error.is_empty());
+        let pid = read_pid(&pid_file).await;
+        struct Kill(i32);
+        impl Drop for Kill {
+            fn drop(&mut self) {
+                unsafe { libc::kill(self.0, libc::SIGKILL) };
+            }
+        }
+        let _k = Kill(pid);
+        let ch = Rc::downgrade(&only_client(&e).channel(1).unwrap());
+        // Past a pipe's buffer: nobody reads stdin.
+        for _ in 0..8 {
+            c.data(1, &vec![0; wire::MAX_CHANNEL_DATA]).await;
+        }
+        let r = c.drain(1).await;
+        assert_eq!(r.end.exit_code, Some(0), "end {:?}", r.end);
+        for _ in 0..100 {
+            if ch.upgrade().is_none() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the channel outlived its stream: its sink is stuck on stdin");
+    });
+}
+
+fn only_client(e: &Env) -> Rc<Client> {
+    e.srv.st.borrow().clients.values().next().unwrap().upgrade().unwrap()
 }

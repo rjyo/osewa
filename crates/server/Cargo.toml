@@ -22,3 +22,6 @@ tokio = { version = "1", features = ["rt", "net", "time", "process", "signal", "
 # TLS over tokio streams with the ring provider osewa-auth configures.
 tokio-rustls = { version = "0.26", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

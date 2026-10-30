@@ -92,18 +92,25 @@ pub(crate) async fn serve(listen: String, mut cfg: Config, stop: impl Future<Out
     // The QUIC carrier (docs/QUIC.md) will listen on the UDP port of the
     // same number unless --no-quic, and advertise it with set_quic_port;
     // until then WELCOME lists no other carrier.
+    serve_until(&s, ln, stop).await.map_err(|e| e.to_string())
+}
+
+/// Serves ln until stop resolves, then closes the server.
+pub(crate) async fn serve_until(s: &Rc<Server>, ln: TcpListener, stop: impl Future<Output = ()>) -> std::io::Result<()> {
     let serving = s.serve(ln);
     tokio::pin!(serving);
     tokio::select! {
         r = &mut serving => {
             s.close().await;
-            return r.map_err(|e| e.to_string());
+            return r;
         }
         _ = stop => {}
     }
-    // close waits for exec processes, whose SIGKILL needs us alive.
-    s.close().await;
-    serving.await.map_err(|e| e.to_string())
+    // close marks the server closed before it waits for exec processes
+    // (whose SIGKILL needs us alive); serving, polled beside it, drops the
+    // listener at once, so new connections are refused meanwhile.
+    let (r, ()) = tokio::join!(serving, s.close());
+    r
 }
 
 /// Listens as Go's net.Listen("tcp", addr) does: an empty host is every
