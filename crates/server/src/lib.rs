@@ -278,6 +278,9 @@ impl Server {
                     continue;
                 }
             };
+            // Go sets TCP_NODELAY on every TCP connection; without it a
+            // keystroke's echo waits on Nagle behind delayed ACKs (~40 ms).
+            let _ = tcp.set_nodelay(true);
             lowat::tune(tcp.as_raw_fd());
             let (srv, tls, ws) = (self.clone(), tls.clone(), ws.clone());
             tokio::task::spawn_local(async move {
