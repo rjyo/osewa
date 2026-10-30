@@ -581,6 +581,8 @@ async fn violate(extra: &str, frames: &[(u8, Vec<u8>)], masked: bool) -> (Error,
     let close = raw.close_frame().await;
     if close.is_some() {
         raw.send(0x80 | OP_CLOSE, &[]).await;
+        // The server drains until we hang up.
+        raw.s.shutdown().await.unwrap();
     }
     (r.await.unwrap().unwrap_err(), close)
 }
@@ -655,7 +657,9 @@ async fn set_read_limit() {
         server.write(&text(1000, 0)).await.unwrap();
         assert_eq!(client.read().await.unwrap().len(), 1000);
         server.write(&text(1001, 0)).await.unwrap();
+        let r = spawn_local(async move { server.read().await });
         assert!(matches!(client.read().await, Err(Error::TooBig(1001))));
+        assert_eq!(r.await.unwrap().unwrap_err().close_status(), Some(STATUS_MESSAGE_TOO_BIG));
     })
     .await;
 }
@@ -707,8 +711,10 @@ async fn client_rejects_masked_server_frames() {
         let conn = conn.unwrap();
         raw.client = true;
         raw.send(0x80 | OP_BINARY, b"x").await;
-        assert!(matches!(conn.read().await, Err(Error::Protocol(_))));
+        let r = spawn_local(async move { conn.read().await });
         assert_eq!(raw.close_frame().await.unwrap().0, 1002);
+        raw.s.shutdown().await.unwrap();
+        assert!(matches!(r.await.unwrap(), Err(Error::Protocol(_))));
     })
     .await;
 }

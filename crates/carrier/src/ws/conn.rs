@@ -517,11 +517,31 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
                 Err(Violation(code, err)) => {
                     if let Some(code) = code {
                         let _ = self.send_close(code, fit_reason(&err.to_string())).await;
+                        self.linger(r).await;
                     }
                     return Err(err);
                 }
             }
         }
+    }
+
+    /// Discards what the peer sends until it hangs up (at most 5 s), so
+    /// that closing with its data unread doesn't reset the connection
+    /// before it reads our close frame: it may be midway through writing
+    /// the message we refused.
+    async fn linger(&self, r: &mut Reader<S>) {
+        let Some(io) = r.io.as_mut() else { return };
+        let mut b = vec![0; 16 << 10];
+        let _ = tokio::time::timeout(CONTROL_TIMEOUT, async {
+            while let Ok(Ok(n)) = self.until_closed(io.read(&mut b)).await {
+                if n == 0 {
+                    break;
+                }
+            }
+        })
+        .await;
+        r.buf.clear();
+        r.pos = 0;
     }
 
     async fn fill(&self, r: &mut Reader<S>) -> Result<(), Error> {
