@@ -89,21 +89,46 @@ pub(crate) async fn serve(listen: String, mut cfg: Config, stop: impl Future<Out
     cfg.run_dir = osewa_paths::run_dir();
     let s: Rc<Server> = Server::new(cfg)?;
     let ln = bind(&listen).await.map_err(|e| format!("listen tcp {listen}: {e}"))?;
-    // The QUIC carrier (docs/QUIC.md) will listen on the UDP port of the
-    // same number unless --no-quic, and advertise it with set_quic_port;
-    // until then WELCOME lists no other carrier.
+    let mut quic = None;
+    if !s.config().no_quic {
+        // QUIC on the UDP port of the same number (docs/QUIC.md). A port
+        // UDP can't have only loses the carrier.
+        match ln.local_addr().and_then(std::net::UdpSocket::bind) {
+            Err(e) => eprintln!("osewa server: no QUIC: listen udp {listen}: {e}"),
+            Ok(sock) => {
+                let s = s.clone();
+                quic = Some(tokio::task::spawn_local(async move {
+                    if let Err(e) = s.serve_quic(sock).await {
+                        eprintln!("osewa server: no QUIC: {e}");
+                    }
+                }));
+            }
+        }
+    }
+    let r = serve_until(&s, ln, stop).await;
+    // QUIC's clients hear of the close only once its endpoint sends it.
+    if let Some(q) = quic {
+        let _ = q.await;
+    }
+    r.map_err(|e| e.to_string())
+}
+
+/// Serves ln until stop resolves, then closes the server.
+pub(crate) async fn serve_until(s: &Rc<Server>, ln: TcpListener, stop: impl Future<Output = ()>) -> std::io::Result<()> {
     let serving = s.serve(ln);
     tokio::pin!(serving);
     tokio::select! {
         r = &mut serving => {
             s.close().await;
-            return r.map_err(|e| e.to_string());
+            return r;
         }
         _ = stop => {}
     }
-    // close waits for exec processes, whose SIGKILL needs us alive.
-    s.close().await;
-    serving.await.map_err(|e| e.to_string())
+    // close marks the server closed before it waits for exec processes
+    // (whose SIGKILL needs us alive); serving, polled beside it, drops the
+    // listener at once, so new connections are refused meanwhile.
+    let (r, ()) = tokio::join!(serving, s.close());
+    r
 }
 
 /// Listens as Go's net.Listen("tcp", addr) does: an empty host is every

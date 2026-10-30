@@ -20,3 +20,5 @@ osewa-auth.workspace = true
 libc.workspace = true
 osewa-client.workspace = true
 osewa-mirror.workspace = true
+osewa-carrier.workspace = true
+tokio = { version = "1", features = ["rt", "time", "macros"] }
