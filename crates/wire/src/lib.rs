@@ -171,7 +171,7 @@ impl Frame {
 
     /// Unmarshals a JSON payload.
     pub fn decode<T: serde::de::DeserializeOwned>(&self) -> Result<T, Error> {
-        serde_json::from_slice(&self.payload).map_err(|e| Error::Json(self.ty, e.to_string()))
+        decode_json(&self.payload).map_err(|e| Error::Json(self.ty, e))
     }
 
     /// The length-prefixed encoding of the holder socket.
@@ -236,7 +236,87 @@ pub fn parse_frames(buf: &[u8], out: &mut Vec<Frame>) -> Result<usize, Error> {
 
 /// Builds a frame whose payload is v as JSON.
 pub fn json<T: serde::Serialize>(ty: u8, stream: u32, v: &T) -> Frame {
-    Frame { ty, stream, payload: serde_json::to_vec(v).expect("wire: marshal") }
+    Frame { ty, stream, payload: marshal(v) }
+}
+
+/// Encodes v as Go's encoding/json does: serde_json's output with `<`, `>`,
+/// `&`, U+2028 and U+2029 escaped. Those only ever occur inside strings, so
+/// the substitution can't touch the JSON's structure. Payload bytes count
+/// toward log positions, so the Go and Rust holders agree on them.
+pub fn marshal<T: serde::Serialize>(v: &T) -> Vec<u8> {
+    let b = serde_json::to_vec(v).expect("wire: marshal");
+    if !b.iter().any(|&c| matches!(c, b'<' | b'>' | b'&' | 0xe2)) {
+        return b;
+    }
+    let mut out = Vec::with_capacity(b.len() + 16);
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'<' => out.extend_from_slice(b"\\u003c"),
+            b'>' => out.extend_from_slice(b"\\u003e"),
+            b'&' => out.extend_from_slice(b"\\u0026"),
+            0xe2 if b.get(i + 1) == Some(&0x80) && matches!(b.get(i + 2), Some(0xa8 | 0xa9)) => {
+                out.extend_from_slice(if b[i + 2] == 0xa8 { b"\\u2028" } else { b"\\u2029" });
+                i += 2;
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Quotes s as Go's %q does, for error messages a Go peer would word the
+/// same way.
+pub fn go_quote(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            '\x0b' => out.push_str("\\v"),
+            c if (c as u32) < 0x20 || c == '\x7f' => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Decodes JSON as leniently as Go's encoding/json, which Go peers rely on:
+/// invalid UTF-8 becomes U+FFFD, `null` leaves a field at its zero value,
+/// keys match case-insensitively (every osewa key is lowercase) and the
+/// last of duplicate keys wins.
+pub fn decode_json<T: serde::de::DeserializeOwned>(b: &[u8]) -> Result<T, String> {
+    let text = String::from_utf8_lossy(b);
+    let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    normalize(&mut v);
+    serde_json::from_value(v).map_err(|e| e.to_string())
+}
+
+fn normalize(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(m) => {
+            let old = std::mem::take(m);
+            for (k, mut x) in old {
+                if x.is_null() {
+                    continue;
+                }
+                normalize(&mut x);
+                let k = if k.bytes().any(|c| c.is_ascii_uppercase()) { k.to_ascii_lowercase() } else { k };
+                m.insert(k, x);
+            }
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(normalize),
+        _ => {}
+    }
 }
 
 /// How many log positions a record with this payload occupies.

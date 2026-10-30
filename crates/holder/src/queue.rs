@@ -18,7 +18,7 @@ const MIN_SPLIT: i64 = 1 << 10;
 const RTT_WINDOW: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Kind {
+pub(crate) enum Kind {
     /// SNAPSHOT_BEGIN, READY or END, or the first snapshot's SNAPSHOT_DATA:
     /// uncounted, but in order, and dropped on lag.
     Marker,
@@ -40,19 +40,19 @@ enum Body {
     Rec(Record),
 }
 
-struct Entry {
-    kind: Kind,
-    ty: u8,
-    stream: u32,
+pub(crate) struct Entry {
+    pub kind: Kind,
+    pub ty: u8,
+    pub stream: u32,
     body: Body,
     /// SNAPSHOT_BEGIN, READY, END: its snapshot's generation.
-    gen: u32,
+    pub gen: u32,
     /// Records: when queued, for lag by age.
     at: Option<Instant>,
 }
 
 impl Entry {
-    fn is_marker(&self, t: u8) -> bool {
+    pub fn is_marker(&self, t: u8) -> bool {
         self.kind == Kind::Marker && self.ty == t
     }
 
@@ -60,10 +60,20 @@ impl Entry {
         self.kind == Kind::Chunk && self.ty == wire::TYPE_SNAPSHOT_HISTORY
     }
 
-    fn rec(&self) -> &Record {
+    pub fn rec(&self) -> &Record {
         match &self.body {
             Body::Rec(r) => r,
             _ => unreachable!("not a record"),
+        }
+    }
+
+    /// The frame payload this entry carries, but for a record.
+    #[cfg(test)]
+    pub fn payload(&self) -> &[u8] {
+        match &self.body {
+            Body::Frame(p) => p,
+            Body::Chunk { buf, off, end } => &buf[*off..*end],
+            Body::Rec(_) => &[],
         }
     }
 }
@@ -85,26 +95,26 @@ pub(crate) type Clock = Rc<dyn Fn() -> Instant>;
 /// for credit; the counted bytes of records still waiting are the client's
 /// lag.
 pub(crate) struct SendQueue {
-    prio: VecDeque<wire::Frame>,
-    data: VecDeque<Entry>,
+    pub prio: VecDeque<wire::Frame>,
+    pub data: VecDeque<Entry>,
     lag: i64,
     /// SNAPSHOT_READY markers not yet sent.
-    ready: i64,
+    pub ready: i64,
     pub closed: bool,
     now: Clock,
     /// Generation of the last snapshot marker taken.
     pub mark_gen: u32,
     /// Sent offset at the last SNAPSHOT_END written.
-    end_at: u64,
-    end_armed: bool,
+    pub end_at: u64,
+    pub end_armed: bool,
     /// Generation of that SNAPSHOT_END.
-    end_gen: u32,
+    pub end_gen: u32,
     /// Generation of the last SNAPSHOT_END taken to send.
-    last_end: u32,
+    pub last_end: u32,
     /// SNAPSHOT_DATA bytes sent since the last SNAPSHOT_BEGIN.
-    snap_data: i64,
+    pub snap_data: i64,
     /// When the last SNAPSHOT_END went out.
-    end_sent_at: Option<Instant>,
+    pub end_sent_at: Option<Instant>,
 
     /// The stream whose credit this is.
     id: u32,

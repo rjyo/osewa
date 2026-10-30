@@ -211,6 +211,9 @@ impl Terminal {
         let mut ptr: *mut u8 = std::ptr::null_mut();
         let mut n = 0usize;
         check(unsafe { ffi::osewa_snapshot_alloc(self.t, &mut ptr, &mut n) }, "snapshot_encode")?;
+        if ptr.is_null() || n == 0 {
+            return Ok(Vec::new());
+        }
         let v = unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec();
         unsafe { ffi::osewa_free(ptr, n) };
         Ok(v)

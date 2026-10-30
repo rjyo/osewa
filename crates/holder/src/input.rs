@@ -9,7 +9,7 @@ use crate::trace::Tracer;
 /// parks input unacked.
 pub(crate) const MAX_PENDING_INPUT: usize = 64 << 10;
 /// Caps query replies waiting for the child.
-const MAX_REPLY_BACKLOG: usize = 1 << 20;
+pub(crate) const MAX_REPLY_BACKLOG: usize = 1 << 20;
 /// Bounds one PTY write.
 pub(crate) const WRITE_CHUNK: usize = 4096;
 

@@ -75,7 +75,8 @@ pub struct Tunables {
     pub drain_wait: Duration,
     /// Bounds how long shutdown lets clients drain their queues.
     pub flush_wait: Duration,
-    /// Makes every snapshot encode fail, for tests.
+    /// Makes every full snapshot's encode fail, for tests; screens still
+    /// encode.
     pub fail_encode: bool,
 }
 
@@ -218,7 +219,12 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         rows: int("rows")?,
         cwd: p.str("cwd"),
         scrollback_bytes: int("scrollback-bytes")?.max(0) as usize,
-        idle: p.duration("idle-timeout").map_err(|e| e.to_string())?,
+        // Go's flag takes a negative duration, which disables the timeout
+        // as zero does.
+        idle: match p.str("idle-timeout").strip_prefix('-') {
+            Some(neg) => osewa_flag::parse_duration(neg).map(|_| Duration::ZERO).map_err(|e| e.to_string())?,
+            None => p.duration("idle-timeout").map_err(|e| e.to_string())?,
+        },
         argv: p.args.clone(),
         trace_dir: std::env::var("OSEWA_TRACE").unwrap_or_default(),
         ..Default::default()
@@ -337,8 +343,10 @@ pub async fn serve(
             }
         });
     }
-    // Connections.
-    {
+    // Connections. The task owns the listener: aborting it closes the
+    // socket, so a dial during shutdown is refused (unavailable), as when
+    // no holder is there.
+    let acceptor = {
         let weak = Rc::downgrade(&s);
         tokio::task::spawn_local(async move {
             let mut next = 0u64;
@@ -351,11 +359,13 @@ pub async fn serve(
                     return;
                 }
             }
-        });
-    }
+        })
+    };
     ready();
 
     let result = wait_stop(&s, signals, stop).await;
+    acceptor.abort();
+    let _ = acceptor.await;
     shutdown(&s, &master).await;
     result
 }
@@ -392,6 +402,7 @@ async fn wait_stop(
             Some(_) = async { term.as_mut()?.recv().await } => {}
             Some(_) = async { int.as_mut()?.recv().await } => {}
             Some(_) = async { stop?.await.ok() } => {}
+            else => std::future::pending::<()>().await,
         }
     };
     tokio::select! {
@@ -637,7 +648,14 @@ async fn run_writer<W: tokio::io::AsyncWrite + Unpin>(
     loop {
         let (sent, closed) = {
             let mut q = q.borrow_mut();
+            let before = buf.len();
             let sent = q.next_into(&mut buf);
+            // wire::write's bound: an oversized frame (one huge event) ends
+            // the connection here, as the Go holder's sender does, rather
+            // than at the peer's reader.
+            if sent.is_some() && buf.len() - before - 4 > wire::MAX_FRAME {
+                return Err(wire::Error::TooLarge.into());
+            }
             (sent, q.closed)
         };
         if let Some(f) = sent {
