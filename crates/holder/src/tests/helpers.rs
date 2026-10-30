@@ -1,15 +1,19 @@
 use std::collections::HashMap;
-use std::io::{BufReader, Write};
+use std::cell::RefCell;
+use std::io::{BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use osewa_ghostty as ghostty;
 use osewa_wire as wire;
 
+use crate::queue::SendQueue;
+use crate::session::{Conn, Session, Stream};
 use crate::{socket_path, Config};
 
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -89,6 +93,17 @@ impl TestHolder {
     pub fn dial(&self, client_id: &str) -> Client {
         Client::dial(&self.sock, client_id)
     }
+
+    pub fn dial_via(&self, client_id: &str, link: Link) -> Client {
+        Client::dial_via(&self.sock, client_id, link)
+    }
+
+    /// Stops the holder as SIGTERM would.
+    pub fn cancel(&mut self) {
+        if let Some(s) = self.stop.take() {
+            let _ = s.send(());
+        }
+    }
 }
 
 impl Drop for TestHolder {
@@ -108,6 +123,8 @@ impl Drop for TestHolder {
     }
 }
 
+pub type OnReady = Box<dyn FnMut(&Client)>;
+
 /// A test peer speaking holder frames, with a libghostty terminal restored
 /// from snapshots and fed output like a real client.
 pub struct Client {
@@ -122,6 +139,8 @@ pub struct Client {
     pub gens: Vec<wire::SnapshotBegin>,
     /// The position after the last record.
     pub end: u64,
+    /// The start position of each record frame received.
+    pub starts: Vec<u64>,
     /// Output bytes received live.
     pub raw: Vec<u8>,
     pub events: Vec<wire::EventMsg>,
@@ -137,17 +156,27 @@ pub struct Client {
     pub no_credit: bool,
     /// Counted bytes received (docs/PROTOCOL.md, Flow control).
     pub counted: usize,
+    /// SNAPSHOT_DATA bytes before the last READY.
+    pub ready_at: usize,
     /// SNAPSHOT_HISTORY bytes per generation, by index in gens.
     pub hist_bytes: HashMap<usize, usize>,
     /// Generations, by index in gens, that reached SNAPSHOT_END.
     pub snap_ends: HashMap<usize, bool>,
+    /// Runs after each SNAPSHOT_READY is applied.
+    pub on_ready: Option<OnReady>,
     pub closed: bool,
 }
 
 impl Client {
     pub fn dial(sock: &std::path::Path, client_id: &str) -> Client {
+        Client::dial_via(sock, client_id, Box::new(|nc| Box::new(nc)))
+    }
+
+    /// dial, reading the holder through link(nc), for a client behind a slow
+    /// link; writes go straight to the socket.
+    pub fn dial_via(sock: &std::path::Path, client_id: &str, link: Link) -> Client {
         let nc = UnixStream::connect(sock).unwrap();
-        let r = nc.try_clone().unwrap();
+        let r = link(nc.try_clone().unwrap());
         // Unbuffered, so a client that stops reading really stops reading.
         let (tx, rx) = mpsc::sync_channel(0);
         std::thread::spawn(move || {
@@ -168,6 +197,7 @@ impl Client {
             term: None,
             gens: Vec::new(),
             end: 0,
+            starts: Vec::new(),
             raw: Vec::new(),
             events: Vec::new(),
             ended: None,
@@ -177,8 +207,10 @@ impl Client {
             snap: Vec::new(),
             no_credit: false,
             counted: 0,
+            ready_at: 0,
             hist_bytes: HashMap::new(),
             snap_ends: HashMap::new(),
+            on_ready: None,
             closed: false,
         };
         if !client_id.is_empty() {
@@ -195,8 +227,9 @@ impl Client {
         wire::write(&mut *self.w.lock().unwrap(), f).unwrap();
     }
 
-    fn write(&self, f: &wire::Frame) {
-        let _ = wire::write(&mut *self.w.lock().unwrap(), f);
+    /// send for other threads, and when the holder may have gone.
+    pub fn write(&self, f: &wire::Frame) -> std::io::Result<()> {
+        wire::write(&mut *self.w.lock().unwrap(), f)
     }
 
     pub fn close(&self) {
@@ -320,6 +353,40 @@ impl Client {
         self.term.as_ref().map(|t| t.text()).unwrap_or_default()
     }
 
+    /// Handles every frame the holder has ready right now, without waiting.
+    pub fn drain_now(&mut self) {
+        while let Ok(f) = self.frames.try_recv() {
+            self.handle(&f);
+        }
+    }
+
+    /// Takes the frame right after the last one handled.
+    pub fn next_handled(&mut self) -> wire::Frame {
+        match self.next_frame(WAIT) {
+            Ok(Some(f)) => {
+                self.handle(&f);
+                f
+            }
+            Ok(None) => panic!("connection closed"),
+            Err(()) => panic!("no frame"),
+        }
+    }
+
+    pub fn want_input_ack(&mut self, seq: u64) {
+        let f = self.next_handled();
+        assert!(
+            f.ty == wire::TYPE_INPUT_ACK && f.stream == self.stream,
+            "frame after attach = 0x{:02x} stream {}, want INPUT_ACK",
+            f.ty,
+            f.stream
+        );
+        assert_eq!(wire::parse_u64(&f.payload).unwrap(), seq, "INPUT_ACK after attach");
+    }
+
+    pub fn has_event(&self, mut f: impl FnMut(&wire::EventMsg) -> bool) -> bool {
+        self.events.iter().any(&mut f)
+    }
+
     pub fn event_kinds(&self) -> Vec<String> {
         self.events.iter().map(|e| e.kind.clone()).collect()
     }
@@ -334,7 +401,7 @@ impl Client {
                     // asks.
                     self.counted += f.payload.len();
                     if !self.no_credit {
-                        self.write(&wire::credit(f.stream, f.payload.len() as u32));
+                        let _ = self.write(&wire::credit(f.stream, f.payload.len() as u32));
                     }
                 }
             }
@@ -354,11 +421,19 @@ impl Client {
                 self.snap.extend_from_slice(&f.payload);
                 if f.ty == wire::TYPE_SNAPSHOT_HISTORY {
                     *self.hist_bytes.entry(self.gens.len() - 1).or_default() += f.payload.len();
+                } else {
+                    self.ready_at = self.snap.len();
                 }
             }
             wire::TYPE_SNAPSHOT_READY => {
                 let term = self.dec.as_mut().unwrap().ready(ghostty::Callbacks::default()).unwrap();
                 self.term = Some(term);
+                if let Some(mut f) = self.on_ready.take() {
+                    f(self);
+                    if self.on_ready.is_none() {
+                        self.on_ready = Some(f);
+                    }
+                }
             }
             wire::TYPE_SNAPSHOT_END => {
                 let g = self.gens.len() - 1;
@@ -379,6 +454,7 @@ impl Client {
                 if end < self.end || span < wire::record_size(data.len()) || !(span - data.len() as u64).is_multiple_of(5) {
                     self.gaps += 1;
                 }
+                self.starts.push(self.end);
                 if self.gens.last().is_some_and(|g| end <= g.position) {
                     self.stale += 1;
                 }
@@ -422,14 +498,241 @@ pub fn eventually(d: Duration, mut cond: impl FnMut() -> bool) -> bool {
     false
 }
 
-/// Bounds the flood and shaped-link tests that run at once: all of them
+/// Bounds the flood and shaped-link tests that run at once. Each floods a
+/// PTY at ten times a simulated link and times what arrives; all of them
 /// together saturate the machine, and timing assertions then measure the
 /// contention rather than the holder.
-pub fn heavy() -> std::sync::MutexGuard<'static, ()> {
-    static HEAVY: Mutex<()> = Mutex::new(());
-    HEAVY.lock().unwrap_or_else(|e| e.into_inner())
+pub const HEAVY_UNITS: usize = 4;
+
+static HEAVY: Mutex<usize> = Mutex::new(HEAVY_UNITS);
+static HEAVY_FREE: Condvar = Condvar::new();
+
+/// Held units of HEAVY_UNITS, given back on drop.
+pub struct Heavy(usize);
+
+/// Takes n of HEAVY_UNITS until the guard drops; HEAVY_UNITS makes the test
+/// run alone among heavy tests.
+pub fn heavy(n: usize) -> Heavy {
+    let mut free = HEAVY.lock().unwrap_or_else(|e| e.into_inner());
+    while *free < n {
+        free = HEAVY_FREE.wait(free).unwrap_or_else(|e| e.into_inner());
+    }
+    *free -= n;
+    Heavy(n)
+}
+
+impl Drop for Heavy {
+    fn drop(&mut self) {
+        *HEAVY.lock().unwrap_or_else(|e| e.into_inner()) += self.0;
+        HEAVY_FREE.notify_all();
+    }
 }
 
 pub fn flush(w: &Arc<Mutex<UnixStream>>) {
     let _ = w.lock().unwrap().flush();
+}
+
+/// What tests compare between terminals.
+pub fn state(t: &ghostty::Terminal) -> String {
+    let vt = t.format(ghostty::Format::Vt, false, false).unwrap();
+    let (cols, rows) = t.size();
+    let (x, y) = t.cursor();
+    format!(
+        "{cols}x{rows} cursor={x},{y} alt={} title={:?}\n{:?}",
+        t.alt_screen(),
+        t.title(),
+        String::from_utf8_lossy(&vt)
+    )
+}
+
+/// state without scrollback, which a catch-up screen doesn't carry: ED 3
+/// erases it on the terminal before comparing.
+pub fn screen_state(t: &mut ghostty::Terminal) -> String {
+    t.write(b"\x1b[3J");
+    state(t)
+}
+
+pub fn new_ref(cols: usize, rows: usize) -> ghostty::Terminal {
+    ghostty::Terminal::new(cols, rows, ghostty::Options { continuation: true, ..Default::default() }).unwrap()
+}
+
+/// Whether a snapshot is a catch-up screen.
+pub fn is_screen(b: &wire::SnapshotBegin) -> bool {
+    b.history == Some(false)
+}
+
+// Links: how a client reads the holder.
+
+pub type Link = Box<dyn FnOnce(UnixStream) -> Box<dyn Read + Send> + Send>;
+
+/// A narrow link: at most rate bytes a second.
+pub fn slow_link(rate: usize) -> Link {
+    Box::new(move |nc| Box::new(SlowConn::new(nc, rate)))
+}
+
+/// Delivers what the holder sends d later: a long, wide link.
+pub fn delay_link(d: Duration) -> Link {
+    Box::new(move |nc| Box::new(delayed(nc, d)))
+}
+
+/// A narrow link with latency: rate bytes a second, each byte delivered d
+/// after it left. Credit goes back at once, so the credit round trip is
+/// about d plus the transfer.
+pub fn slow_delay_link(rate: usize, d: Duration) -> Link {
+    Box::new(move |nc| Box::new(delayed(SlowConn::new(nc, rate), d)))
+}
+
+/// A narrow link behind a server-like relay: the relay reads the holder at
+/// once into up to 4 MiB of buffer, and the link drains it at rate. Pacing
+/// has to come from credit, not from the socket.
+pub fn buffered_link(rate: usize) -> Link {
+    Box::new(move |mut nc: UnixStream| {
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>((4 << 20) / (32 << 10));
+        std::thread::spawn(move || loop {
+            let mut b = vec![0; 32 << 10];
+            match nc.read(&mut b) {
+                Ok(n) if n > 0 => {
+                    b.truncate(n);
+                    if tx.send(b).is_err() {
+                        return;
+                    }
+                }
+                _ => return,
+            }
+        });
+        Box::new(SlowConn::new(ChanReader { rx, left: Vec::new(), at: 0 }, rate))
+    })
+}
+
+/// Reads the chunks a channel carries.
+struct ChanReader {
+    rx: Receiver<Vec<u8>>,
+    left: Vec<u8>,
+    at: usize,
+}
+
+impl Read for ChanReader {
+    fn read(&mut self, p: &mut [u8]) -> std::io::Result<usize> {
+        if self.at == self.left.len() {
+            match self.rx.recv() {
+                Ok(b) => (self.left, self.at) = (b, 0),
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = p.len().min(self.left.len() - self.at);
+        p[..n].copy_from_slice(&self.left[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+}
+
+/// Reads r on a thread and hands each chunk on d after it was read.
+fn delayed<R: Read + Send + 'static>(mut r: R, d: Duration) -> impl Read + Send {
+    let (tx, rx) = mpsc::channel::<(Vec<u8>, Instant)>();
+    std::thread::spawn(move || loop {
+        let mut b = vec![0; 32 << 10];
+        match r.read(&mut b) {
+            Ok(n) if n > 0 => {
+                b.truncate(n);
+                if tx.send((b, Instant::now())).is_err() {
+                    return;
+                }
+            }
+            _ => return,
+        }
+    });
+    let (dtx, drx) = mpsc::sync_channel::<Vec<u8>>(0);
+    std::thread::spawn(move || {
+        for (b, at) in rx {
+            std::thread::sleep((at + d).saturating_duration_since(Instant::now()));
+            if dtx.send(b).is_err() {
+                return;
+            }
+        }
+    });
+    ChanReader { rx: drx, left: Vec::new(), at: 0 }
+}
+
+/// Reads at most rate bytes a second, like a narrow link.
+pub struct SlowConn<R> {
+    r: R,
+    rate: usize,
+    start: Option<Instant>,
+    n: usize,
+}
+
+impl<R: Read> SlowConn<R> {
+    pub fn new(r: R, rate: usize) -> SlowConn<R> {
+        SlowConn { r, rate, start: None, n: 0 }
+    }
+
+    fn due(&self) -> Instant {
+        self.start.unwrap() + Duration::from_secs_f64(self.n as f64 / self.rate as f64)
+    }
+}
+
+impl<R: Read> Read for SlowConn<R> {
+    fn read(&mut self, p: &mut [u8]) -> std::io::Result<usize> {
+        if self.start.is_none() {
+            self.start = Some(Instant::now());
+        }
+        let cap = p.len().min((self.rate / 50).max(1));
+        let n = self.r.read(&mut p[..cap])?;
+        // An idle link doesn't bank bandwidth for a burst later: more than a
+        // moment behind schedule, the schedule restarts from now.
+        if Instant::now().saturating_duration_since(self.due()) > Duration::from_millis(20) {
+            (self.start, self.n) = (Some(Instant::now()), 0);
+        }
+        self.n += n;
+        std::thread::sleep(self.due().saturating_duration_since(Instant::now()));
+        Ok(n)
+    }
+}
+
+// Sessions without a holder loop, for tests of the state machine.
+
+/// Runs f inside a current-thread runtime and LocalSet, where session
+/// timers can be spawned.
+pub fn local<T>(f: impl std::future::Future<Output = T>) -> T {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    tokio::task::LocalSet::new().block_on(&rt, f)
+}
+
+/// A session with no child and no PTY: the termios poll finds no fd and
+/// does nothing.
+pub fn unit_session(cfg: Config) -> Rc<RefCell<Session>> {
+    Session::new(cfg, -1, Rc::new(Instant::now)).unwrap()
+}
+
+/// Adds a connection for client with stream (if any), returning its queue.
+pub fn add_conn(s: &Rc<RefCell<Session>>, cid: u64, client: &str, stream: Option<Stream>) -> Rc<RefCell<SendQueue>> {
+    let mut b = s.borrow_mut();
+    let q = Rc::new(RefCell::new(SendQueue::new(b.core.clock.clone())));
+    let mut c = Conn::new(cid, q.clone());
+    c.client = client.into();
+    c.stream = stream;
+    b.conns.insert(cid, c);
+    q
+}
+
+/// A stream with id that has sent snaps snapshots.
+pub fn unit_stream(uid: u64, id: u32, snaps: u32, catch_up: bool) -> Stream {
+    let mut st = Stream::new(uid, id, 0, 0);
+    st.snaps = snaps;
+    st.catch_up = catch_up;
+    st
+}
+
+/// The INPUT_ACKs queued on q: how many, and the last one.
+pub fn acks(q: &RefCell<SendQueue>) -> (usize, u64) {
+    let q = q.borrow();
+    let mut n = 0;
+    let mut last = 0;
+    for f in &q.prio {
+        if f.ty == wire::TYPE_INPUT_ACK {
+            n += 1;
+            last = wire::parse_u64(&f.payload).unwrap();
+        }
+    }
+    (n, last)
 }
