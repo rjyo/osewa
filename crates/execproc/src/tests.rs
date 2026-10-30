@@ -171,9 +171,13 @@ fn env_and_dir() {
 #[test]
 fn dir_defaults_to_home() {
     let _g = ENV.lock().unwrap();
-    let home = TempDir::new();
+    // Kept: processes other tests start meanwhile run in it, and a shell
+    // whose cwd vanished complains on stderr.
+    let home = std::env::temp_dir().join("osewa-execproc-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let real = std::fs::canonicalize(&home).unwrap().to_string_lossy().into_owned();
     let old = std::env::var("HOME").ok();
-    unsafe { std::env::set_var("HOME", &home.0) };
+    unsafe { std::env::set_var("HOME", &home) };
     let got = rt().block_on(async {
         let mut p = start(argv(&["pwd", "-P"]));
         run(&mut p.0).await.0
@@ -181,7 +185,7 @@ fn dir_defaults_to_home() {
     if let Some(h) = old {
         unsafe { std::env::set_var("HOME", h) };
     }
-    assert_eq!(got, format!("{}\n", home.real()));
+    assert_eq!(got, format!("{real}\n"));
 }
 
 #[test]
