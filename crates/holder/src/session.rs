@@ -1230,10 +1230,12 @@ impl Core {
         // A screen snapshot stops the encoder at READY, so its cost doesn't
         // grow with scrollback.
         let cut = Instant::now();
-        let snap = if self.cfg.tune.fail_encode {
-            Err(())
-        } else if history {
-            self.term.snapshot().map_err(|_| ())
+        let snap = if history {
+            if self.cfg.tune.fail_encode {
+                Err(())
+            } else {
+                self.term.snapshot().map_err(|_| ())
+            }
         } else {
             self.term.snapshot_screen_compact().map_err(|_| ())
         };

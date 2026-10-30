@@ -75,7 +75,8 @@ pub struct Tunables {
     pub drain_wait: Duration,
     /// Bounds how long shutdown lets clients drain their queues.
     pub flush_wait: Duration,
-    /// Makes every snapshot encode fail, for tests.
+    /// Makes every full snapshot's encode fail, for tests; screens still
+    /// encode.
     pub fail_encode: bool,
 }
 
