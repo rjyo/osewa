@@ -1,0 +1,9 @@
+    vs_test.go:172: scoreboard:
+        | link | connect + run p50 ms | download MB/s | echo idle p50/p95 ms | echo under download p50/p95 ms | download meanwhile MB/s |
+        |---|---|---|---|---|---|
+        | far fiber: 120 ms, 50 Mbit/s, shallow buffer | 648 / 388 vs 1630 | 5.94 / 5.95 vs 5.97 | 127 / 131 / 124 / 129 vs 140 / 147 | 131 / 163 / 188 / 246 vs 332 / 338 | 5.57 / 5.94 vs 5.97 |
+        | cellular: 60 ms, 10 Mbit/s, deep buffer | 341 / 204 vs 935 | 1.19 / 1.19 vs 1.19 | 64 / 71 / 64 / 68 vs 78 / 89 | 73 / 90 / 138 / 188 vs 1714 / 1717 | 1.07 / 1.19 vs 1.19 |
+        | busy Wi-Fi: 20 ms, 20 Mbit/s, 1% loss | 125 / 78 vs 501 | 0.87 / 0.99 vs 0.92 | 26 / 31 / 24 / 63 vs 41 / 50 | 59 / 122 / 44 / 82 vs 374 / 721 | 0.92 / 0.95 vs 0.98 |
+        | slow link: 100 ms, 1 Mbit/s, 1% loss, deep buffer | 1147 / 350 vs 1433 | 0.12 / 0.12 vs 0.10 | 108 / 112 / 106 / 234 vs 116 / 126 | 125 / 191 / 154 / 222 vs >15000 / >15000 | 0.06 / 0.10 vs 0.12 |
+        
+        (osewa over WebSocket / over QUIC vs ssh in each cell)

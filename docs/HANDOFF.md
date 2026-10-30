@@ -103,45 +103,32 @@ shell, so wrap commands in `sh -c '...'`.
 
 ## Open, by priority
 
-1. **WebSocket echo under download** (biggest loss). Real path: Rust
-   298-315 ms p50 vs Go 187-190 (and ssh 174-196); Docker slow link:
-   151 vs 108 ms. QUIC is fine (tie). Rust's WS download "meanwhile"
-   runs higher, so more bulk sits ahead of the keystroke.
-   `TCP_NOTSENT_LOWAT` is set on macOS and Linux (crates/server/src/lowat.rs).
-   Suspects, in order: buffering below the send queue on the TCP path
-   (the carrier's out-buffer and rustls's 64 KiB send buffer via
-   tokio-rustls both accept bytes the kernel refused; Go's coder/websocket
-   writes straight through), so the SendQueue's priority no longer decides
-   what goes next; then exec flight's typing detection and `tighten`
-   (crates/server/src/flight.rs, channel.rs) against flight.go. Start
-   with `OSEWA_VS_QUICK=1 OSEWA_VS_ONLY=slow` on both images, then
-   OSEWA_TRACE / `ss -ti` sampling (e2e `TestEchoBreakdown`,
-   `OSEWA_TRACE=1`, is the existing breakdown for W1).
-2. **W2 echo-under-flood tail**: p95 553 ms-1.17 s vs Go 350-409
-   (p50 close). The holder's catch-up path under the heaviest
-   workload. A single-thread design difference already bit once (PTY
-   reads starved keystrokes; fixed by yielding per read, 4e93bf5). Look
-   at where the holder spends a flood: snapshot encode inline on the one
-   thread, writer wakeups, timer lateness. Compare with traces from the
-   Go holder.
-3. **Client CPU**: typing 1.1% (must <= 1.0%), idle 0.1% (must <0.1%).
-   The client runs a network thread plus an applier thread per
-   connection (crates/client docs); profile the idle wakeups (keepalive
-   timers, credit/ack timers) and per-keystroke work (mirror apply,
-   prediction, render).
-4. **Reattach +15-21 ms, keystroke-to-glyph p95 +0.3-1.2 ms** (bench-mosh).
-   Re-measure over three runs before chasing; may be noise.
-5. **Aims not met** (RUST.md): idle host RSS <= 10 MB (14.2), log-tail
-   host CPU <= 250 ms/MB (368), flood <= 5 ms/MB (6), flood host RSS <=
-   30 MB (36.9), typing host CPU <= mosh (0.9 vs 0.7%). Screen age vs
-   mosh (~55 ms behind) needs a catch-up design change, not a port fix:
-   propose it to the user before building it.
-6. **Not measured yet**: `make bench` throughput floor (terminal write
-   and snapshot encode within 5% of Go: port bench/'s Go benchmarks as
-   criterion or a plain timing test), RSS per extra idle session (100
-   sessions).
-7. **Small differences**: env entries without `=` are dropped (std's
-   Command can't pass them); osewa-bench usage text differs from Go's.
+Updated 2026-10-31 night at 814be1a; STATUS.md has the numbers.
+
+1. **Re-measure the real path** (mini-jp) with tonight's build: the WS
+   echo-under-download loss there (Rust 298-315 vs Go 187-190 ms) is the
+   one the TCP path bound (crates/server/src/path.rs, macOS via
+   TCP_CONNECTION_INFO) is meant to fix; it won every Docker link
+   (fiber 131 vs 185, cellular 73 vs 132 ms p50). Not run: ssh needed the
+   1Password agent.
+2. **Download meanwhile on the slow link** (0.06 vs Go 0.10 MB/s), the
+   price of that bound at 1 Mbit/s with 1% loss (few packets in flight,
+   so losses end in RTOs). Try a packet floor (say 10 x MSS) rather than
+   a bigger TYPING_QUEUE.
+3. **Diff screens instead of whole screens** for catch-up (mosh's
+   design): the remaining gap to mosh on screen age (~55 ms) and the W2
+   echo tail are screen bytes on the link. Protocol extension; ask the
+   user first.
+4. Busy Wi-Fi download alone (WS 0.87 vs 1.05, QUIC 0.99 vs 1.50 MB/s):
+   rerun before chasing; QUIC's is the known quinn-under-loss gap.
+5. Reattach +5-17 ms; keystroke-to-glyph p95 at noise level.
+6. Aims (RUST.md) still unmet: idle host RSS 14.3 MB, log tail 302 ms/MB,
+   flood 6 ms/MB and 35.6 MB, typing CPU 0.1 above mosh (the client's
+   remaining per-key wakeups: the CREDIT timer, INPUT_ACK and echo in
+   separate writes; see the clientcpu merge).
+7. Not measured: `make bench` throughput floor, RSS per extra idle
+   session. Small differences: env entries without `=`, osewa-bench usage
+   text.
 
 ## How the port was run (worked well)
 

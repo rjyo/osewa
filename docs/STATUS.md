@@ -19,7 +19,7 @@ Every Go component has a Rust port, steps 1-4 of RUST.md's port order:
 | osewa | cmd/osewa | same usage, ls columns, unit files and exit codes as Go's |
 | bench | bench/cmd/osewa-bench | byte-identical workloads and transfer pattern vs Go's |
 
-`cargo test`: 607 tests, every Go test of these packages ported (none
+`cargo test`: 627 tests, every Go test of these packages ported (none
 ignored). Each step got an independent review against PROTOCOL.md and
 the Go code; the findings are fixed (see the merge commits).
 
@@ -38,48 +38,63 @@ and `rust-all` everything passes except `TestM2EchoUnderFlood`'s W2
 tail, which sometimes misses its bound (below), and Go's own
 `TestLinuxUnits` (`server.TestTrace`), which failed once under load.
 
-## Benchmarks (2026-10-30/31, same rig and session, Go image vs Rust image)
+## Benchmarks (2026-10-31 night, same rig and session, Go image vs Rust image)
+
+Main at 814be1a. Every suite run Go image then Rust image back to back on
+a quiet machine (no builds, no subagents). Raw outputs:
+`bench/2026-10-31-night/`. One run each unless noted; the slow-link and
+M2 cells move 20-30 ms p50 between identical runs, so the sweeps behind
+the commits (several runs each) are quoted in the commit messages.
 
 ### Resource use (`make bench-res`), WebSocket rows
 
 | Workload | Measure | Go | Rust | Must | |
 | --- | --- | ---: | ---: | ---: | --- |
-| idle | host RSS | 29.7 MB | 14.2 MB | <= 20 | pass (aim <= 10 not met) |
-| idle | client CPU / RSS | 0.1% / 14.5 MB | 0.1% / 6.8 MB | <0.1% / <= 10 | CPU fail (0.1%), RSS pass |
-| typing | host CPU | 1.5% | 0.9% | <= 1.0% | pass (aim <= mosh 0.7% not met) |
-| typing | client CPU | 1.6% | 1.1% | <= 1.0% | **fail** |
-| log tail | host CPU per MB | 710 ms | 368 ms | <= 514 | pass (aim <= 250 not met) |
-| log tail | host RSS | 48.1 MB | 26.7 MB | <= 33 | pass (aim <= 25 not met) |
+| idle | host RSS | 29.9 MB | 14.3 MB | <= 20 | pass (aim <= 10 not met) |
+| idle | client CPU / RSS | 0.1% / 14.4 MB | <0.1% / 6.9 MB | <0.1% / <= 10 | **pass** (was 0.1%); RSS aim <= 6 not met |
+| typing | host CPU | 1.5% | 0.5% | <= 1.0% | pass; aim <= mosh (0.4% this run) not met by 0.1 |
+| typing | client CPU | 1.5% | 0.6% | <= 1.0% | **pass** (was 1.1%); aim <= mosh (0.5%) not met by 0.1 |
+| log tail | host CPU per MB | 710 ms | 302 ms | <= 514 | pass (aim <= 250 not met; was 368) |
+| log tail | host RSS | 46.5 MB | 25.7 MB | <= 33 | pass (aim <= 25 missed by 0.7) |
 | flood W2 | host CPU per MB | 8 ms | 6 ms | <= 8 | pass (aim <= 5 not met) |
-| flood W2 | host RSS | 71.1 MB | 36.9 MB | <= 40 | pass (aim <= 30 not met) |
-| flood W2 | client RSS | 22.7 MB | 8.6 MB | <= 15 | pass (aim met) |
+| flood W2 | host RSS | 70.7 MB | 35.6 MB | <= 40 | pass (aim <= 30 not met) |
+| flood W2 | client RSS | 22.6 MB | 9.2 MB | <= 15 | pass (aim met) |
 
 ### vs mosh (`make bench-mosh`), no loss / 1% loss
 
-| Measure | Go | Rust | Must <= Go |
-| --- | ---: | ---: | --- |
-| keystroke to glyph p95 | 2.2 / 1.8 ms | 2.5 / 3.0 ms | **fail** (0.3 / 1.2 ms; mosh itself moved 1.9-3.4 ms run to run) |
-| screen age W2 flood p50 | 133 / 187 ms | 138 / 146 ms | +5 ms / better |
-| screen age W2 flood p95 | 209 / 380 ms | 219 / 284 ms | +10 ms / better |
-| screen age W1, W4 p50 | 131 ms | 128-131 ms | pass |
-| recovery after network change | 620 / 754 ms | 422 / 734 ms | pass (aim 0.6 s met without loss) |
-| reattach from a new process | 308 / 298 ms | 323 / 319 ms | **fail** (+15-21 ms) |
-| bytes/min, W2 at 50 kB/s | 1.26 MB | 1.17 MB | pass (ties mosh) |
+| Measure | Go | Rust | mosh | Must <= Go |
+| --- | ---: | ---: | ---: | --- |
+| keystroke to glyph p95 | 2.8 / 4.6 ms | 3.7 / 3.5 ms | 1.0 / 0.9 ms | fail without loss (+0.9), pass with |
+| screen age W2 flood p50 | 132 / 152 ms | 133 / 138 ms | 78 ms | tie / pass |
+| screen age W2 flood p95 | 207 / 330 ms | 205 / 229 ms | 101 ms | pass |
+| screen age W1, W4 p50 | 132-140 ms | 128-134 ms | 76-78 ms | pass |
+| recovery after network change | 639 / 694 ms | 396 / 423 ms | 1.09 s | pass (aim <= 0.6 s met) |
+| reattach from a new process | 306 / 312 ms | 323 / 317 ms | not possible | **fail** (+17 / +5 ms) |
+| bytes/min, W2 at 50 kB/s | 1.26 MB | 1.06 MB | 1.12 MB | pass (aim <= mosh **met**) |
 
-Screen age is still ~55 ms behind mosh: the holder keeps Go's catch-up
-design, so beating mosh needs a design change, not a port.
+Screen age is still ~55 ms behind mosh: catch-up sends whole screens,
+mosh sends diffs (see Open).
 
 ### vs ssh (`make bench-vs`), Go client against each server, WS / QUIC
 
-Far fiber and cellular: every cell within noise of Go. Busy Wi-Fi:
-download alone 0.80 / 0.97 vs Go 0.98 / 1.27 MB/s, but ssh moved
-0.99 → 0.75 between the two runs (1% loss); echo under download 84 / 45
-vs 82 / 60 ms. Slow link: connect + run 741 / 509 vs 1201 / 831 ms
-(better); echo under download p50 **151 / 183 vs 108 / 162 ms (worse)**.
-Every echo-under-download cell still beats ssh (>15 s on the slow link).
-One run each.
+| Link | Echo under download p50/p95, WS | Go WS | Download meanwhile WS | Go |
+| --- | ---: | ---: | ---: | ---: |
+| far fiber, 120 ms | **131 / 163** | 185 / 240 | 5.57 | 5.92 |
+| cellular, 60 ms | **73 / 90** | 132 / 188 | 1.07 | 1.18 |
+| busy Wi-Fi, 1% loss | **59 / 122** | 67 / 151 | 0.92 | 1.03 |
+| slow 1 Mbit/s | **125 / 191** | 163 / 251 | **0.06** | 0.10 |
 
-### Real path (mini-jp, 122 ms, 2026-10-31)
+QUIC echo under download within noise of Go everywhere (fiber 188 vs
+184, cellular 138 vs 136, Wi-Fi 44 vs 55, slow 154 vs 205). Losses:
+download meanwhile on the slow link (0.06 vs 0.10, the price of the
+typing-time path bound, below); busy Wi-Fi download alone 0.87 / 0.99 vs
+Go 1.05 / 1.50 MB/s (ssh 0.92 vs 0.93: the link was the same; the QUIC
+gap is the known quinn-under-loss one, the WS one is new or noise,
+unexplained). Connect + run within noise except the slow link's WS cell
+(1147 vs 832 ms, one run; 540-625 in five earlier runs tonight). Every
+echo-under-download cell beats ssh (>15 s on the slow link).
+
+### Real path (mini-jp, 122 ms, 2026-10-31, before tonight's changes)
 
 Go server (launchd, :7322) and the Rust server (beside it on :7323,
 same keys), Go vsssh as the client for both, alternating, same session.
@@ -110,21 +125,37 @@ the same as the Docker slow link.
 
 ### Echo under flood (e2e TestM2EchoUnderFlood, 1 Mbit/s, 100 ms, 1% loss)
 
-W1, W4 p50 at or below Go (129-131 vs 131 ms). W2 p50 185-218 vs
-166-198 ms; **W2 p95 553 ms-1.17 s vs 350-409 ms**: an open loss.
+W1 and W4 at Go (129-137 ms p50). W2, p50/p95, three alternating pairs
+tonight: Rust 149/664, 150/529, 152/688 ms; Go 158/738, 255/744, 220/501.
+The W2 p50 gap (Rust 176 vs Go 152 before) was the WebSocket deflate
+level (3.55x vs Go's 5.46x on W2 screens; fixed in 3c69299). The tail is
+screen size, not the holder: a trace (TestEchoBreakdown with W2) shows
+every echo's screen cut and READY written 20 ms after the input, and the
+slow keystrokes are the ones whose screen is 70-134 KB before deflate.
 
 ## Open
 
-- **WebSocket echo under download** (real path +110 ms, Docker slow link
-  +43 ms): the Rust server lets more bulk ahead of a keystroke over TCP.
-  NOTSENT_LOWAT is set on macOS and Linux; suspects are the carrier/TLS
-  write path buffering and exec flight's typing tighten.
-- W2 echo tail and slow-link echo under download: the holder's catch-up
-  path under a heavy flood. Next step: OSEWA_TRACE breakdown
-  (TestEchoBreakdown) on both images.
-- Typing client CPU 1.1% (must 1.0%), idle client 0.1% (must <0.1%).
-- Reattach +15-21 ms and keystroke p95: re-measure over several runs
-  before chasing.
+- **Screen age and W2 tail vs mosh.** Catch-up sends whole libghostty
+  screens (W2: 12-134 KB raw, ~5.5x deflated); mosh sends diffs against
+  the state the client acknowledged, one frame per interval. Beating it
+  needs a protocol extension (a feature in HELLO/WELCOME: the holder
+  sends VT that turns the client's acknowledged screen into the current
+  one, falling back to a screen). Needs the user's decision and a Go
+  client change for the e2e rig to measure it.
+- **Download meanwhile on the slow link** (0.06 vs Go 0.10 MB/s): the
+  typing-time path bound keeps ~9 packets in flight at 1 Mbit/s, so a
+  1% loss often has too few later packets for fast retransmit. Knob:
+  path::TYPING_QUEUE (10 ms); a 25 ms run didn't do better.
+- **Real path not re-measured**: tonight's changes (path bound on macOS
+  via TCP_CONNECTION_INFO, dense deflate) target the WS echo-under-
+  download loss there (298-315 vs Go 187-190 ms), but ssh to mini-jp
+  needed the 1Password agent, and staging a binary through osewa exec was
+  not permitted unattended.
+- Reattach +5-17 ms, keystroke p95 noise-level, busy Wi-Fi download
+  alone (above).
+- Aims not met: idle host RSS 14.3 (<= 10), log tail host CPU 302 ms/MB
+  (<= 250), flood 6 ms/MB (<= 5), flood RSS 35.6 (<= 30), typing host and
+  client CPU 0.1 above mosh.
 - Not yet measured: `make bench` throughput floor, RSS per extra idle
   session.
 - Go's vsssh leaves its sessions behind (two `cat` holders per run).
