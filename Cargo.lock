@@ -450,6 +450,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "osewa-mirror"
+version = "0.1.0"
+dependencies = [
+ "osewa-client",
+ "osewa-ghostty",
+ "osewa-wire",
+ "tokio",
+]
+
+[[package]]
 name = "osewa-paths"
 version = "0.1.0"
 dependencies = [
