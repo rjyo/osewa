@@ -14,6 +14,8 @@ code disagree, the Go code is right and the doc gets fixed.
 | `crates/holder/` | One process per session: PTY, terminal, output log, queue, input, owner |
 | `crates/server/` | TLS + WebSocket server: holder spawning and relaying, channel streams, flight control |
 | `crates/execproc/` | Processes without a PTY for exec.start |
+| `crates/client/` | Client library (no libghostty): connect, attach, resume, channels, Link, hosts.json, install, login |
+| `crates/mirror/` | libghostty mirror terminal (a client Renderer) and echo prediction |
 | `crates/osewa/` | Single binary, same CLI as the Go `osewa` |
 
 ## Rules
