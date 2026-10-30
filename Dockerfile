@@ -55,8 +55,13 @@ COPY --from=build /out/osewa /usr/local/bin/osewa-rs
 ENV OSEWA_HOLDER=/usr/local/bin/osewa-rs
 
 # The Go image with the Rust osewa in its place: a Rust server spawning
-# Rust holders, driven by the Go e2e harness and Go clients. The Rust
-# osewa-bench replaces the Go one too: same command line, output, workload
-# and pattern bytes (crates/bench/tests/go_parity.rs).
+# Rust holders, driven by the Go e2e harness and Go clients. osewa-bench
+# stays Go's: it is part of the measuring harness, which must be the same
+# for both sides of a comparison (docs/RUST.md, Rules).
 FROM ${GO_IMAGE} AS rust
-COPY --from=build /out/osewa /out/osewa-bench /usr/local/bin/
+COPY --from=build /out/osewa /usr/local/bin/
+
+# rust plus the Rust osewa-bench, for functional e2e runs of everything
+# Rust (crates/bench/tests/go_parity.rs checks the formats and bytes).
+FROM rust AS rust-all
+COPY --from=build /out/osewa-bench /usr/local/bin/
