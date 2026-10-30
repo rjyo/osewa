@@ -276,6 +276,18 @@ impl Predictor {
         self.cfg.timeout.max(3 * self.srtt)
     }
 
+    /// When `check` would next time a prediction out with no output
+    /// arriving, so a caller can sleep until then instead of polling: None
+    /// while nothing is pending.
+    pub fn deadline(&self) -> Option<Instant> {
+        let timeout = self.timeout();
+        self.preds
+            .iter()
+            .filter(|pr| pr.p.state == CellState::Tentative)
+            .map(|pr| pr.at + timeout)
+            .min()
+    }
+
     pub(crate) fn new_epoch(&mut self) {
         self.epoch += 1;
         self.confirmed = false;

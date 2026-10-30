@@ -124,6 +124,54 @@ fn forward_input_waits_for_take() {
     assert!(st.1.concat() == "\r" && st.2.concat() == "ls\r", "before {:?}, after {:?}", st.1, st.2);
 }
 
+/// An attached UI over a mirror showing a prompt, predicting with timeout.
+fn predicting_ui(timeout: Duration) -> crate::ui::Attached {
+    use osewa_ghostty::{self as ghostty, Terminal};
+    use osewa_mirror::{PredictMode, Predictor, PredictorConfig};
+    let pred = Predictor::new(PredictorConfig { mode: PredictMode::Always, timeout, ..Default::default() });
+    let a = crate::ui::Attached::new(crate::ui::Ui::new(Box::new(Buf::default()), true, pred), "me".into());
+    let mut t = Terminal::new(20, 4, ghostty::Options::default()).unwrap();
+    t.write(b"$ ");
+    let snap = t.snapshot().unwrap();
+    a.m.snapshot_begin(&osewa_wire::SnapshotBegin { history: Some(false), ..Default::default() }).unwrap();
+    a.m.snapshot_data(&snap[..ghostty::ready_end(&snap)], false).unwrap();
+    a.m.snapshot_ready().unwrap();
+    a.m.snapshot_end().unwrap();
+    let mode = osewa_wire::EventMsg { echo: Some(true), canonical: Some(true), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_INPUT_MODE) };
+    a.m.event(&mode, true).unwrap();
+    a
+}
+
+/// The ticker sleeps while nothing is predicted, and wakes for a guess's
+/// timeout rather than on a period: an idle attach costs no CPU.
+#[test]
+fn ticker_wakes_only_for_prediction_deadlines() {
+    let a = predicting_ui(Duration::from_millis(200));
+    let wakes = || a.ui.lock().unwrap().ticker_wakes;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let _rt = rt.enter();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let t = rt.spawn(crate::attach::ticker(a.clone(), async move {
+        let _ = stopped.await;
+    }));
+    rt.block_on(tokio::time::sleep(Duration::from_millis(500)));
+    assert_eq!(wakes(), 1, "the ticker woke with nothing predicted");
+
+    a.predict("ab");
+    a.predict("c"); // more typing only pushes the deadline out
+    assert!(a.ui.lock().unwrap().pred.pending(), "nothing predicted");
+    rt.block_on(tokio::time::sleep(Duration::from_millis(100)));
+    assert!(a.ui.lock().unwrap().pred.pending(), "dropped before the timeout");
+    rt.block_on(tokio::time::sleep(Duration::from_millis(250)));
+    assert!(!a.ui.lock().unwrap().pred.pending(), "kept past the timeout");
+    // Woken by the first guess, then once at the deadline.
+    assert_eq!(wakes(), 3, "ticker wakes");
+    rt.block_on(tokio::time::sleep(Duration::from_millis(300)));
+    assert_eq!(wakes(), 3, "the ticker woke again with nothing predicted");
+    let _ = stop.send(());
+    rt.block_on(t).unwrap();
+}
+
 #[test]
 fn viewer_notices() {
     for (owner, me, want) in [("phone-abcd", "mac-1234", "phone owns"), ("mac-abcd", "mac-1234", "another window on this device owns"), ("", "mac-1234", "nobody owns")] {
