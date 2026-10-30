@@ -53,7 +53,7 @@ mod tests;
 pub use channel::{Exec, ExecOptions, ExecStderr, ExecStdin, ExecStdout, Forward, Output};
 pub use conn::{Conn, CreateOptions};
 pub use link::Link;
-pub use rt::block_on;
+pub use rt::{block_on, sleep, timeout};
 pub use session::{AttachOptions, InputMode, Renderer, RendererError, Session};
 
 /// The libghostty commit whose snapshots this build decodes, as in
@@ -119,8 +119,13 @@ pub(crate) struct Knobs {
     /// Replaces the TCP connect.
     pub dial: Option<dial::TcpDial>,
     /// Runs between taking a response off pending and running its hook.
-    pub response_taken: Option<Arc<dyn Fn(&Conn, &wire::Response) + Send + Sync>>,
+    pub response_taken: Option<ResponseTaken>,
+    /// Traces into this directory, whatever OSEWA_TRACE says (tests run in
+    /// parallel in one process).
+    pub trace_dir: Option<std::path::PathBuf>,
 }
+
+pub(crate) type ResponseTaken = Arc<dyn Fn(&Conn, &wire::Response) + Send + Sync>;
 
 /// Why a call failed. Errors are values: cheap to clone, so one
 /// connection's error can be every waiter's.
