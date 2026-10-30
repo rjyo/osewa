@@ -75,8 +75,9 @@ impl Write for Out {
 }
 
 pub(crate) type Stdin = Box<dyn Read + Send>;
-/// Puts the terminal in raw mode and returns what restores it.
-pub(crate) type RawFn = Arc<dyn Fn() -> io::Result<Box<dyn FnOnce() + Send>> + Send + Sync>;
+/// Puts the terminal in raw mode and returns what restores it, or None
+/// when there was nothing to do (stdin is no terminal).
+pub(crate) type RawFn = Arc<dyn Fn() -> io::Result<Option<Box<dyn FnOnce() + Send>>> + Send + Sync>;
 
 /// What the client commands run with (Go's env).
 #[derive(Clone)]
@@ -95,8 +96,7 @@ pub(crate) struct Env {
     pub ssh_config: Option<SshConfigFn>,
     /// How login checks a host; None dials it.
     pub check: Option<CheckFn>,
-    /// Raw mode; None uses stdin's tty.
-    #[allow(dead_code)] // attach's
+    /// Raw mode for attach; None leaves the terminal alone.
     pub raw: Option<RawFn>,
     /// Overrides the process's client id, for tests that need two.
     pub id: String,
@@ -110,7 +110,10 @@ pub(crate) struct Env {
 impl Env {
     /// This process's: stdin, stdout, stderr and the config directory.
     pub fn process() -> Env {
-        Env::new(io::stdin(), io::stdout(), io::stderr(), osewa_client::hosts::default_dir())
+        let mut e = Env::new(io::stdin(), io::stdout(), io::stderr(), osewa_client::hosts::default_dir());
+        // Raw mode when stdin is a terminal.
+        e.raw = Some(Arc::new(|| if crate::tty::is_terminal(0) { crate::tty::make_raw(0).map(Some) } else { Ok(None) }));
+        e
     }
 
     pub fn new(stdin: impl Read + Send + 'static, stdout: impl Write + Send + 'static, stderr: impl Write + Send + 'static, dir: PathBuf) -> Env {

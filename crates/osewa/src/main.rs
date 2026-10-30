@@ -9,12 +9,11 @@ mod cli;
 mod commands;
 mod daemon;
 mod service;
+mod render;
 mod status;
-// Parts of these serve only the attach UI, ported separately.
-#[allow(dead_code)]
 mod tty;
+mod ui;
 mod update;
-#[allow(dead_code)]
 mod vtfilter;
 
 #[cfg(test)]

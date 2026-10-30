@@ -242,7 +242,6 @@ pub(crate) fn idle_string(d: Duration) -> String {
 
 /// Chooses what `attach <host>` attaches to: the only running session, or
 /// a new one when there is none.
-#[allow(dead_code)] // attach's
 pub(crate) async fn pick_session(c: &Conn, cols: i64, rows: i64) -> Result<String> {
     let list = c.list().await?;
     let running: Vec<_> = list.into_iter().filter(|s| !s.exited).collect();
