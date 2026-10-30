@@ -364,3 +364,18 @@ fn path_falls_back_to_server() {
         })
     });
 }
+
+// Errors read as the Go server's do.
+#[test]
+fn error_texts() {
+    rt().block_on(async {
+        let e = Proc::start(argv(&["/nonexistent/osewa-no-such-program"])).err().unwrap();
+        assert_eq!(e.to_string(), "execproc: program not found: fork/exec /nonexistent/osewa-no-such-program: no such file or directory");
+        let e = Proc::start(Options { dir: "/nonexistent/osewa".into(), ..argv(&["true"]) }).err().unwrap();
+        assert_eq!(e.to_string(), "execproc: dir: stat /nonexistent/osewa: no such file or directory");
+        let e = Proc::start(argv(&["osewa-no-such-program"])).err().unwrap();
+        assert!(e.to_string().starts_with("execproc: program not found: osewa-no-such-program not in PATH \""), "{e}");
+    });
+    assert_eq!(go_error(&io::Error::from_raw_os_error(libc::ECONNREFUSED)), "connection refused");
+    assert_eq!(go_error(&io::Error::other("plain")), "plain");
+}

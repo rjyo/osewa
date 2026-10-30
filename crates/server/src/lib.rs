@@ -25,6 +25,7 @@ use tokio::sync::Notify;
 mod channel;
 mod client;
 pub mod conn;
+mod dial;
 mod flight;
 mod limits;
 mod lowat;
@@ -75,6 +76,9 @@ pub struct Tunables {
     pub max_streams: usize,
     /// Create, list and kill requests in flight per client.
     pub max_busy: usize,
+    /// Bounds the TLS handshake and the WebSocket upgrade together, as
+    /// Go's http.Server's ReadHeaderTimeout covers both.
+    pub handshake_timeout: Duration,
 }
 
 impl Default for Tunables {
@@ -96,6 +100,7 @@ impl Default for Tunables {
             kill_grace: osewa_execproc::KILL_GRACE,
             max_streams: wire::MAX_STREAMS,
             max_busy: 16,
+            handshake_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -145,9 +150,9 @@ pub struct Server {
     log: RefCell<limits::LimitedLog<io::Stderr>>,
 }
 
-/// Bounds the TLS handshake, as Go's http.Server does with its
-/// ReadHeaderTimeout.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a stopping server waits for its QUIC clients' closes to be
+/// sent and acknowledged.
+const QUIC_DRAIN: Duration = Duration::from_secs(1);
 
 /// The WebSocket carrier.
 struct WsConn<S>(osewa_carrier::ws::Conn<S>);
@@ -300,14 +305,14 @@ impl Server {
             lowat::tune(tcp.as_raw_fd());
             let (srv, tls, ws) = (self.clone(), tls.clone(), ws.clone());
             tokio::task::spawn_local(async move {
-                let t = tokio::time::timeout(HANDSHAKE_TIMEOUT, tls.accept(tcp)).await;
-                let stream = match t {
+                let deadline = tokio::time::Instant::now() + srv.cfg.tune.handshake_timeout;
+                let stream = match tokio::time::timeout_at(deadline, tls.accept(tcp)).await {
                     Ok(Ok(s)) => s,
                     Ok(Err(e)) => return srv.log.borrow_mut().line(&format!("http: TLS handshake error from {peer}: {e}")),
                     Err(_) => return srv.log.borrow_mut().line(&format!("http: TLS handshake error from {peer}: timeout")),
                 };
                 // A refused upgrade has had its answer; nothing to log.
-                let Ok(conn) = ws.accept(stream).await else { return };
+                let Ok(Ok(conn)) = tokio::time::timeout_at(deadline, ws.accept(stream)).await else { return };
                 srv.serve_conn(Rc::new(WsConn(conn))).await;
             });
         }
@@ -336,20 +341,31 @@ impl Server {
             let Some(incoming) = incoming else { break };
             let srv = self.clone();
             tokio::task::spawn_local(async move {
-                // A refused device fails here, in the handshake.
-                let Ok(qc) = incoming.await else { return };
-                let accepted = tokio::time::timeout(HANDSHAKE_TIMEOUT, quic::accept(qc.clone())).await;
-                let Ok(Ok(conn)) = accepted else {
+                // One deadline for the handshake (where a refused device
+                // fails) and the main stream's first frame, as over TCP.
+                let deadline = tokio::time::Instant::now() + srv.cfg.tune.handshake_timeout;
+                let Ok(Ok(qc)) = tokio::time::timeout_at(deadline, incoming).await else { return };
+                let Ok(Ok(conn)) = tokio::time::timeout_at(deadline, quic::accept(qc.clone())).await else {
                     qc.close(0u32.into(), b"");
                     return;
                 };
                 srv.serve_conn(Rc::new(QuicConn(conn))).await;
             });
         }
-        // close has told every client; their CONNECTION_CLOSE frames go out
-        // before the socket does.
-        ep.close(0u32.into(), b"");
-        let _ = tokio::time::timeout(Duration::from_secs(1), ep.wait_idle()).await;
+        // close is telling every client (going away); give their
+        // CONNECTION_CLOSEs a moment to go out before the socket does, and
+        // refuse new handshakes meanwhile instead of leaving them to time
+        // out.
+        let drain = tokio::time::sleep(QUIC_DRAIN);
+        tokio::pin!(drain);
+        loop {
+            tokio::select! {
+                _ = &mut drain => break,
+                _ = ep.wait_idle() => break,
+                Some(incoming) = ep.accept() => incoming.refuse(),
+            }
+        }
+        ep.close(conn::CLOSE_GOING_AWAY.into(), b"server closing");
         Ok(())
     }
 
@@ -412,9 +428,16 @@ impl Server {
     /// Connects to a session's holder and introduces client_id.
     async fn dial_holder(&self, id: &str, client_id: &str) -> io::Result<UnixStream> {
         let t = &self.cfg.tune;
-        let mut conn = tokio::time::timeout(t.dial_timeout, UnixStream::connect(self.socket_path(id)))
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "dial holder: i/o timeout"))??;
+        let path = self.socket_path(id);
+        // Worded as Go's net.Dial, which clients show.
+        let mut conn = match tokio::time::timeout(t.dial_timeout, UnixStream::connect(&path)).await {
+            Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, format!("dial unix {}: i/o timeout", path.display()))),
+            Ok(Err(e)) => {
+                let msg = format!("dial unix {}: connect: {}", path.display(), osewa_execproc::go_error(&e));
+                return Err(io::Error::new(e.kind(), msg));
+            }
+            Ok(Ok(c)) => c,
+        };
         let hello = wire::Hello { version: wire::VERSION, client_id: client_id.into(), ..Default::default() };
         let mut b = Vec::new();
         wire::json(wire::TYPE_HELLO, 0, &hello).encode_to(&mut b)?;
@@ -567,7 +590,8 @@ async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Res
     let r = match tokio::time::timeout(timeout, br.read_line(&mut line)).await {
         Err(_) => Err("server: holder did not become ready".to_string()),
         Ok(_) if line.trim() == "ready" => Ok(()),
-        Ok(Ok(_)) if line.is_empty() => Err("server: holder exited before ready: EOF".into()),
+        // EOF before a whole line, as Go's ReadString reports it.
+        Ok(Ok(_)) if !line.ends_with('\n') => Err("server: holder exited before ready: EOF".into()),
         Ok(Err(e)) => Err(format!("server: holder exited before ready: {e}")),
         Ok(Ok(_)) => Err(format!("server: holder said {}", wire::go_quote(&line))),
     };

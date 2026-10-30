@@ -350,6 +350,17 @@ every controller's sends over the RTT, with no setting.
   server accepts at once and bounds the wait for the main stream to 10 s,
   as Go does.
 
+**TODO (WebSocket, not this carrier): deflating incompressible channel
+data.** The WebSocket compresses every message over its threshold,
+CHANNEL_DATA included, as Go's coder/websocket does; on random or
+already-compressed data that is CPU for nothing. The loopback smoke test
+(`server/src/tests/quic.rs`, 32 MB of exec output from /dev/urandom,
+in-process server, release build, 3 runs) downloads at 63-67 MB/s over the
+WebSocket against 206-211 MB/s over QUIC, whose lanes are never deflated;
+echo p50 134-138 against 79-87 us. Worth trying: leave channel data
+uncompressed on the WebSocket too (as lanes are), or give up on a stream
+whose frames don't shrink.
+
 ## Open questions
 
 1. **Dependency.** quic-go is a new dependency, with more under it
