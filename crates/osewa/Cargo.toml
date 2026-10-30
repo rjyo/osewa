@@ -14,7 +14,7 @@ osewa-wire.workspace = true
 osewa-ghostty.workspace = true
 osewa-holder.workspace = true
 osewa-server.workspace = true
+osewa-auth.workspace = true
 
 [dev-dependencies]
-osewa-auth.workspace = true
 libc.workspace = true

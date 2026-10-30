@@ -510,7 +510,7 @@ async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Res
         Ok(_) if line.trim() == "ready" => Ok(()),
         Ok(Ok(_)) if line.is_empty() => Err("server: holder exited before ready: EOF".into()),
         Ok(Err(e)) => Err(format!("server: holder exited before ready: {e}")),
-        Ok(Ok(_)) => Err(format!("server: holder said {:?}", line)),
+        Ok(Ok(_)) => Err(format!("server: holder said {}", wire::go_quote(&line))),
     };
     if r.is_err() {
         let _ = child.start_kill();
