@@ -495,3 +495,44 @@ fn create_options() {
     let r = f.lock().creates[0].clone();
     assert!(r.cwd == "/tmp" && r.env == ["A=1"] && r.argv == ["sh"], "create request {r:?}");
 }
+
+/// Over QUIC the stream.close RESPONSE may overtake the channel's last
+/// data and its STREAM_END (they ride different QUIC streams). The
+/// response ends nothing: data and the exit code still arrive.
+#[test]
+fn close_response_before_stream_end() {
+    let f = Fake::new();
+    f.set(|st| {
+        st.close_response_first = true;
+        st.close_signal = Some(libc::SIGHUP);
+    });
+    let c = f.dial("a");
+    let e = run(c.exec(exec_opts(&["sh", "-c", "trap 'echo last; exit 5' HUP; echo first; while :; do sleep 0.05; done"]))).unwrap();
+    let out = e.stdout();
+    let mut buf = [0u8; 6];
+    let mut r = out.clone();
+    run(r.read_exact(&mut buf)).unwrap();
+    assert_eq!(&buf, b"first\n");
+    // stream.close as the server sees it, without closing locally: the
+    // response comes back first.
+    let stream = e.stream_id();
+    run(c.request(wire::Request { method: wire::METHOD_STREAM_CLOSE.into(), stream, ..Default::default() }, None)).unwrap();
+    assert!(!e.is_over(), "the response ended the stream");
+    assert_eq!(run(out.read_to_end()).unwrap(), b"last\n", "output after the response");
+    assert_eq!(run(e.wait()).unwrap(), 5);
+
+    // Exec::close: its response first, the exit code still follows.
+    f.set(|st| st.close_signal = None);
+    let e = run(c.exec(exec_opts(&["sleep", "30"]))).unwrap();
+    run(e.close()).unwrap();
+    assert_eq!(run(e.wait()).unwrap(), 137, "wait after close");
+
+    // A forward closed with the response first ends cleanly too.
+    let (host, port) = echo_server();
+    let fc = run(c.dial_forward(&host, port)).unwrap();
+    run(fc.write_all(b"x")).unwrap();
+    let mut b = [0u8; 1];
+    run(fc.read(&mut b)).unwrap();
+    fc.close();
+    run(c.list()).unwrap();
+}

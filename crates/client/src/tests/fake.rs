@@ -138,6 +138,11 @@ pub(crate) struct FState {
     /// Grants DATA only as PROTOCOL.md requires at the least: every 8 KiB
     /// written, or 50 ms after.
     pub lazy_grant: bool,
+    /// Answer stream.close before the channel's last data and STREAM_END,
+    /// as a QUIC server may: its streams don't keep order between them.
+    pub close_response_first: bool,
+    /// What stream.close sends an exec's process group (default SIGKILL).
+    pub close_signal: Option<i32>,
     pub chans: HashMap<u64, FakeChan>,
     /// Every channel stream opened, in order.
     pub chan_order: Vec<u64>,
@@ -895,11 +900,15 @@ fn request(fi: &Arc<FakeInner>, st: &mut FState, cid: u64, req: wire::Request) -
                 None => r.error = wire::ERR_NOT_FOUND.into(),
                 Some(key) => {
                     let ch = st.chans.get_mut(&key).unwrap();
-                    ch.on_end.push(req.id);
+                    if st.close_response_first {
+                        respond(&mut st.conns, cid, wire::Response { id: req.id, ..Default::default() });
+                    } else {
+                        ch.on_end.push(req.id);
+                    }
                     if ch.forward {
                         end_chan(fi, &mut st.conns, ch, &wire::StreamEnd { reason: wire::END_CLOSED.into(), exit_code: None });
-                    } else {
-                        stop(ch);
+                    } else if let Some(pid) = ch.pid {
+                        unsafe { libc::kill(-pid, st.close_signal.unwrap_or(libc::SIGKILL)) };
                     }
                     return Vec::new();
                 }
