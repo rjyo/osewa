@@ -406,6 +406,7 @@ dependencies = [
  "osewa-paths",
  "osewa-wire",
  "rand",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
