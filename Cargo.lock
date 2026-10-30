@@ -476,6 +476,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "osewa-bench"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "httparse",
+ "libc",
+ "osewa-auth",
+ "osewa-client",
+ "osewa-flag",
+ "osewa-ghostty",
+ "osewa-holder",
+ "osewa-mirror",
+ "osewa-wire",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tokio",
+]
+
+[[package]]
 name = "osewa-carrier"
 version = "0.1.0"
 dependencies = [
