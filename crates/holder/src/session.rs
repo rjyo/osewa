@@ -20,7 +20,7 @@ use crate::{valid_size, Config, MAX_RECORD_DATA};
 /// Caps one connection's parked input payloads; past it events are acked
 /// and dropped. Clients keep less than half this unacked (docs/PROTOCOL.md,
 /// Input), so they never reach it.
-const MAX_PARKED_INPUT: usize = 1 << 20;
+pub(crate) const MAX_PARKED_INPUT: usize = 1 << 20;
 /// Bounds SNAPSHOT_DATA and SNAPSHOT_HISTORY payloads.
 const CHUNK_SIZE: usize = 64 << 10;
 
@@ -40,35 +40,59 @@ pub(crate) struct Stream {
     pub cols: i64,
     pub rows: i64,
     /// The last snapshot's position; earlier records are in it.
-    from: u64,
+    pub from: u64,
     // Catch-up (docs/PROTOCOL.md, Lagging clients and catch-up).
     /// Sending screen snapshots; scrollback is owed.
     pub catch_up: bool,
     /// In catch-up, but records follow the last screen.
     pub streaming: bool,
     /// Record bytes since the last screen, while screens only.
-    skipped: i64,
+    pub skipped: i64,
     /// The last screen's SNAPSHOT_DATA bytes.
-    screen_bytes: i64,
+    pub screen_bytes: i64,
     /// A screen snapshot is queued and not yet written.
     pub screen_pending: bool,
     /// Fell behind again while one was pending.
     pub need_screen: bool,
     /// The pending screen was cut for the owner's input.
-    input_pending: bool,
+    pub input_pending: bool,
     /// The needed screen is owed to the owner's input.
-    need_input: bool,
+    pub need_input: bool,
     /// The pending screen abandoned a partly sent one.
-    abandoner: bool,
+    pub abandoner: bool,
     /// Bumped by every snapshot, to cancel a held screen.
-    hold_token: u64,
+    pub hold_token: u64,
     /// Bumped to cancel a pending exit from catch-up.
-    catch_token: u64,
+    pub catch_token: u64,
     pub ack_gen: u32,
     pub ack_end: u64,
 }
 
 impl Stream {
+    pub fn new(uid: u64, id: u32, cols: i64, rows: i64) -> Stream {
+        Stream {
+            uid,
+            id,
+            snaps: 0,
+            cols,
+            rows,
+            from: 0,
+            catch_up: false,
+            streaming: false,
+            skipped: 0,
+            screen_bytes: 0,
+            screen_pending: false,
+            need_screen: false,
+            input_pending: false,
+            need_input: false,
+            abandoner: false,
+            hold_token: 0,
+            catch_token: 0,
+            ack_gen: 0,
+            ack_end: 0,
+        }
+    }
+
     /// Sending screens only; one that streams records again gets its echo
     /// as output.
     pub fn screens_only(&self) -> bool {
@@ -77,10 +101,10 @@ impl Stream {
 }
 
 pub(crate) struct Parked {
-    input: wire::Input,
-    size: usize,
+    pub input: wire::Input,
+    pub size: usize,
     /// An event that didn't fit: acked in its turn but never applied.
-    drop: bool,
+    pub drop: bool,
 }
 
 pub(crate) struct Conn {
@@ -90,8 +114,8 @@ pub(crate) struct Conn {
     pub wake: Rc<Notify>,
     /// Input waiting, unapplied and unacked, for the child to read stdin.
     /// The reader never stops reading, or CREDIT would stall too.
-    parked: VecDeque<Parked>,
-    parked_bytes: usize,
+    pub parked: VecDeque<Parked>,
+    pub parked_bytes: usize,
     pub client: String,
     pub stream: Option<Stream>,
     pub writer: Option<JoinHandle<()>>,
@@ -275,7 +299,7 @@ impl Session {
         Ok(s)
     }
 
-    fn split(&mut self, cid: u64) -> Option<(&mut Core, &mut Conn)> {
+    pub fn split(&mut self, cid: u64) -> Option<(&mut Core, &mut Conn)> {
         let Session { core, conns } = self;
         conns.get_mut(&cid).map(|c| (core, c))
     }
@@ -396,7 +420,7 @@ impl Session {
     /// still stay inside the credit window. It never drops part of another
     /// input screen, so fast typing can't keep the client from finishing
     /// one.
-    fn input_screen(&mut self) {
+    pub fn input_screen(&mut self) {
         self.core.echo_armed = false;
         let Session { core, conns } = self;
         for c in conns.values_mut() {
@@ -649,27 +673,7 @@ impl Session {
             core.end_stream(c, wire::END_DETACHED);
         }
         core.next_uid += 1;
-        let st = Stream {
-            uid: core.next_uid,
-            id: req.stream,
-            snaps: 0,
-            cols: req.cols,
-            rows: req.rows,
-            from: 0,
-            catch_up: false,
-            streaming: false,
-            skipped: 0,
-            screen_bytes: 0,
-            screen_pending: false,
-            need_screen: false,
-            input_pending: false,
-            need_input: false,
-            abandoner: false,
-            hold_token: 0,
-            catch_token: 0,
-            ack_gen: 0,
-            ack_end: 0,
-        };
+        let st = Stream::new(core.next_uid, req.stream, req.cols, req.rows);
         let client = c.client.clone();
         if !self.core.exited {
             if req.own {
@@ -764,7 +768,7 @@ impl Session {
         Ok(())
     }
 
-    fn set_owner(&mut self, client: &str) {
+    pub fn set_owner(&mut self, client: &str) {
         // Taking ownership, even again, cancels a pending lapse.
         self.core.owner_token += 1;
         if client == self.core.owner {
@@ -847,7 +851,7 @@ impl Session {
         self.finish();
     }
 
-    fn handle_input(&mut self, cid: u64, input: wire::Input, size: usize) {
+    pub fn handle_input(&mut self, cid: u64, input: wire::Input, size: usize) {
         let Some(c) = self.conns.get_mut(&cid) else { return };
         // Only the owner's input waits for the child. A viewer's is acked and
         // dropped at once, and never queues behind the owner's.
@@ -1222,14 +1226,16 @@ impl Core {
     /// Cuts a snapshot at the log's end and queues it as a new generation:
     /// with history, or only the screen (through READY) for catch-up.
     /// Records from the end on follow through broadcast.
-    fn send_snapshot(&mut self, c: &mut Conn, history: bool, reason: &str) {
+    pub fn send_snapshot(&mut self, c: &mut Conn, history: bool, reason: &str) {
         // A screen snapshot stops the encoder at READY, so its cost doesn't
         // grow with scrollback.
         let cut = Instant::now();
-        let snap = if self.cfg.tune.fail_encode {
-            Err(())
-        } else if history {
-            self.term.snapshot().map_err(|_| ())
+        let snap = if history {
+            if self.cfg.tune.fail_encode {
+                Err(())
+            } else {
+                self.term.snapshot().map_err(|_| ())
+            }
         } else {
             self.term.snapshot_screen_compact().map_err(|_| ())
         };
@@ -1372,8 +1378,29 @@ impl Core {
     /// its pid, and so its group id, may belong to someone else.
     pub fn signal_group(&self, sig: libc::c_int) {
         if !self.reaped.get() && self.pid > 0 {
-            unsafe { libc::kill(-self.pid, sig) };
+            kill_group(self.pid, sig);
         }
+    }
+}
+
+#[cfg(not(test))]
+fn kill_group(pgid: i32, sig: libc::c_int) {
+    unsafe { libc::kill(-pgid, sig) };
+}
+
+#[cfg(test)]
+pub(crate) type KillGroup = Box<dyn Fn(i32, libc::c_int)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Replaces kill_group on this thread, for tests.
+    pub(crate) static KILL_GROUP: RefCell<Option<KillGroup>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn kill_group(pgid: i32, sig: libc::c_int) {
+    if KILL_GROUP.with(|k| k.borrow().as_ref().map(|f| f(pgid, sig)).is_none()) {
+        unsafe { libc::kill(-pgid, sig) };
     }
 }
 
