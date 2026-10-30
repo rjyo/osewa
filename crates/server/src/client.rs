@@ -484,6 +484,9 @@ struct StreamState {
     done: bool,
     /// The holder connection is closed, or must be.
     dead: bool,
+    /// A write to the holder failed: the relay's next read fails, as it
+    /// would on the closed connection.
+    broken: bool,
 }
 
 impl Stream {
@@ -562,6 +565,14 @@ impl Stream {
         self.changed.notify_waiters();
     }
 
+    /// Fails the holder connection after a write to it failed, as closing it
+    /// would: the relay then ends the stream with STREAM_END error, or the
+    /// attach with unavailable.
+    pub(crate) fn conn_broken(&self) {
+        self.s.borrow_mut().broken = true;
+        self.changed.notify_waiters();
+    }
+
     /// Finishes the stream and closes the holder connection.
     pub fn end(self: &Rc<Self>) {
         self.finish();
@@ -621,10 +632,7 @@ impl Stream {
                 _ = self.until(|s| s.dead) => return,
             };
             if !ok {
-                // As closing the connection: the relay sees it fail.
-                self.s.borrow_mut().dead = true;
-                self.changed.notify_waiters();
-                return;
+                return self.conn_broken();
             }
             if let Some(tr) = &self.c.srv.trace {
                 tr.forwarded(&fs);
@@ -650,7 +658,7 @@ impl Stream {
             };
             let f = tokio::select! {
                 r = read => r,
-                _ = self.until(|s| s.dead) => Err(io::ErrorKind::ConnectionAborted.into()),
+                _ = self.until(|s| s.dead || s.broken) => Err(io::ErrorKind::ConnectionAborted.into()),
             };
             let f = match f {
                 Ok(f) => f,

@@ -198,3 +198,36 @@ fn run_dir_must_be_private() {
     assert!(new(link).is_err(), "a symlink as run dir accepted");
     assert!(new(d.path().join("private")).is_ok(), "0700 run dir");
 }
+
+/// The server's one client in e.
+fn only_client(e: &Env) -> std::rc::Rc<crate::client::Client> {
+    let st = e.srv.st.borrow();
+    assert_eq!(st.clients.len(), 1);
+    st.clients.values().next().unwrap().upgrade().unwrap()
+}
+
+// A failed write to the holder ends the stream as a dropped holder does:
+// STREAM_END error, and the id free again. Also when it fails while the
+// relay waits for a client that is behind.
+#[test]
+fn holder_write_failure_ends_stream() {
+    run(async {
+        let e = Env::with(|c| c.tune.send_soft = 1);
+        let id = "64".repeat(16);
+        let _h = echo_holder(e.dir(), &id);
+        let mut c = e.connect("phone").await;
+        let attach = || wire::Request { session: id.clone(), stream: 1, ..req(wire::METHOD_ATTACH) };
+        assert!(c.call(attach()).await.error.is_empty());
+        // More echoes than the connection buffers: the relay waits to push.
+        for i in 0..200 {
+            c.input(1, i + 1, "x").await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // What the writer does when its write fails (EPIPE).
+        only_client(&e).stream(1).unwrap().conn_broken();
+        let end = c.until(|f| f.ty == wire::TYPE_STREAM_END).await;
+        assert!(end.stream == 1 && decode_end(&end).reason == wire::END_ERROR, "stream end {end:?}");
+        assert_eq!(c.call(stream_req(wire::METHOD_DETACH, 1)).await.error, wire::ERR_NOT_FOUND);
+        assert!(c.call(attach()).await.error.is_empty(), "stream id still in use");
+    });
+}
