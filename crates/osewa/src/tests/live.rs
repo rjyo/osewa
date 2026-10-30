@@ -13,6 +13,8 @@ use super::*;
 
 enum Ctl {
     Restart(mpsc::Sender<()>),
+    /// Stops serving, holders kept, until Stop.
+    Close(mpsc::Sender<()>),
     Stop,
 }
 
@@ -125,6 +127,15 @@ impl LiveHost {
                         Some(Ctl::Restart(done)) => {
                             let _ = done.send(());
                         }
+                        Some(Ctl::Close(done)) => {
+                            let _ = done.send(());
+                            while let Some(c) = rx.recv().await {
+                                if matches!(c, Ctl::Stop) {
+                                    break;
+                                }
+                            }
+                            break;
+                        }
                         _ => break,
                     }
                 }
@@ -143,6 +154,14 @@ impl LiveHost {
     pub fn restart(&self) {
         let (tx, rx) = mpsc::channel();
         self.ctl.send(Ctl::Restart(tx)).unwrap();
+        rx.recv().unwrap();
+    }
+
+    /// Stops serving, as Go's srv.Close: client connections drop, holders
+    /// stay.
+    pub fn stop_serving(&self) {
+        let (tx, rx) = mpsc::channel();
+        self.ctl.send(Ctl::Close(tx)).unwrap();
         rx.recv().unwrap();
     }
 

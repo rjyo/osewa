@@ -1,4 +1,4 @@
-//! cmd/osewa's Go tests, ported, except the attach UI's.
+//! cmd/osewa's Go tests, ported.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,11 +7,13 @@ use std::time::{Duration, Instant};
 
 use crate::cli::{self, Ctx, Env};
 
+mod attach;
 mod channels;
 mod daemon;
 mod incompat;
 mod live;
 mod main_test;
+mod render;
 mod security;
 mod status;
 mod vtfilter;
