@@ -243,7 +243,6 @@ impl SendQueue {
         self.add(Entry { kind: Kind::Record, ty, stream, body: Body::Rec(r), gen: 0, at: None });
     }
 
-    #[cfg(test)]
     pub fn lag_bytes(&self) -> i64 {
         self.lag
     }

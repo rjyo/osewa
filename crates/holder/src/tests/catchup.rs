@@ -429,3 +429,37 @@ fn catch_up_screen_mid_sequence() {
         }
     });
 }
+
+/// A stream that streams records but is behind more output than a screen
+/// takes gets the owner's echo in a screen at once, not once the backlog
+/// has aged into catch-up (max(catch-up delay, 2 round trips), half a
+/// second on a slow link, while the keystroke goes unseen).
+#[test]
+fn input_screen_for_backlogged_stream() {
+    local(async {
+        // Streaming again after catch-up: the last screen sizes the next.
+        let s = unit_session(session_cfg(80, 24, 1 << 20));
+        let mut st = unit_stream(1, 1, 1, true);
+        st.streaming = true;
+        st.screen_bytes = 2000;
+        let q = add_conn(&s, 1, "o", Some(st));
+        s.borrow_mut().handle_output(&[b'x'; 1000]);
+        s.borrow_mut().input_screen();
+        assert!(begins(&q).is_empty(), "a screen for less backlog than a screen");
+        s.borrow_mut().handle_output(&[b'x'; 3000]);
+        s.borrow_mut().input_screen();
+        let g = begins(&q);
+        assert!(g == [1] && stream(&s, |st| st.screens_only() && st.input_pending), "backlogged stream: {g:?}");
+
+        // Never caught up: a window stands for the screen.
+        let s = unit_session(session_cfg(80, 24, 1 << 20));
+        let q = add_conn(&s, 1, "o", Some(unit_stream(1, 1, 1, false)));
+        s.borrow_mut().handle_output(&vec![b'x'; WINDOW / 2]);
+        s.borrow_mut().input_screen();
+        assert!(begins(&q).is_empty(), "a screen for less backlog than a window");
+        s.borrow_mut().handle_output(&vec![b'x'; WINDOW]);
+        s.borrow_mut().input_screen();
+        let g = begins(&q);
+        assert!(g == [1] && stream(&s, |st| st.screens_only() && st.input_pending), "backlogged stream: {g:?}");
+    });
+}

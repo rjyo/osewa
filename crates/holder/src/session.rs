@@ -392,6 +392,12 @@ impl Session {
         self.conns.values().any(|c| c.stream.as_ref().is_some_and(|st| st.screens_only()))
     }
 
+    /// Whether some stream would show the owner's next echo sooner in a
+    /// screen than behind its queued output (echo_behind_backlog).
+    fn backlogged(&self) -> bool {
+        self.conns.values().any(echo_behind_backlog)
+    }
+
     /// Arms the input-triggered screen once the owner's input has all
     /// reached the PTY: from then on, the child's echo is in its output.
     pub fn input_written(&mut self) {
@@ -430,6 +436,21 @@ impl Session {
                 // time and hold off the full snapshot that restores
                 // scrollback.
                 Some(st) if st.screens_only() => {}
+                // Streaming, but behind enough output that the echo would
+                // come sooner in a screen: catch up now rather than once the
+                // backlog has aged past the catch-up delay, which on a slow
+                // link is half a second of a keystroke going unseen.
+                _ if echo_behind_backlog(c) => {
+                    core.behind(c, "input");
+                    if let Some(st) = c.stream.as_mut() {
+                        if st.need_screen {
+                            st.need_input = true;
+                        } else {
+                            st.input_pending = true;
+                        }
+                    }
+                    continue;
+                }
                 _ => continue,
             }
             c.st().catch_token += 1; // not caught up yet: a screen is on its way
@@ -486,7 +507,7 @@ impl Session {
                 None => false,
             };
             if behind {
-                core.behind(c);
+                core.behind(c, "behind");
             }
         }
     }
@@ -914,11 +935,26 @@ impl Session {
         let Ok(b) = b else { return };
         self.core.input.borrow_mut().push_input(&b, client, input.seq);
         self.core.input_wake.notify_one();
-        if !b.is_empty() && self.catching_up() {
+        if !b.is_empty() && (self.catching_up() || self.backlogged()) {
             self.core.echo_wait = true;
             self.core.last_input = Some((self.core.clock)());
         }
     }
+}
+
+/// Whether c's stream, streaming records, has more output queued unsent
+/// than a screen of its terminal takes: an echo queued behind that output
+/// reaches the client later than one in a screen cut now. The last screen's
+/// size stands for the next one's; before any, a window (what the link
+/// carries in about a round trip) does.
+fn echo_behind_backlog(c: &Conn) -> bool {
+    let Some(st) = &c.stream else { return false };
+    if st.screens_only() || st.need_screen {
+        return false;
+    }
+    let q = c.q.borrow();
+    let screen = if st.screen_bytes > 0 { st.screen_bytes } else { q.window };
+    q.lag_bytes() > screen
 }
 
 struct AttachPlan {
@@ -1072,14 +1108,14 @@ impl Core {
             q.lagging(self.cfg.lag_bytes as i64, self.cfg.catch_up_delay)
         };
         if lagging {
-            self.behind(c);
+            self.behind(c, "behind");
         }
     }
 
     /// Puts a stream that can't keep up into catch-up: its unsent records
     /// go, and it gets the current screen, without history, as often as the
     /// link takes one.
-    fn behind(&mut self, c: &mut Conn) {
+    fn behind(&mut self, c: &mut Conn, reason: &str) {
         let st = c.stream.as_mut().expect("stream");
         if let Some(tr) = &self.tr {
             if !st.catch_up {
@@ -1104,7 +1140,7 @@ impl Core {
             // matters.
             q.drop_data();
         }
-        self.send_snapshot(c, false, "behind");
+        self.send_snapshot(c, false, reason);
     }
 
     /// Runs when generation gen's SNAPSHOT_END has been written and
@@ -1207,7 +1243,7 @@ impl Core {
             };
             if !keeping_up {
                 if lagging {
-                    core.behind(c);
+                    core.behind(c, "behind");
                 } else {
                     core.await_caught_up(c);
                 }
