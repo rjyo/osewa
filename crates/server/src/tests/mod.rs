@@ -7,6 +7,7 @@
 mod helpers;
 mod channel;
 mod net;
+mod quic;
 mod relay;
 mod server;
 mod trace;

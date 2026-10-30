@@ -29,7 +29,8 @@ use std::time::Duration;
 
 use osewa_wire as wire;
 use quinn::crypto::rustls::{HandshakeData, QuicClientConfig, QuicServerConfig};
-use quinn::{congestion, Connection, Endpoint, EndpointConfig, IdleTimeout, TransportConfig, VarInt};
+use quinn::{congestion, EndpointConfig, IdleTimeout, TransportConfig, VarInt};
+pub use quinn::{Connection, Endpoint};
 use tokio::sync::{mpsc, watch, Mutex};
 
 use frames::{conn_err, Item, Reader, Writer};

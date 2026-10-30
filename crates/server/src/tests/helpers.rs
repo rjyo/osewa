@@ -122,6 +122,8 @@ pub struct Env {
     pub device: Rc<osewa_auth::Identity>,
     /// Where serve listens, once listen has started it.
     pub addr: Option<std::net::SocketAddr>,
+    /// Where serve_quic listens, once listen_quic has started it.
+    pub quic_addr: Option<std::net::SocketAddr>,
 }
 
 impl Env {
@@ -153,7 +155,7 @@ impl Env {
         };
         f(&mut cfg);
         let srv = Server::new(cfg).unwrap();
-        Env { holders, srv, run_dir, server_key, device, addr: None }
+        Env { holders, srv, run_dir, server_key, device, addr: None, quic_addr: None }
     }
 
     /// Serves TLS and WebSocket on a loopback port.
@@ -162,6 +164,42 @@ impl Env {
         self.addr = Some(ln.local_addr().unwrap());
         let srv = self.srv.clone();
         tokio::task::spawn_local(async move { srv.serve(ln).await.unwrap() });
+    }
+
+    /// Serves QUIC on a loopback port; listen's port when it has one.
+    pub async fn listen_quic(&mut self) {
+        let port = self.addr.map_or(0, |a| a.port());
+        let sock = std::net::UdpSocket::bind(("127.0.0.1", port)).unwrap();
+        self.quic_addr = Some(sock.local_addr().unwrap());
+        let srv = self.srv.clone();
+        tokio::task::spawn_local(async move { srv.serve_quic(sock).await.unwrap() });
+        while self.srv.carriers().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// Dials QUIC as id.
+    pub async fn dial_quic(&self, id: &osewa_auth::Identity) -> std::io::Result<Tc> {
+        let cfg = osewa_auth::client_config(id, self.server_key);
+        let addr = self.quic_addr.unwrap().to_string();
+        let dial = osewa_carrier::quic::dial(&addr, cfg, osewa_carrier::quic::Congestion::Cubic);
+        let conn = tokio::time::timeout(WAIT, dial).await.map_err(|_| std::io::ErrorKind::TimedOut)??;
+        Ok(Tc::new(Transport::Quic(conn)))
+    }
+
+    /// dial_quic as the enrolled device, then HELLO/WELCOME.
+    pub async fn connect_quic(&self, client_id: &str) -> Tc {
+        let mut c = self.dial_quic(&self.device).await.unwrap();
+        let hello = wire::Hello {
+            client_id: client_id.into(),
+            features: vec![wire::FEATURE_FORWARD.into(), wire::FEATURE_EXEC.into()],
+            ..Default::default()
+        };
+        c.send(wire::json(wire::TYPE_HELLO, 0, &hello)).await;
+        let f = c.next().await;
+        assert_eq!(f.ty, wire::TYPE_WELCOME, "got 0x{:02x}, want WELCOME", f.ty);
+        c.welcome = f.decode().unwrap();
+        c
     }
 
     /// Opens TLS to the listening server as id, returning the stream and a
@@ -237,6 +275,7 @@ pub type TlsStream = tokio_rustls::client::TlsStream<Counting<tokio::net::TcpStr
 pub enum Transport {
     Mem(mem::Peer),
     Ws(osewa_carrier::ws::Conn<TlsStream>),
+    Quic(osewa_carrier::quic::Conn),
 }
 
 /// A test client.
@@ -274,6 +313,7 @@ impl Tc {
             Transport::Ws(ws) => {
                 let _ = ws.close_now();
             }
+            Transport::Quic(q) => q.close_now(),
         }
     }
 }
@@ -299,6 +339,7 @@ impl Tc {
             match &self.peer {
                 Transport::Mem(p) => p.send(b).await,
                 Transport::Ws(ws) => ws.write(&b).await.map_err(|e| std::io::Error::other(e.to_string())),
+                Transport::Quic(q) => q.write(&b).await,
             }
         };
         match tokio::time::timeout(Duration::from_secs(5), send).await {
@@ -314,6 +355,10 @@ impl Tc {
                 Msg::Close(..) => return Err(ReadErr::Closed),
             },
             Transport::Ws(ws) => match tokio::time::timeout(d, ws.read()).await.map_err(|_| ReadErr::Timeout)? {
+                Ok(b) => b,
+                Err(_) => return Err(ReadErr::Closed),
+            },
+            Transport::Quic(q) => match tokio::time::timeout(d, q.read()).await.map_err(|_| ReadErr::Timeout)? {
                 Ok(b) => b,
                 Err(_) => return Err(ReadErr::Closed),
             },
