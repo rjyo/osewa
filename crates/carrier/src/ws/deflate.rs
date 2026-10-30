@@ -10,10 +10,12 @@ pub(crate) const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 pub(crate) struct Deflater(Compress);
 
 impl Deflater {
-    /// Level 1, as coder/websocket's flate.BestSpeed: a frame waits on its
-    /// compression before it goes.
+    /// coder/websocket compresses with flate.BestSpeed: a frame waits on
+    /// its compression before it goes. miniz_oxide's level 2 matches its
+    /// ratio on terminal output (level 1 falls 11% short) at about the
+    /// same speed (tests/compress.rs).
     pub fn new() -> Deflater {
-        Deflater(Compress::new(Compression::fast(), false))
+        Deflater(Compress::new(Compression::new(2), false))
     }
 
     pub fn reset(&mut self) {
