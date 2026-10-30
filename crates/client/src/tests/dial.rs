@@ -267,3 +267,20 @@ fn parse_urls() {
         assert!(parse_url(bad).is_err(), "{bad}");
     }
 }
+
+/// A host whose QUIC port doesn't answer costs the race's head start, then
+/// lands on the WebSocket (docs/QUIC.md "Connecting").
+#[test]
+fn race_falls_back_to_websocket() {
+    let f = Fake::new();
+    let mut cfg = f.config("a");
+    cfg.quic_port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let start = Instant::now();
+    let c = run(Conn::dial(cfg)).unwrap();
+    run(c.welcome()).unwrap();
+    assert_eq!(c.carrier(), "ws");
+    let took = start.elapsed();
+    assert!(took >= Duration::from_millis(250) && took < Duration::from_secs(2), "dial took {took:?}");
+    run(c.list()).unwrap();
+    c.close_now();
+}
