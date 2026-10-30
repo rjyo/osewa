@@ -29,6 +29,7 @@ mod dial;
 mod flight;
 mod limits;
 mod lowat;
+pub mod path;
 mod cli;
 mod queue;
 mod trace;
@@ -155,7 +156,7 @@ pub struct Server {
 const QUIC_DRAIN: Duration = Duration::from_secs(1);
 
 /// The WebSocket carrier.
-struct WsConn<S>(osewa_carrier::ws::Conn<S>);
+struct WsConn<S>(osewa_carrier::ws::Conn<S>, Option<path::Probe>);
 
 fn ws_err(e: osewa_carrier::ws::Error) -> io::Error {
     match e {
@@ -175,6 +176,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Conn for WsConn<S> {
         Box::pin(async move {
             let _ = self.0.close(code, &reason).await;
         })
+    }
+    fn path(&self, now: std::time::Instant) -> Option<path::Sample> {
+        self.1.as_ref()?.sample(now)
     }
 }
 
@@ -303,6 +307,7 @@ impl Server {
             // keystroke's echo waits on Nagle behind delayed ACKs (~40 ms).
             let _ = tcp.set_nodelay(true);
             lowat::tune(tcp.as_raw_fd());
+            let probe = path::Probe::new(tcp.as_raw_fd());
             let (srv, tls, ws) = (self.clone(), tls.clone(), ws.clone());
             tokio::task::spawn_local(async move {
                 let deadline = tokio::time::Instant::now() + srv.cfg.tune.handshake_timeout;
@@ -313,7 +318,7 @@ impl Server {
                 };
                 // A refused upgrade has had its answer; nothing to log.
                 let Ok(Ok(conn)) = tokio::time::timeout_at(deadline, ws.accept(stream)).await else { return };
-                srv.serve_conn(Rc::new(WsConn(conn))).await;
+                srv.serve_conn(Rc::new(WsConn(conn, Some(probe)))).await;
             });
         }
     }

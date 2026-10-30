@@ -306,6 +306,14 @@ impl Tc {
         }
     }
 
+    /// Sets what the server sees of the path under an in-memory connection.
+    pub fn set_path(&self, s: Option<crate::path::Sample>) {
+        match &self.peer {
+            Transport::Mem(p) => p.set_path(s),
+            _ => panic!("set_path on a socket"),
+        }
+    }
+
     /// Drops the connection, as a client process exiting does.
     pub fn hang_up(&mut self) {
         match &mut self.peer {

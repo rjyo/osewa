@@ -43,6 +43,8 @@ pub(crate) struct Flight {
     pub blocked: bool,
     /// Bytes per second credited, as last measured.
     rate: f64,
+    /// The rates measured in the last FLIGHT_RTT_SPAN, for rate_max.
+    rates: VecDeque<(f64, Instant)>,
     /// Sized for someone typing, not left open.
     pub capped: bool,
     rate_from: Option<Instant>,
@@ -61,6 +63,7 @@ impl Default for Flight {
             rtts: VecDeque::new(),
             blocked: false,
             rate: 0.0,
+            rates: VecDeque::new(),
             capped: false,
             rate_from: None,
             rate_base: 0,
@@ -129,6 +132,13 @@ impl Flight {
         if !self.min_rtt.is_zero() && elapsed >= self.min_rtt {
             let rate = (self.credited - self.rate_base) as f64 / elapsed.as_secs_f64();
             self.rate = rate;
+            while self.rates.front().is_some_and(|&(_, at)| now.saturating_duration_since(at) > FLIGHT_RTT_SPAN) {
+                self.rates.pop_front();
+            }
+            while self.rates.back().is_some_and(|&(r, _)| r <= rate) {
+                self.rates.pop_back();
+            }
+            self.rates.push_back((rate, now));
             let queue = if typing { QUEUE_TARGET } else { QUEUE_IDLE };
             let est = clamp_window(rate, self.base() + queue);
             if self.blocked || est > self.window || (typing && !self.capped) {
@@ -153,6 +163,16 @@ impl Flight {
             self.window = self.window.min(clamp_window(self.rate, self.base() + QUEUE_TARGET));
         }
         self.capped = true;
+    }
+
+    /// The highest rate measured in the last FLIGHT_RTT_SPAN: what the link
+    /// carried when let, not what a sender held back by a tight bound
+    /// carried, which sized from would shrink that bound again.
+    pub fn rate_max(&self, now: Instant) -> f64 {
+        self.rates
+            .iter()
+            .find(|&&(_, at)| now.saturating_duration_since(at) <= FLIGHT_RTT_SPAN)
+            .map_or(0.0, |&(r, _)| r)
     }
 
     /// Takes n bytes out of flight without a credit: a channel ended with
@@ -218,6 +238,32 @@ mod tests {
     // While someone types, the window follows what credit shows the link
     // carrying: the bytes credited per minimum round trip plus QUEUE_TARGET,
     // within its bounds.
+    // rate_max keeps the highest rate of the last FLIGHT_RTT_SPAN, so a
+    // bound sized from it isn't shrunk by the rate it held a sender to.
+    #[test]
+    fn rate_max() {
+        let mut f = Flight::default();
+        let mut now = Instant::now();
+        let step = |f: &mut Flight, now: &mut Instant, n: u32| {
+            f.send(n as usize, *now);
+            *now += ms(100);
+            f.credit(n, *now, false);
+        };
+        assert_eq!(f.rate_max(now), 0.0);
+        for _ in 0..5 {
+            step(&mut f, &mut now, 100_000); // 1 MB/s
+        }
+        for _ in 0..5 {
+            step(&mut f, &mut now, 10_000); // held to 100 kB/s
+        }
+        let r = f.rate_max(now);
+        assert!((900_000.0..=1_100_000.0).contains(&r), "rate_max {r}");
+        now += FLIGHT_RTT_SPAN;
+        step(&mut f, &mut now, 10_000);
+        let r = f.rate_max(now);
+        assert!((90_000.0..=110_000.0).contains(&r), "rate_max {r} after the fast rates expired");
+    }
+
     #[test]
     fn window() {
         let mut f = Flight::default();

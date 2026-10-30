@@ -16,6 +16,7 @@ use crate::channel::Channel;
 use crate::conn::{Conn, CLOSE_GOING_AWAY, CLOSE_NORMAL, CLOSE_POLICY_VIOLATION};
 use crate::flight::Flight;
 use crate::limits::{err_size, valid_client_id, valid_size};
+use crate::path;
 use crate::queue::{Class, SendQueue};
 use crate::{read_frame, refused, Server};
 
@@ -43,6 +44,8 @@ pub(crate) struct Client {
     last_typed: Cell<Option<Instant>>,
     /// Bounds what all its channels have in flight together.
     pub flight: RefCell<Flight>,
+    /// Phases the path's probing (path::probe_gain).
+    born: Instant,
 }
 
 #[derive(Default)]
@@ -68,6 +71,7 @@ impl Client {
             st: RefCell::default(),
             last_typed: Cell::new(None),
             flight: RefCell::new(Flight::default()),
+            born: Instant::now(),
         })
     }
 
@@ -81,6 +85,20 @@ impl Client {
     /// Reports whether someone typed on the connection within TYPING_SPAN.
     pub fn typing(&self, now: Instant) -> bool {
         self.last_typed.get().is_some_and(|t| now.saturating_duration_since(t) < TYPING_SPAN)
+    }
+
+    /// While someone types on a TCP connection, how many more bulk bytes the
+    /// path may take before they queue ahead of an echo by more than
+    /// path::TYPING_QUEUE (see path.rs); None when nothing bounds them
+    /// there.
+    pub fn path_room(&self, now: Instant) -> Option<i64> {
+        if !self.typing(now) {
+            return None;
+        }
+        let s = self.conn.path(now)?;
+        let gain = path::probe_gain(now.saturating_duration_since(self.born), s.min_rtt);
+        let rate = self.flight.borrow().rate_max(now) * gain;
+        Some(path::room(s, rate, self.send.bulk_bytes() as u64))
     }
 
     /// Records a keystroke; the first after a quiet spell tightens every

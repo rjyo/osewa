@@ -753,6 +753,59 @@ fn exec_exit_releases_stdin() {
     });
 }
 
+// While someone types, bulk goes to a TCP path only as fast as the path
+// drains, in frames no bigger than the room the kernel's numbers leave: a
+// full 32 KiB frame would be 260 ms of queue ahead of an echo at 1 Mbit/s.
+#[test]
+fn path_bounds_bulk_while_typing() {
+    use crate::path::{Sample, PATH_FLOOR};
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        // Credit held: no rate is measured, so the path's floor is its room.
+        c.hold_channel = true;
+        let empty = Sample { queued: 0, min_rtt: Duration::from_millis(100) };
+        c.set_path(Some(empty));
+        // A key: INPUT on a stream that isn't there still counts as typing.
+        c.send(wire::json(wire::TYPE_INPUT, 99, &wire::Input { seq: 1, ty: "text".into(), text: "a".into(), ..Default::default() }))
+            .await;
+        let r = c.exec(1, &["sh", "-c", "head -c 4194304 /dev/zero"]).await;
+        assert!(r.error.is_empty(), "exec.start {r:?}");
+        let data = |f: &wire::Frame| f.stream == 1 && f.ty == wire::TYPE_CHANNEL_DATA;
+        for _ in 0..8 {
+            let f = c.until(data).await;
+            assert!(f.payload.len() <= PATH_FLOOR as usize, "CHANNEL_DATA of {} bytes while typing", f.payload.len());
+        }
+        // A full path holds bulk back, apart from what was already queued...
+        c.set_path(Some(Sample { queued: 1 << 20, ..empty }));
+        let mut late = 0;
+        while let Ok(f) = c.read(Duration::from_millis(200)).await {
+            if data(&f) {
+                late += f.payload.len();
+            }
+        }
+        assert!(late <= 2 * PATH_FLOOR as usize, "{late} bytes of CHANNEL_DATA into a full path");
+        // ...until it drains, which nothing but the kernel reports.
+        c.set_path(Some(empty));
+        let f = c.read(Duration::from_millis(100)).await.expect("bulk resumes once the path drains");
+        assert!(f.ty == wire::TYPE_CHANNEL_DATA, "{f:?}");
+    });
+}
+
+// Without anyone typing the path bounds nothing: bulk goes in full frames.
+#[test]
+fn path_free_while_nobody_types() {
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        c.set_path(Some(crate::path::Sample { queued: 1 << 20, min_rtt: Duration::from_millis(100) }));
+        let r = c.exec(1, &["sh", "-c", "head -c 1048576 /dev/zero"]).await;
+        assert!(r.error.is_empty(), "exec.start {r:?}");
+        let r = c.drain(1).await;
+        assert_eq!(r.data[1].len(), 1 << 20);
+    });
+}
+
 fn only_client(e: &Env) -> Rc<Client> {
     e.srv.st.borrow().clients.values().next().unwrap().upgrade().unwrap()
 }

@@ -24,6 +24,10 @@ pub trait Conn {
     /// Ends the connection with a close code and reason. Reads and writes
     /// fail from the moment it is called.
     fn close(&self, code: u16, reason: String) -> LocalBoxFuture<'_, ()>;
+    /// The kernel's view of the path, where the carrier is a TCP socket.
+    fn path(&self, _now: std::time::Instant) -> Option<crate::path::Sample> {
+        None
+    }
 }
 
 /// A connection that goes nowhere, for clients built without a peer.
@@ -63,6 +67,8 @@ pub(crate) mod mem {
     struct Shared {
         closed: Cell<bool>,
         notify: Notify,
+        /// What the server's end reports as its kernel's view of the path.
+        path: Cell<Option<crate::path::Sample>>,
     }
 
     impl Shared {
@@ -96,7 +102,7 @@ pub(crate) mod mem {
     pub fn pair() -> (Rc<ServerEnd>, Peer) {
         let (ctx, srx) = mpsc::channel(DEPTH);
         let (stx, crx) = mpsc::channel(DEPTH);
-        let sh = Rc::new(Shared { closed: Cell::new(false), notify: Notify::new() });
+        let sh = Rc::new(Shared { closed: Cell::new(false), notify: Notify::new(), path: Cell::new(None) });
         (Rc::new(ServerEnd { rx: Mutex::new(srx), tx: stx, sh: sh.clone() }), Peer { rx: crx, tx: ctx, sh })
     }
 
@@ -129,6 +135,10 @@ pub(crate) mod mem {
             })
         }
 
+        fn path(&self, _now: std::time::Instant) -> Option<crate::path::Sample> {
+            self.sh.path.get()
+        }
+
         fn close(&self, code: u16, _: String) -> LocalBoxFuture<'_, ()> {
             let first = !self.sh.closed.get();
             self.sh.close();
@@ -157,6 +167,11 @@ pub(crate) mod mem {
                 r = self.tx.send(Msg::Data(b)) => r.map_err(|_| closed_err()),
                 _ = self.sh.closed() => Err(closed_err()),
             }
+        }
+
+        /// Sets what the server's end reports as its path.
+        pub fn set_path(&self, s: Option<crate::path::Sample>) {
+            self.sh.path.set(s);
         }
 
         /// Drops the connection, as a client process exiting does.

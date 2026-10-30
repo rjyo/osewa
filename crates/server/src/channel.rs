@@ -18,6 +18,9 @@ use crate::conn::LocalBoxFuture;
 use crate::flight::{conn_room, Flight};
 use crate::queue::Class;
 
+/// How often a channel held back by the path alone looks again.
+const PATH_POLL: Duration = Duration::from_millis(5);
+
 /// Keeps a client's CREDIT from overflowing the counter; what the server
 /// sends is bounded by the send queue anyway.
 const MAX_CREDIT: i64 = 1 << 40;
@@ -359,30 +362,47 @@ impl Channel {
     /// sending into the same room.
     async fn await_room(&self, want: usize) -> usize {
         loop {
-            {
+            let path_bound = {
                 let mut s = self.s.borrow_mut();
                 if s.stopped {
                     return 0;
                 }
+                let now = Instant::now();
                 let avail = self.avail(&s);
-                if avail >= 2 {
-                    let m = ((avail - 1) as usize).min(want);
+                let path = self.c.path_room(now);
+                let room = path.map_or(avail, |p| avail.min(p));
+                if room >= 2 {
+                    let m = ((room - 1) as usize).min(want);
                     s.credit -= m as i64 + 1;
-                    let now = Instant::now();
                     s.fl.send(m + 1, now);
                     self.c.flight.borrow_mut().send(m + 1, now);
                     return m;
                 }
-                if s.credit >= 2 {
-                    // Whichever window held it back resizes for that.
-                    if s.fl.room() < 2 {
-                        s.fl.blocked = true;
-                    } else {
-                        self.c.flight.borrow_mut().blocked = true;
+                if avail >= 2 {
+                    // Only the path holds it back, and no credit or window
+                    // change will say when that ends: its acks come to the
+                    // kernel, not to us.
+                    true
+                } else {
+                    if s.credit >= 2 {
+                        // Whichever window held it back resizes for that.
+                        if s.fl.room() < 2 {
+                            s.fl.blocked = true;
+                        } else {
+                            self.c.flight.borrow_mut().blocked = true;
+                        }
                     }
+                    false
                 }
+            };
+            if path_bound {
+                tokio::select! {
+                    _ = self.cond.notified() => {}
+                    _ = tokio::time::sleep(PATH_POLL) => {}
+                }
+            } else {
+                self.cond.notified().await;
             }
-            self.cond.notified().await;
         }
     }
 

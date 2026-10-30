@@ -99,6 +99,12 @@ impl SendQueue {
         self.inner.borrow().bytes
     }
 
+    /// Bytes queued on exec and forward streams.
+    pub fn bulk_bytes(&self) -> usize {
+        let q = self.inner.borrow();
+        q.class_bytes[Class::Exec as usize] + q.class_bytes[Class::Forward as usize]
+    }
+
     /// Queues b behind stream's frames, or with the connection's control
     /// frames when stream is 0, without waiting. It returns false once the
     /// queue is closed, including when b overflowed it.
