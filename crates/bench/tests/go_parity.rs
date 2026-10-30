@@ -84,3 +84,91 @@ fn workloads_and_pattern_match_go() {
     }
     assert!(rest.is_empty(), "Go wrote more sections");
 }
+
+/// Go's osewa-bench built from the checkout, or None.
+fn go_bench() -> Option<PathBuf> {
+    let repo = go_repo()?;
+    let bin = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("osewa-bench-go");
+    match Command::new("go").args(["build", "-o"]).arg(&bin).arg("./bench/cmd/osewa-bench").current_dir(&repo).status() {
+        Ok(s) if s.success() => Some(bin),
+        _ => {
+            eprintln!("skipping: can't build Go's osewa-bench");
+            None
+        }
+    }
+}
+
+/// Runs `gen` for its duration and returns its output and the CPU it used
+/// (user + system, from wait4).
+fn gen_run(bin: &Path, args: &[&str]) -> (Vec<u8>, std::time::Duration) {
+    use std::process::Stdio;
+    let mut child = Command::new(bin).arg("gen").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut out = Vec::new();
+    child.stdout.take().unwrap().read_to_end(&mut out).unwrap();
+    let mut status = 0;
+    let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+    let pid = child.id() as libc::pid_t;
+    assert_eq!(unsafe { libc::wait4(pid, &mut status, 0, &mut ru) }, pid);
+    std::mem::forget(child);
+    let tv = |t: libc::timeval| std::time::Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
+    (out, tv(ru.ru_utime) + tv(ru.ru_stime))
+}
+
+/// Stamps differ by the clock; the rest is the same.
+fn unstamped(b: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'@' && b.get(i + 1) == Some(&b'T') && i + 16 <= b.len() && b[i + 15] == b'@' && b[i + 2..i + 15].iter().all(u8::is_ascii_digit) {
+            out.extend_from_slice(b"@T@");
+            i += 16;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// gen writes Go's bytes, stamps aside, for every flood the e2e rig runs.
+#[test]
+fn gen_output_matches_go() {
+    let Some(go) = go_bench() else { return };
+    let rust = Path::new(env!("CARGO_BIN_EXE_osewa-bench"));
+    for kind in ["w1", "w2", "w4"] {
+        let a = ["-kind", kind, "-cols", "80", "-rows", "24", "-duration", "200ms"];
+        let (g, _) = gen_run(&go, &a);
+        let (r, _) = gen_run(rust, &a);
+        let (g, r) = (unstamped(&g), unstamped(&r));
+        let n = g.len().min(r.len());
+        assert!(n > 100_000, "{kind}: {} and {} bytes", g.len(), r.len());
+        assert!(g[..n] == r[..n], "{kind}: output differs from Go's at byte {:?}", g.iter().zip(&r).position(|(a, b)| a != b));
+    }
+}
+
+/// gen costs no more CPU per byte than Go's: under an e2e flood it shares
+/// the host's CPU with the holder, and a W2 flood is where the holder needs
+/// it most (a gen that searched every block for its stamp placeholder
+/// doubled e2e's W2 echo latency). Only meaningful optimized: run with
+/// `cargo test --release`.
+#[test]
+fn gen_cpu_per_byte_at_most_go() {
+    if cfg!(debug_assertions) {
+        eprintln!("skipping: gen's CPU cost is measured in release builds");
+        return;
+    }
+    let Some(go) = go_bench() else { return };
+    let rust = Path::new(env!("CARGO_BIN_EXE_osewa-bench"));
+    for kind in ["w1", "w2", "w4"] {
+        let a = ["-kind", kind, "-cols", "80", "-rows", "24", "-duration", "1s"];
+        let per_mb = |bin: &Path| {
+            let (out, cpu) = gen_run(bin, &a);
+            cpu.as_secs_f64() * 1e3 / (out.len() as f64 / 1e6)
+        };
+        // Best of three each, against noise.
+        let g = (0..3).map(|_| per_mb(&go)).fold(f64::MAX, f64::min);
+        let r = (0..3).map(|_| per_mb(rust)).fold(f64::MAX, f64::min);
+        eprintln!("{kind}: Go {g:.3} ms/MB, Rust {r:.3} ms/MB");
+        assert!(r <= g * 1.1, "{kind}: gen costs {r:.3} ms of CPU per MB, Go's {g:.3}");
+    }
+}
