@@ -1,0 +1,10 @@
+[package]
+name = "osewa-execproc"
+description = "A process without a PTY for exec.start: its own process group, pipes for stdin, stdout and stderr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc.workspace = true
+tokio = { version = "1", features = ["rt", "process", "io-util", "sync", "time", "macros"] }

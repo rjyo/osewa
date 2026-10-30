@@ -111,6 +111,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "osewa-execproc"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tokio",
+]
+
+[[package]]
 name = "osewa-flag"
 version = "0.1.0"
 
