@@ -15,6 +15,7 @@ osewa-holder = { path = "crates/holder" }
 osewa-paths = { path = "crates/paths" }
 osewa-flag = { path = "crates/flag" }
 osewa-auth = { path = "crates/auth" }
+osewa-carrier = { path = "crates/carrier" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
