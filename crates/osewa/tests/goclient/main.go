@@ -2,7 +2,7 @@
 // Rust server's interop test: create, attach with a snapshot, echo, drop
 // the connection, resume on a new one without a snapshot, and kill.
 //
-//	goclient <addr> <server key> <client key file>
+//	goclient <addr> <server key> <client key file> [ws|quic]
 package main
 
 import (
@@ -43,14 +43,18 @@ func waitFor(o *output, s string) error {
 }
 
 func main() {
-	if err := run(os.Args[1], os.Args[2], os.Args[3]); err != nil {
+	carrier := "ws"
+	if len(os.Args) > 4 {
+		carrier = os.Args[4]
+	}
+	if err := run(os.Args[1], os.Args[2], os.Args[3], carrier); err != nil {
 		fmt.Fprintln(os.Stderr, "goclient:", err)
 		os.Exit(1)
 	}
 	fmt.Println("ok")
 }
 
-func run(addr, serverKey, keyFile string) error {
+func run(addr, serverKey, keyFile, carrier string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	id, err := auth.LoadOrCreateIdentity(keyFile)
@@ -61,10 +65,13 @@ func run(addr, serverKey, keyFile string) error {
 	if err != nil {
 		return err
 	}
-	cfg := client.Config{URL: "wss://" + addr + wire.Path, TLS: auth.ClientTLS(id, key), ClientID: "go-interop", Carrier: "ws"}
+	cfg := client.Config{URL: "wss://" + addr + wire.Path, TLS: auth.ClientTLS(id, key), ClientID: "go-interop", Carrier: carrier}
 	c, err := client.Dial(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
+	}
+	if c.Carrier() != carrier {
+		return fmt.Errorf("connected over %s, not %s", c.Carrier(), carrier)
 	}
 	w, err := c.Welcome(ctx)
 	if err != nil {

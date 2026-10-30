@@ -15,16 +15,16 @@ use crate::queue::Class;
 
 /// What a channel stream delivered.
 #[derive(Default)]
-struct ChanResult {
+pub(super) struct ChanResult {
     /// By channel.
-    data: [Vec<u8>; 3],
+    pub data: [Vec<u8>; 3],
     /// CHANNEL_EOF channels, in order.
-    eofs: Vec<u8>,
-    end: wire::StreamEnd,
+    pub eofs: Vec<u8>,
+    pub end: wire::StreamEnd,
 }
 
 impl ChanResult {
-    fn out(&self, ch: usize) -> String {
+    pub fn out(&self, ch: usize) -> String {
         String::from_utf8_lossy(&self.data[ch]).into_owned()
     }
 }
@@ -32,7 +32,7 @@ impl ChanResult {
 impl Tc {
     /// Reads stream's frames until STREAM_END, crediting CHANNEL_DATA as
     /// read does, and checks that each channel's EOF comes after its data.
-    async fn drain(&mut self, stream: u32) -> ChanResult {
+    pub(super) async fn drain(&mut self, stream: u32) -> ChanResult {
         let mut r = ChanResult::default();
         self.until(|f| {
             if f.stream != stream {
@@ -58,12 +58,12 @@ impl Tc {
         r
     }
 
-    async fn forward(&mut self, stream: u32, port: u16) -> wire::Response {
+    pub(super) async fn forward(&mut self, stream: u32, port: u16) -> wire::Response {
         self.call(wire::Request { host: "127.0.0.1".into(), port: port.into(), ..stream_req(wire::METHOD_FORWARD_OPEN, stream) })
             .await
     }
 
-    async fn exec(&mut self, stream: u32, argv: &[&str]) -> wire::Response {
+    pub(super) async fn exec(&mut self, stream: u32, argv: &[&str]) -> wire::Response {
         self.call(wire::Request {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             ..stream_req(wire::METHOD_EXEC_START, stream)
@@ -71,11 +71,11 @@ impl Tc {
         .await
     }
 
-    async fn data(&self, stream: u32, b: &[u8]) {
+    pub(super) async fn data(&self, stream: u32, b: &[u8]) {
         self.send(wire::Frame::new(wire::TYPE_DATA, stream, b.to_vec())).await;
     }
 
-    async fn eof(&self, stream: u32) {
+    pub(super) async fn eof(&self, stream: u32) {
         self.send(wire::Frame::new(wire::TYPE_EOF, stream, Vec::new())).await;
     }
 }

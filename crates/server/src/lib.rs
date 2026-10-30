@@ -150,6 +150,10 @@ pub struct Server {
     log: RefCell<limits::LimitedLog<io::Stderr>>,
 }
 
+/// How long a stopping server waits for its QUIC clients' closes to be
+/// sent and acknowledged.
+const QUIC_DRAIN: Duration = Duration::from_secs(1);
+
 /// The WebSocket carrier.
 struct WsConn<S>(osewa_carrier::ws::Conn<S>);
 
@@ -171,6 +175,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Conn for WsConn<S> {
         Box::pin(async move {
             let _ = self.0.close(code, &reason).await;
         })
+    }
+}
+
+/// The QUIC carrier.
+struct QuicConn(osewa_carrier::quic::Conn);
+
+impl Conn for QuicConn {
+    fn read(&self) -> LocalBoxFuture<'_, io::Result<Vec<u8>>> {
+        Box::pin(self.0.read())
+    }
+    fn write<'a>(&'a self, frame: &'a [u8]) -> LocalBoxFuture<'a, io::Result<()>> {
+        Box::pin(self.0.write(frame))
+    }
+    fn close(&self, code: u16, reason: String) -> LocalBoxFuture<'_, ()> {
+        self.0.close(code, &reason);
+        Box::pin(async {})
     }
 }
 
@@ -296,6 +316,57 @@ impl Server {
                 srv.serve_conn(Rc::new(WsConn(conn))).await;
             });
         }
+    }
+
+    /// Serves the QUIC carrier (docs/QUIC.md) on sock behind the same
+    /// identity and device check as serve, and advertises its port in
+    /// WELCOME, until close. $OSEWA_QUIC_CC picks the congestion
+    /// controller.
+    pub async fn serve_quic(self: &Rc<Self>, sock: std::net::UdpSocket) -> io::Result<()> {
+        use osewa_carrier::quic;
+        let (id, devs) = (self.cfg.identity.as_ref().unwrap(), self.cfg.devices.as_ref().unwrap());
+        let tls = osewa_auth::server_config(id, devs);
+        let cfg = quic::server_config(tls, !self.cfg.no_compress, quic::Congestion::from_env())?;
+        let port = sock.local_addr()?.port();
+        let ep = quic::endpoint(sock, Some(cfg))?;
+        if self.is_closed() {
+            return Ok(());
+        }
+        self.set_quic_port(port);
+        loop {
+            let incoming = tokio::select! {
+                i = ep.accept() => i,
+                _ = self.closed() => None,
+            };
+            let Some(incoming) = incoming else { break };
+            let srv = self.clone();
+            tokio::task::spawn_local(async move {
+                // One deadline for the handshake (where a refused device
+                // fails) and the main stream's first frame, as over TCP.
+                let deadline = tokio::time::Instant::now() + srv.cfg.tune.handshake_timeout;
+                let Ok(Ok(qc)) = tokio::time::timeout_at(deadline, incoming).await else { return };
+                let Ok(Ok(conn)) = tokio::time::timeout_at(deadline, quic::accept(qc.clone())).await else {
+                    qc.close(0u32.into(), b"");
+                    return;
+                };
+                srv.serve_conn(Rc::new(QuicConn(conn))).await;
+            });
+        }
+        // close is telling every client (going away); give their
+        // CONNECTION_CLOSEs a moment to go out before the socket does, and
+        // refuse new handshakes meanwhile instead of leaving them to time
+        // out.
+        let drain = tokio::time::sleep(QUIC_DRAIN);
+        tokio::pin!(drain);
+        loop {
+            tokio::select! {
+                _ = &mut drain => break,
+                _ = ep.wait_idle() => break,
+                Some(incoming) = ep.accept() => incoming.refuse(),
+            }
+        }
+        ep.close(conn::CLOSE_GOING_AWAY.into(), b"server closing");
+        Ok(())
     }
 
     /// Runs a client on a carrier connection until it ends.

@@ -355,3 +355,47 @@ fn hello_with_invalid_utf8() {
         assert_eq!(c.next().await.ty, wire::TYPE_WELCOME);
     });
 }
+
+// `osewa server` serves QUIC on the TCP port's number; on stop its QUIC
+// clients hear "going away" and new handshakes are refused, not left to
+// time out.
+#[test]
+fn quic_on_stop() {
+    use osewa_carrier::quic;
+    let _d = ServerDirs::new();
+    run(async {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{port}");
+        let (listen, cfg) = cli::parse(&args(&["--listen", &addr])).unwrap();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::task::spawn_local(cli::serve(listen, cfg, async {
+            let _ = stop_rx.await;
+        }));
+        let dev = osewa_auth::Identity::generate();
+        osewa_auth::Devices::new(osewa_auth::devices_path())
+            .add(osewa_auth::Device { name: "test".into(), key: osewa_auth::encode_key(&dev.public()) })
+            .unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::net::TcpStream::connect(&addr).await.is_err() {
+            assert!(tokio::time::Instant::now() < deadline, "server did not start");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let key = osewa_auth::Identity::load_or_create(&osewa_auth::identity_path()).unwrap().public();
+        let dial = || quic::dial(&addr, osewa_auth::client_config(&dev, key), quic::Congestion::Cubic);
+        let c = tokio::time::timeout(WAIT, dial()).await.unwrap().unwrap();
+        let hello = wire::Hello { client_id: "q".into(), ..Default::default() };
+        c.write(&wire::json(wire::TYPE_HELLO, 0, &hello).marshal()).await.unwrap();
+        let f = wire::Frame::unmarshal(&tokio::time::timeout(WAIT, c.read()).await.unwrap().unwrap()).unwrap();
+        let w: wire::Welcome = f.decode().unwrap();
+        assert_eq!(w.carriers.first().map(|c| c.port), Some(port.into()), "carriers {:?}", w.carriers);
+
+        stop_tx.send(()).unwrap();
+        let err = tokio::time::timeout(WAIT, c.read()).await.unwrap().unwrap_err();
+        assert_eq!(quic::close_status(&err), Some((crate::conn::CLOSE_GOING_AWAY, "server closing".into())), "{err}");
+        // While the server drains, or once it is gone, a dial fails.
+        let r = tokio::time::timeout(Duration::from_secs(3), dial()).await;
+        assert!(!matches!(r, Ok(Ok(_))), "a stopped server took a QUIC connection");
+        let r = tokio::time::timeout(Duration::from_secs(5), serving).await.expect("server did not stop");
+        assert_eq!(r.unwrap(), Ok(()));
+    });
+}

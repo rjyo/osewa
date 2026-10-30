@@ -1,6 +1,6 @@
 [package]
 name = "osewa-carrier"
-description = "osewa carriers: frames over WebSocket (docs/PROTOCOL.md)"
+description = "osewa carriers: frames over WebSocket (docs/PROTOCOL.md) or QUIC (docs/QUIC.md)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,10 +9,14 @@ license.workspace = true
 osewa-wire.workspace = true
 base64.workspace = true
 rand.workspace = true
+libc.workspace = true
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 httparse = "1"
 sha1 = "0.10"
-tokio = { version = "1", features = ["io-util", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["io-util", "sync", "time", "macros", "rt", "net"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 
 [dev-dependencies]
+osewa-auth.workspace = true
 tokio = { version = "1", features = ["io-util", "sync", "time", "macros", "rt", "net", "process", "test-util"] }
