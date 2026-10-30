@@ -11,4 +11,5 @@ mod helpers;
 mod holder;
 mod main;
 mod status;
+mod trace;
 mod unit;
