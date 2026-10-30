@@ -20,7 +20,7 @@ use crate::{valid_size, Config, MAX_RECORD_DATA};
 /// Caps one connection's parked input payloads; past it events are acked
 /// and dropped. Clients keep less than half this unacked (docs/PROTOCOL.md,
 /// Input), so they never reach it.
-const MAX_PARKED_INPUT: usize = 1 << 20;
+pub(crate) const MAX_PARKED_INPUT: usize = 1 << 20;
 /// Bounds SNAPSHOT_DATA and SNAPSHOT_HISTORY payloads.
 const CHUNK_SIZE: usize = 64 << 10;
 

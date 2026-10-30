@@ -37,7 +37,7 @@ impl Record {
 pub(crate) struct OutputLog {
     recs: VecDeque<Record>,
     /// Positions held, the sum of record sizes.
-    size: u64,
+    pub size: u64,
     pub end: u64,
     pub cap: u64,
 }
