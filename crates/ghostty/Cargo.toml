@@ -1,0 +1,13 @@
+[package]
+name = "osewa-ghostty"
+description = "Binding to libghostty-vt: terminal, snapshots, input encoders, callbacks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "ghostty-vt"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+regex = "1"
