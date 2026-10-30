@@ -2,6 +2,7 @@
 //! crates/osewa/tests/go_quic.rs.
 
 use std::os::fd::AsRawFd;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use osewa_auth::{Device, Devices, Identity};
@@ -321,4 +322,225 @@ fn socket_buffers_grow() {
     unsafe { libc::getsockopt(sock.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUF, (&mut v as *mut libc::c_int).cast(), &mut l) };
     // Past every system's default, whatever its cap.
     assert!(v as usize >= 1 << 20, "receive buffer {v}");
+}
+
+/// A raw quinn client on a pair's server, for what Conn hides: when bytes
+/// arrive on which stream. transport_tweak adjusts its transport parameters.
+async fn raw_client(
+    compress: bool,
+    transport_tweak: impl FnOnce(&mut TransportConfig),
+) -> (Conn, Connection, quinn::SendStream, quinn::RecvStream, Endpoint, Keys) {
+    let k = keys();
+    let (ep, mut conns) = listen(&k, compress, Congestion::Cubic);
+    let mut cfg = client_config(osewa_auth::client_config(&k.device, k.server.public()), Congestion::Cubic).unwrap();
+    let mut t = transport(Congestion::Cubic);
+    transport_tweak(&mut t);
+    cfg.transport_config(Arc::new(t));
+    let cep = endpoint(UdpSocket::bind("127.0.0.1:0").unwrap(), None).unwrap();
+    let qc = cep.connect_with(cfg, ep.local_addr().unwrap(), "localhost").unwrap().await.unwrap();
+    let (mut send, recv) = qc.open_bi().await.unwrap();
+    let hello = frame(wire::TYPE_HELLO, 0, b"{}");
+    send.write_all(&(hello.len() as u32).to_be_bytes()).await.unwrap();
+    send.write_all(&hello).await.unwrap();
+    let srv = conns.recv().await.unwrap();
+    assert_eq!(read(&srv).await, hello);
+    (srv, qc, send, recv, cep, k)
+}
+
+/// Splits length-prefixed frames.
+fn split(mut b: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    while b.len() >= 4 {
+        let n = u32::from_be_bytes(b[..4].try_into().unwrap()) as usize;
+        out.push(b[4..4 + n].to_vec());
+        b = &b[4 + n..];
+    }
+    out
+}
+
+// A channel's end goes out before what the main stream carries after it:
+// once the stream.close RESPONSE has arrived, the lane's data and its
+// STREAM_END are all there (no waiting on the network for them).
+#[tokio::test]
+async fn lane_end_goes_before_later_main_frames() {
+    for _ in 0..5 {
+        let (srv, qc, _send, mut recv, _cep, _k) = raw_client(false, |_| {}).await;
+        let data = frame(wire::TYPE_CHANNEL_DATA, 3, &text(30_000));
+        let end = frame(wire::TYPE_STREAM_END, 3, b"{}");
+        let resp = frame(wire::TYPE_RESPONSE, 0, br#"{"id":7}"#);
+        let (srv2, resp2) = (srv.clone(), resp.clone());
+        let writer = tokio::spawn(async move {
+            let resp = resp2;
+            for _ in 0..20 {
+                srv2.write(&data).await.unwrap();
+            }
+            srv2.write(&end).await.unwrap();
+            srv2.write(&resp).await.unwrap();
+        });
+        let mut got = vec![0u8; 4 + resp.len()];
+        tokio::time::timeout(Duration::from_secs(10), recv.read_exact(&mut got)).await.unwrap().unwrap();
+        assert_eq!(&got[4..], &resp[..]);
+        // Everything the lane carried was received before the RESPONSE.
+        let mut lane = tokio::time::timeout(Duration::ZERO, qc.accept_uni()).await.expect("no lane yet").unwrap();
+        let b = tokio::time::timeout(Duration::ZERO, lane.read_to_end(1 << 30)).await.expect("lane data still on its way").unwrap();
+        let frames = split(&b);
+        assert_eq!(frames.len(), 21);
+        assert_eq!(frames.last().unwrap(), &frame(wire::TYPE_STREAM_END, 3, b"{}"));
+        writer.await.unwrap();
+    }
+}
+
+/// A UDP relay to server that stops passing the server's packets on
+/// once the flag is set, as a link that has gone dark: nothing the server
+/// sends is acknowledged after that.
+async fn blackhole_relay(server: SocketAddr) -> (SocketAddr, Arc<AtomicBool>) {
+    let sock = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let addr = sock.local_addr().unwrap();
+    let dark = Arc::new(AtomicBool::new(false));
+    let d = dark.clone();
+    tokio::spawn(async move {
+        let mut client = None;
+        let mut b = vec![0u8; 65536];
+        while let Ok((n, from)) = sock.recv_from(&mut b).await {
+            if from == server {
+                if let Some(c) = client.filter(|_| !d.load(Ordering::Relaxed)) {
+                    let _ = sock.send_to(&b[..n], c).await;
+                }
+            } else {
+                client = Some(from);
+                let _ = sock.send_to(&b[..n], server).await;
+            }
+        }
+    });
+    (addr, dark)
+}
+
+// quinn holds little written but unsent: the backlog stays with the
+// caller (the server's send queue, where control frames go first), as
+// TCP_NOTSENT_LOWAT keeps it out of a WebSocket's socket.
+#[tokio::test]
+async fn unsent_is_bounded() {
+    let k = keys();
+    // Uncompressed, so bytes written are bytes on the wire.
+    let (ep, mut conns) = listen(&k, false, Congestion::Cubic);
+    let (relay, dark) = blackhole_relay(ep.local_addr().unwrap()).await;
+    let tls = osewa_auth::client_config(&k.device, k.server.public());
+    let cli = dial(&relay.to_string(), tls, Congestion::Cubic).await.unwrap();
+    cli.write(&frame(wire::TYPE_HELLO, 0, b"{}")).await.unwrap();
+    let srv = conns.recv().await.unwrap();
+    read(&srv).await;
+    dark.store(true, Ordering::Relaxed);
+
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (srv2, acc) = (srv.clone(), accepted.clone());
+    let f = frame(wire::TYPE_OUTPUT, 1, &text(16 << 10));
+    let writer = tokio::spawn(async move {
+        for _ in 0..256 {
+            srv2.write(&f).await.unwrap();
+            acc.fetch_add(f.len(), Ordering::Relaxed);
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let n = accepted.load(Ordering::Relaxed);
+    let cwnd = srv.connection().stats().path.cwnd as usize;
+    // In flight (at most cwnd), LOWAT, and the frame in hand.
+    let bound = cwnd + frames::LOWAT as usize + 4 + wire::HEADER_SIZE + (16 << 10);
+    assert!(n <= bound, "quinn took {n} bytes for a dark link (bound {bound}, cwnd {cwnd})");
+    writer.abort();
+}
+
+// A dial dropped by its caller stops sending: no attempt outlives it.
+#[tokio::test]
+async fn abandoned_dial_stops() {
+    let k = keys();
+    let sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let addr = sink.local_addr().unwrap().to_string();
+    let tls = osewa_auth::client_config(&k.device, k.server.public());
+    // Long enough for three attempts.
+    let r = tokio::time::timeout(Duration::from_millis(1300), dial(&addr, tls, Congestion::Cubic)).await;
+    assert!(r.is_err(), "dialed a silent socket");
+    let mut b = [0u8; 2048];
+    // What was sent before the drop, and the closes it sent.
+    let drain = tokio::time::Instant::now() + Duration::from_millis(200);
+    while tokio::time::timeout_at(drain, sink.recv_from(&mut b)).await.is_ok() {}
+    let mut after = 0;
+    let until = tokio::time::Instant::now() + Duration::from_millis(1500);
+    while tokio::time::timeout_at(until, sink.recv_from(&mut b)).await.is_ok() {
+        after += 1;
+    }
+    assert_eq!(after, 0, "{after} datagrams from a dropped dial");
+}
+
+#[test]
+fn address_as_go_picks_it() {
+    let (v4, v6): (SocketAddr, SocketAddr) = ("192.0.2.1:7322".parse().unwrap(), "[2001:db8::1]:7322".parse().unwrap());
+    assert_eq!(pick("host.example", &[v6, v4]), Some(v4), "a name's IPv4 address first");
+    assert_eq!(pick("host.example", &[v6]), Some(v6), "else its first");
+    assert_eq!(pick("2001:db8::1", &[v6]), Some(v6), "an IPv6 literal's own");
+    assert_eq!(pick("192.0.2.1", &[v4]), Some(v4));
+    assert_eq!(pick("host.example", &[]), None);
+}
+
+/// A UDP relay to server delaying each packet one_way: a far link with
+/// no bandwidth limit of its own.
+async fn delay_relay(server: SocketAddr, one_way: Duration) -> SocketAddr {
+    let sock = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let addr = sock.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut client = None;
+        let mut b = vec![0u8; 65536];
+        while let Ok((n, from)) = sock.recv_from(&mut b).await {
+            let to = if from == server {
+                let Some(c) = client else { continue };
+                c
+            } else {
+                client = Some(from);
+                server
+            };
+            let (s, p, at) = (sock.clone(), b[..n].to_vec(), tokio::time::Instant::now() + one_way);
+            tokio::spawn(async move {
+                tokio::time::sleep_until(at).await;
+                let _ = s.send_to(&p, to).await;
+            });
+        }
+    });
+    addr
+}
+
+// Bounding what quinn holds unsent mustn't cap a download on a far link,
+// where in flight is megabytes. Not a benchmark (run it alone, release):
+// cargo test --release -p osewa-carrier far_link -- --ignored --nocapture
+// 66 MB at 120 ms took 2.5 s either way when it was written (26 MB/s
+// bounded, 26-28 unbounded; mostly slow start).
+#[tokio::test]
+#[ignore]
+async fn far_link_throughput() {
+    let k = keys();
+    let (ep, mut conns) = listen(&k, false, Congestion::from_env());
+    let relay = delay_relay(ep.local_addr().unwrap(), Duration::from_millis(60)).await;
+    let tls = osewa_auth::client_config(&k.device, k.server.public());
+    let cli = dial(&relay.to_string(), tls, Congestion::Cubic).await.unwrap();
+    cli.write(&frame(wire::TYPE_HELLO, 0, b"{}")).await.unwrap();
+    let srv = conns.recv().await.unwrap();
+    read(&srv).await;
+    let f = frame(wire::TYPE_CHANNEL_DATA, 3, &[7u8; 32 << 10]);
+    let n = 2000;
+    let t0 = std::time::Instant::now();
+    let w = tokio::spawn(async move {
+        for _ in 0..n {
+            srv.write(&f).await.unwrap();
+        }
+        srv
+    });
+    let mut got = 0;
+    let mut marks = Vec::new();
+    for i in 0..n {
+        got += read(&cli).await.len();
+        if (i + 1) % 250 == 0 {
+            marks.push(format!("{:.0} MB at {:.2} s", got as f64 / 1e6, t0.elapsed().as_secs_f64()));
+        }
+    }
+    let cwnd = w.await.unwrap().connection().stats().path.cwnd;
+    let rate = got as f64 / t0.elapsed().as_secs_f64() / 1e6;
+    eprintln!("120 ms link: {rate:.1} MB/s; {marks:?}; cwnd {cwnd}");
 }
