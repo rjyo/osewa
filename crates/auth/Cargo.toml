@@ -1,0 +1,20 @@
+[package]
+name = "osewa-auth"
+description = "osewa device auth: Ed25519 keys, the devices file, pinned mutual TLS, enrollment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-paths.workspace = true
+osewa-flag.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+libc.workspace = true
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
+time = "0.3"
