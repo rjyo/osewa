@@ -5,6 +5,8 @@
 #       the Go image with the Rust binary at /usr/local/bin/osewa-rs and
 #       OSEWA_HOLDER pointing at it: a Go server spawning Rust holders
 #       (needs a Go server that honors OSEWA_HOLDER).
+#   docker build --build-arg GO_IMAGE=<go e2e image> --target rust .
+#       the Go image with the Rust osewa as /usr/local/bin/osewa.
 #
 # Supply chain: the Rust image is pinned by digest and the Zig tarball by
 # SHA-256, as in the Go Dockerfile.
@@ -50,3 +52,8 @@ COPY --from=build /out/osewa /osewa
 FROM ${GO_IMAGE} AS mixed
 COPY --from=build /out/osewa /usr/local/bin/osewa-rs
 ENV OSEWA_HOLDER=/usr/local/bin/osewa-rs
+
+# The Go image with the Rust osewa in its place: a Rust server spawning
+# Rust holders, driven by the Go e2e harness and Go clients.
+FROM ${GO_IMAGE} AS rust
+COPY --from=build /out/osewa /usr/local/bin/osewa
