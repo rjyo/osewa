@@ -293,9 +293,22 @@ impl Client {
                 let c = self.clone();
                 tokio::task::spawn_local(async move {
                     match req.method.as_str() {
+                        // Not cancelled, as in Go: a holder half started
+                        // is better finished than orphaned.
                         wire::METHOD_CREATE => c.create(req).await,
-                        wire::METHOD_LIST => c.list(req).await,
-                        _ => c.kill(req).await,
+                        // Holder calls end with the connection.
+                        wire::METHOD_LIST => {
+                            tokio::select! {
+                                _ = c.list(req) => {}
+                                _ = c.cancelled() => {}
+                            }
+                        }
+                        _ => {
+                            tokio::select! {
+                                _ = c.kill(req) => {}
+                                _ = c.cancelled() => {}
+                            }
+                        }
                     }
                     c.st.borrow_mut().busy -= 1;
                 });

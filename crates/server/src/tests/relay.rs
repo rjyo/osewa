@@ -231,3 +231,31 @@ fn holder_write_failure_ends_stream() {
         assert!(c.call(attach()).await.error.is_empty(), "stream id still in use");
     });
 }
+
+// A kill waiting on a holder that never answers ends with the connection,
+// closing its holder connection, rather than at holder_timeout.
+#[test]
+fn closing_cancels_holder_calls() {
+    run(async {
+        let e = Env::with(|c| c.tune.holder_timeout = Duration::from_secs(3600));
+        let id = "65".repeat(16);
+        let gone = std::rc::Rc::new(tokio::sync::Notify::new());
+        let g = gone.clone();
+        let _h = fake_holder(
+            e.dir(),
+            &id,
+            handler(move |mut conn| {
+                let g = g.clone();
+                async move {
+                    while crate::read_frame(&mut conn).await.is_ok() {}
+                    g.notify_one();
+                }
+            }),
+        );
+        let mut c = e.connect("phone").await;
+        c.send(wire::json(wire::TYPE_REQUEST, 0, &wire::Request { id: 7, session: id.clone(), ..req(wire::METHOD_KILL) })).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        c.hang_up();
+        tokio::time::timeout(Duration::from_secs(5), gone.notified()).await.expect("holder call outlived its connection");
+    });
+}

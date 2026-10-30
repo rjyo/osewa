@@ -389,11 +389,13 @@ impl Channel {
     /// Sends src as CHANNEL_DATA on channel n, then CHANNEL_EOF. It reads
     /// one frame ahead of what the client's credit allows and reserves
     /// nothing while it waits in read: exec's stdout and stderr share one
-    /// budget, and an idle stderr must not pin room stdout needs. With
-    /// stop_reading it also stops reading when the channel stops (a forward,
-    /// whose connection the stop closes); a process's pipes are read until
-    /// they close, so output after a stop is discarded rather than refused.
-    /// It returns the read error that ended it, if not EOF.
+    /// budget, and an idle stderr must not pin room stdout needs. Once the
+    /// channel stops it sends nothing more and returns. With stop_reading
+    /// a read in progress is abandoned at the stop (a forward, whose
+    /// connection the stop closes); a pipe read waits for data, EOF or the
+    /// pipes' release after the process is reaped, and the pipe stays open
+    /// until then, so the process blocks on a full pipe rather than dying
+    /// of SIGPIPE. It returns the read error that ended it, if not EOF.
     async fn pump(&self, n: u8, src: &mut dyn Source, stop_reading: bool) -> io::Result<()> {
         let mut buf = vec![0u8; wire::MAX_CHANNEL_DATA - 1];
         loop {
