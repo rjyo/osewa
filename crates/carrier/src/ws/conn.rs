@@ -789,7 +789,7 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
 }
 
 fn too_big(limit: usize) -> Violation {
-    Violation(Some(STATUS_MESSAGE_TOO_BIG), Error::TooBig(limit + 1))
+    Violation(Some(STATUS_MESSAGE_TOO_BIG), Error::TooBig(limit.saturating_add(1)))
 }
 
 fn inflate_violation(e: InflateError, limit: usize) -> Violation {
