@@ -527,7 +527,7 @@ async fn server_without_context_takeover() {
         let mut d = Deflater::new();
         for _ in 0..2 {
             let mut body = Vec::new();
-            d.compress(&m, &mut body);
+            d.compress(&m, &mut body, super::Level::Fast);
             d.reset();
             raw.send(0xc0 | OP_BINARY, &body).await;
             assert_eq!(server.read().await.unwrap(), m);
@@ -546,7 +546,7 @@ async fn server_reads_compressed_fragments_and_pings_between() {
         for i in 0..3 {
             let m = text(10_000, i);
             let mut body = Vec::new();
-            d.compress(&m, &mut body);
+            d.compress(&m, &mut body, super::Level::Fast);
             let (a, b) = body.split_at(body.len() / 2);
             raw.send(0x40 | OP_BINARY, a).await;
             raw.send(0x80 | OP_PING, b"hi").await;
@@ -627,7 +627,7 @@ async fn compressed_bomb_hits_the_limit() {
     local(async {
         let mut d = Deflater::new();
         let mut body = Vec::new();
-        d.compress(&vec![0; MAX_FRAME + 1], &mut body);
+        d.compress(&vec![0; MAX_FRAME + 1], &mut body, super::Level::Fast);
         let (e, close) = violate(DEFLATE, &[(0xc0 | OP_BINARY, body)], true).await;
         assert!(matches!(e, Error::TooBig(_)));
         assert_eq!(close.unwrap().0, 1009);
@@ -690,7 +690,7 @@ async fn client_request_and_frames() {
         for i in 0..3 {
             let m = text(3000, i);
             let mut body = Vec::new();
-            d.compress(&m, &mut body);
+            d.compress(&m, &mut body, super::Level::Fast);
             raw.send(0xc0 | OP_BINARY, &body).await;
             assert_eq!(conn.read().await.unwrap(), m);
         }
@@ -821,7 +821,7 @@ async fn client_server_no_context_takeover() {
         for i in 0..3 {
             let m = text(3000, i % 2);
             let mut body = Vec::new();
-            Deflater::new().compress(&m, &mut body);
+            Deflater::new().compress(&m, &mut body, super::Level::Fast);
             raw.send(0xc0 | OP_BINARY, &body).await;
             assert_eq!(conn.read().await.unwrap(), m);
         }

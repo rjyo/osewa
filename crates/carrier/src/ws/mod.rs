@@ -10,4 +10,5 @@ mod handshake;
 mod tests;
 
 pub use conn::*;
+pub use deflate::Level;
 pub use handshake::{accept, dial, Acceptor};

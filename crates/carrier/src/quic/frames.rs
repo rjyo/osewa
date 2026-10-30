@@ -179,9 +179,10 @@ pub(crate) struct Writer {
 
 impl Writer {
     pub fn new(qc: &Connection, s: SendStream, deflate: bool) -> Writer {
-        // Level 2, as the WebSocket's deflater (ws/deflate.rs): Go's
-        // BestSpeed ratio at about its speed.
-        let deflate = deflate.then(|| Compress::new(Compression::new(2), false));
+        // The main stream carries terminals and control frames, bulk going
+        // on lanes: what the WebSocket compresses at Level::Dense
+        // (ws/deflate.rs), for screens that are all latency on a slow link.
+        let deflate = deflate.then(|| Compress::new(Compression::new(5), false));
         Writer { s, qc: qc.clone(), buf: Vec::new(), off: 0, deflate }
     }
 

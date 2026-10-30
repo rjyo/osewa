@@ -170,7 +170,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Conn for WsConn<S> {
         Box::pin(async { self.0.read().await.map_err(ws_err) })
     }
     fn write<'a>(&'a self, frame: &'a [u8]) -> LocalBoxFuture<'a, io::Result<()>> {
-        Box::pin(async { self.0.write(frame).await.map_err(ws_err) })
+        // A session's frames are what someone is looking at, and a screen
+        // is all latency on a slow link: they are worth the denser search.
+        // Channel data is bulk, where speed counts.
+        let level = match frame.first() {
+            Some(&t) if (wire::TYPE_SNAPSHOT_BEGIN..=wire::TYPE_EVENT).contains(&t) => osewa_carrier::ws::Level::Dense,
+            _ => osewa_carrier::ws::Level::Fast,
+        };
+        Box::pin(async move { self.0.write_level(frame, level).await.map_err(ws_err) })
     }
     fn close(&self, code: u16, reason: String) -> LocalBoxFuture<'_, ()> {
         Box::pin(async move {

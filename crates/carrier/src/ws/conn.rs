@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::{oneshot, Mutex, MutexGuard, Notify};
 
-use super::deflate::{Deflater, InflateError, Inflater, TAIL};
+use super::deflate::{Deflater, InflateError, Inflater, Level, TAIL};
 use super::frame::{self, *};
 
 /// Status codes (RFC 6455 7.4.1).
@@ -362,7 +362,12 @@ impl<S: AsyncRead + AsyncWrite> Conn<S> {
     /// Sends one binary message: compressed when deflate was negotiated, this
     /// is the server, and it is at least the threshold.
     pub async fn write(&self, msg: &[u8]) -> Result<(), Error> {
-        self.inner.send(OP_BINARY, msg).await
+        self.inner.send(OP_BINARY, msg, Level::Fast).await
+    }
+
+    /// write, compressing at level when it compresses at all.
+    pub async fn write_level(&self, msg: &[u8], level: Level) -> Result<(), Error> {
+        self.inner.send(OP_BINARY, msg, level).await
     }
 
     /// Pings the peer and waits for its pong. The pong is only seen while
@@ -721,7 +726,7 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
     }
 
     async fn send_control(&self, op: u8, p: &[u8]) -> Result<(), Error> {
-        match tokio::time::timeout(CONTROL_TIMEOUT, self.send(op, p)).await {
+        match tokio::time::timeout(CONTROL_TIMEOUT, self.send(op, p, Level::Fast)).await {
             Ok(r) => r,
             Err(_) => {
                 self.shutdown();
@@ -730,9 +735,9 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
         }
     }
 
-    async fn send(&self, op: u8, p: &[u8]) -> Result<(), Error> {
+    async fn send(&self, op: u8, p: &[u8], level: Level) -> Result<(), Error> {
         let mut w = self.lock_wr().await?;
-        let res = self.send_locked(&mut w, op, p).await;
+        let res = self.send_locked(&mut w, op, p, level).await;
         if let Err(Error::Io(_)) = res {
             self.shutdown();
         }
@@ -740,7 +745,7 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
         res
     }
 
-    async fn send_locked(&self, w: &mut Writer<S>, op: u8, p: &[u8]) -> Result<(), Error> {
+    async fn send_locked(&self, w: &mut Writer<S>, op: u8, p: &[u8], level: Level) -> Result<(), Error> {
         if self.close_sent.get() || self.closed.get() {
             return Err(Error::Closed);
         }
@@ -749,7 +754,7 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
         let payload = if compress {
             let d = deflate.as_mut().expect("threshold only with a deflater");
             body.clear();
-            d.compress(p, body);
+            d.compress(p, body, level);
             if *reset_deflate {
                 d.reset();
             }

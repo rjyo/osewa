@@ -510,6 +510,7 @@ dependencies = [
  "flate2",
  "httparse",
  "libc",
+ "miniz_oxide",
  "osewa-auth",
  "osewa-wire",
  "quinn",

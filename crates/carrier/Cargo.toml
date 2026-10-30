@@ -11,6 +11,7 @@ base64.workspace = true
 rand.workspace = true
 libc.workspace = true
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+miniz_oxide = "0.9"
 httparse = "1"
 sha1 = "0.10"
 tokio = { version = "1", features = ["io-util", "sync", "time", "macros", "rt", "net"] }
