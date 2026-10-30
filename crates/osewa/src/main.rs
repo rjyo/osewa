@@ -55,6 +55,17 @@ fn run(args: &[String]) -> i32 {
     };
     match cmd.as_str() {
         "holder" => osewa_holder::main(rest),
+        "server" => {
+            if rest.iter().any(|a| a == "--daemon" || a == "-daemon") {
+                eprintln!("osewa server: --daemon is not in the Rust build yet; run it under a service manager");
+                return 2;
+            }
+            osewa_server::main(rest)
+        }
+        "service" => {
+            eprintln!("osewa: service is not in the Rust build yet");
+            2
+        }
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
             0

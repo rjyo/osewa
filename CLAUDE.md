@@ -12,6 +12,8 @@ code disagree, the Go code is right and the doc gets fixed.
 | `crates/wire/` | Frames and messages. The only place wire types are defined |
 | `crates/ghostty/` | Binding to libghostty-vt (C bridge + safe wrapper) |
 | `crates/holder/` | One process per session: PTY, terminal, output log, queue, input, owner |
+| `crates/server/` | TLS + WebSocket server: holder spawning and relaying, channel streams, flight control |
+| `crates/execproc/` | Processes without a PTY for exec.start |
 | `crates/osewa/` | Single binary, same CLI as the Go `osewa` |
 
 ## Rules

@@ -1,0 +1,24 @@
+[package]
+name = "osewa-server"
+description = "osewa's network server: device auth, holder spawning and relaying, channel streams"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-ghostty.workspace = true
+osewa-holder.workspace = true
+osewa-paths.workspace = true
+osewa-flag.workspace = true
+osewa-execproc.workspace = true
+osewa-auth.workspace = true
+osewa-carrier.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+rand.workspace = true
+hex.workspace = true
+tokio = { version = "1", features = ["rt", "net", "time", "process", "signal", "io-util", "macros", "sync"] }
+# TLS over tokio streams with the ring provider osewa-auth configures.
+tokio-rustls = { version = "0.26", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
