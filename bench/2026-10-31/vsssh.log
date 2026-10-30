@@ -1,0 +1,24 @@
+##### round 1 GO
+| link | connect + run p50 ms | download MB/s | echo idle p50/p95 ms | echo under download p50/p95 ms | download meanwhile MB/s |
+|---|---|---|---|---|---|
+| mini-jp | 638 / 392 vs 1597 | 10.51 / 10.58 vs 9.92 | 126 / 131 / 126 / 132 vs 136 / 146 | 187 / 323 / 127 / 137 vs 174 / 205 | 7.09 / 8.73 vs 10.70 |
+
+(osewa over WebSocket / over QUIC vs ssh in each cell)
+##### round 1 RUST
+| link | connect + run p50 ms | download MB/s | echo idle p50/p95 ms | echo under download p50/p95 ms | download meanwhile MB/s |
+|---|---|---|---|---|---|
+| mini-jp | 643 / 377 vs 1577 | 10.69 / 9.96 vs 11.16 | 126 / 136 / 125 / 130 vs 131 / 156 | 298 / 415 / 133 / 188 vs 196 / 247 | 10.28 / 10.34 vs 9.98 |
+
+(osewa over WebSocket / over QUIC vs ssh in each cell)
+##### round 2 GO
+| link | connect + run p50 ms | download MB/s | echo idle p50/p95 ms | echo under download p50/p95 ms | download meanwhile MB/s |
+|---|---|---|---|---|---|
+| mini-jp | 639 / 387 vs 1578 | 10.59 / 5.08 vs 11.53 | 126 / 128 / 126 / 130 vs 135 / 146 | 190 / 214 / 131 / 162 vs 177 / 181 | 11.32 / 4.41 vs 11.48 |
+
+(osewa over WebSocket / over QUIC vs ssh in each cell)
+##### round 2 RUST
+| link | connect + run p50 ms | download MB/s | echo idle p50/p95 ms | echo under download p50/p95 ms | download meanwhile MB/s |
+|---|---|---|---|---|---|
+| mini-jp | 633 / 382 vs 1608 | 9.78 / 9.58 vs 10.55 | 126 / 133 / 126 / 132 vs 136 / 141 | 315 / 369 / 129 / 135 vs 196 / 240 | 10.91 / 10.30 vs 10.02 |
+
+(osewa over WebSocket / over QUIC vs ssh in each cell)

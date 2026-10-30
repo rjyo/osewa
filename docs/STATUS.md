@@ -79,6 +79,35 @@ vs 82 / 60 ms. Slow link: connect + run 741 / 509 vs 1201 / 831 ms
 Every echo-under-download cell still beats ssh (>15 s on the slow link).
 One run each.
 
+### Real path (mini-jp, 122 ms, 2026-10-31)
+
+Go server (launchd, :7322) and the Rust server (beside it on :7323,
+same keys), Go vsssh as the client for both, alternating, same session.
+Two vsssh passes each, WS / QUIC vs ssh:
+
+| | Go server | Rust server | ssh |
+| --- | ---: | ---: | ---: |
+| connect + run p50 | 638-639 / 387-392 ms | 633-643 / 377-382 ms | ~1590 ms |
+| QUIC download alone | 10.58, **5.08** MB/s | 9.96, 9.58 MB/s | 9.9-11.5 |
+| QUIC download during echo | 8.73, **4.41** MB/s | 10.34, 10.30 MB/s | ~10-11.5 |
+| QUIC echo under download p50 | 127, 131 ms | 133, 129 ms | 174-196 ms |
+| **WS echo under download p50** | 187, 190 ms | **298, 315 ms** | 174-196 ms |
+
+Six fresh QUIC connections each (50 MB exec download, Go client, wall
+clock including connect), and ssh the same way:
+
+| | runs (MB/s) | median | >= 90% of ssh's median (6.9) |
+| --- | --- | ---: | --- |
+| Go (quic-go) | 7.82 6.01 8.75 5.47 7.54 8.20 | 7.68 | 4 of 6 |
+| Rust (quinn, Cubic) | 6.64 7.75 7.54 7.60 8.00 7.68 | 7.64 | **6 of 6** |
+| ssh | 6.38 6.41 7.42 6.43 7.43 7.53 | 6.9 | |
+
+Counting connect favors osewa (ssh's handshake is ~1 s slower); without
+it every osewa/ssh ratio drops ~10-15%, Rust vs Go unchanged. The QUIC
+gate passes; the aim (>= ssh) is not shown. The WebSocket echo under
+download is a clear loss on the real path (~110 ms, now worse than ssh),
+the same as the Docker slow link.
+
 ### Echo under flood (e2e TestM2EchoUnderFlood, 1 Mbit/s, 100 ms, 1% loss)
 
 W1, W4 p50 at or below Go (129-131 vs 131 ms). W2 p50 185-218 vs
@@ -86,14 +115,18 @@ W1, W4 p50 at or below Go (129-131 vs 131 ms). W2 p50 185-218 vs
 
 ## Open
 
+- **WebSocket echo under download** (real path +110 ms, Docker slow link
+  +43 ms): the Rust server lets more bulk ahead of a keystroke over TCP.
+  NOTSENT_LOWAT is set on macOS and Linux; suspects are the carrier/TLS
+  write path buffering and exec flight's typing tighten.
 - W2 echo tail and slow-link echo under download: the holder's catch-up
   path under a heavy flood. Next step: OSEWA_TRACE breakdown
   (TestEchoBreakdown) on both images.
 - Typing client CPU 1.1% (must 1.0%), idle client 0.1% (must <0.1%).
 - Reattach +15-21 ms and keystroke p95: re-measure over several runs
   before chasing.
-- Not yet measured: the real path (`vsssh -quic mini-jp`, six fresh
-  connections, needs a Rust server on mini-jp and the user's ssh agent),
-  `make bench` throughput floor, RSS per extra idle session.
+- Not yet measured: `make bench` throughput floor, RSS per extra idle
+  session.
+- Go's vsssh leaves its sessions behind (two `cat` holders per run).
 - Env entries without `=` are dropped (std::process::Command can't
   pass them; Go passes them through).
