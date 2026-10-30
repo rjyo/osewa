@@ -51,16 +51,15 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Go's bytes.ReplaceAll for a non-empty `from`.
-pub(crate) fn replace_all(hay: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(hay.len());
-    let mut rest = hay;
-    while let Some(i) = find(rest, from) {
-        out.extend_from_slice(&rest[..i]);
-        out.extend_from_slice(to);
-        rest = &rest[i + from.len()..];
+/// The offsets of every PLACEHOLDER in u, leftmost and non-overlapping, as
+/// Go's bytes.ReplaceAll finds them.
+pub(crate) fn placeholders(u: &[u8]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(k) = find(&u[i..], PLACEHOLDER) {
+        out.push(i + k);
+        i += k + PLACEHOLDER.len();
     }
-    out.extend_from_slice(rest);
     out
 }
 
@@ -162,6 +161,10 @@ pub type Clock = Box<dyn FnMut() -> SystemTime + Send>;
 pub struct Generator<'a> {
     w: &'a mut dyn Write,
     units: Vec<Vec<u8>>,
+    /// Where each unit carries PLACEHOLDER, found once: searching every
+    /// block for it cost a third more CPU per byte than Go's gen, CPU the
+    /// holder needs under a W2 flood (e2e M2 echo under W2 doubled).
+    marks: Vec<Vec<usize>>,
     rate: i64,
     dur: Duration,
     now: Clock,
@@ -181,7 +184,8 @@ fn sub(a: SystemTime, b: SystemTime) -> i128 {
 
 impl<'a> Generator<'a> {
     pub fn new(w: &'a mut dyn Write, units: Vec<Vec<u8>>, rate: i64, dur: Duration, now: Clock) -> Generator<'a> {
-        Generator { w, units, rate, dur, now, rows: 0, input: None, typed: Vec::new(), framed: false }
+        let marks = units.iter().map(|u| placeholders(u)).collect();
+        Generator { w, units, marks, rate, dur, now, rows: 0, input: None, typed: Vec::new(), framed: false }
     }
 
     pub fn run(&mut self) -> io::Result<()> {
@@ -194,13 +198,16 @@ impl<'a> Generator<'a> {
             write!(self.w, "\x1b[1;{}r\x1b[{};1H", self.rows - 1, self.rows - 1)?;
         }
         let mut sent: i64 = 0;
-        let mut body = Vec::new();
+        let (mut body, mut at, mut buf) = (Vec::new(), Vec::new(), Vec::new());
         let mut i = 0;
         loop {
             body.clear();
+            at.clear();
             let mut n = 0;
             while n < BLOCK_LINES && (n == 0 || !self.framed) {
-                body.extend_from_slice(&self.units[i % self.units.len()]);
+                let k = i % self.units.len();
+                at.extend(self.marks[k].iter().map(|m| body.len() + m));
+                body.extend_from_slice(&self.units[k]);
                 i += 1;
                 n += 1;
             }
@@ -217,15 +224,16 @@ impl<'a> Generator<'a> {
             if !self.dur.is_zero() && sub(t, start) >= self.dur.as_nanos() as i128 {
                 return Ok(());
             }
-            let mut buf = Vec::with_capacity(body.len() + 20);
+            let st = stamp(t);
+            buf.clear();
             if !self.framed {
-                buf.extend_from_slice(&stamp(t));
+                buf.extend_from_slice(&st);
             }
+            let off = buf.len();
             buf.extend_from_slice(&body);
             // Repaints carry a stamp too, so an alternate screen has an age.
-            if find(&buf, PLACEHOLDER).is_some() {
-                let st = stamp(t);
-                buf = replace_all(&buf, PLACEHOLDER, &st[..PLACEHOLDER.len()]);
+            for &m in &at {
+                buf[off + m..off + m + PLACEHOLDER.len()].copy_from_slice(&st[..PLACEHOLDER.len()]);
             }
             self.w.write_all(&buf)?;
             sent += buf.len() as i64;
