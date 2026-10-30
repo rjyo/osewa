@@ -13,3 +13,4 @@ path = "src/main.rs"
 osewa-wire.workspace = true
 osewa-ghostty.workspace = true
 osewa-holder.workspace = true
+osewa-server.workspace = true

@@ -107,6 +107,7 @@ version = "0.1.0"
 dependencies = [
  "osewa-ghostty",
  "osewa-holder",
+ "osewa-server",
  "osewa-wire",
 ]
 
@@ -150,6 +151,23 @@ name = "osewa-paths"
 version = "0.1.0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "osewa-server"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "libc",
+ "osewa-execproc",
+ "osewa-flag",
+ "osewa-ghostty",
+ "osewa-holder",
+ "osewa-paths",
+ "osewa-wire",
+ "rand",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
