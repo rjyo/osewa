@@ -256,10 +256,20 @@ impl Terminal {
     /// Renders the active screen. trim drops trailing blanks; unwrap joins
     /// soft-wrapped lines.
     pub fn format(&self, f: Format, trim: bool, unwrap: bool) -> Result<Vec<u8>> {
+        self.format_in(f, trim, unwrap, false)
+    }
+
+    /// The active area's plain text, one line per row, without the
+    /// scrollback: it costs the screen's size, not the history's.
+    pub fn active_text(&self) -> Result<Vec<u8>> {
+        self.format_in(Format::Plain, false, false, true)
+    }
+
+    fn format_in(&self, f: Format, trim: bool, unwrap: bool, active: bool) -> Result<Vec<u8>> {
         let mut sink = Sink { b: Vec::new(), stop_at_ready: false, end: None };
         let vt = f != Format::Plain;
         let r = unsafe {
-            ffi::osewa_format(self.t, vt, trim, unwrap, f == Format::VtPalette, (&mut sink as *mut Sink).cast())
+            ffi::osewa_format(self.t, vt, trim, unwrap, f == Format::VtPalette, active, (&mut sink as *mut Sink).cast())
         };
         check(r, "format")?;
         Ok(sink.b)

@@ -183,12 +183,25 @@ int osewa_snapshot_encode(GhosttyTerminal t, void *ud) {
 }
 
 int osewa_format(GhosttyTerminal t, bool vt, bool trim, bool unwrap,
-                 bool palette, void *ud) {
+                 bool palette, bool active, void *ud) {
   GhosttyFormatterTerminalOptions opts =
       GHOSTTY_INIT_SIZED(GhosttyFormatterTerminalOptions);
   opts.emit = vt ? GHOSTTY_FORMATTER_FORMAT_VT : GHOSTTY_FORMATTER_FORMAT_PLAIN;
   opts.trim = trim;
   opts.unwrap = unwrap;
+  // The active area alone: walking the scrollback costs its length, on
+  // every call.
+  GhosttySelection sel = GHOSTTY_INIT_SIZED(GhosttySelection);
+  if (active) {
+    GhosttyPoint p = {.tag = GHOSTTY_POINT_TAG_ACTIVE};
+    int r = ghostty_terminal_grid_ref(t, p, &sel.start);
+    if (r != GHOSTTY_SUCCESS) return r;
+    p.value.coordinate.x = osewa_term_cols(t) - 1;
+    p.value.coordinate.y = osewa_term_rows(t) - 1;
+    r = ghostty_terminal_grid_ref(t, p, &sel.end);
+    if (r != GHOSTTY_SUCCESS) return r;
+    opts.selection = &sel;
+  }
   if (vt) {
     opts.extra.size = sizeof(opts.extra);
     opts.extra.palette = palette;

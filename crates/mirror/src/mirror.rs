@@ -264,13 +264,12 @@ impl Renderer for Mirror {
 
 pub(crate) fn visible_text(t: Option<&Terminal>) -> String {
     let Some(t) = t else { return String::new() };
-    let Ok(b) = t.format(ghostty::Format::Plain, false, false) else {
+    let Ok(b) = t.active_text() else {
         return String::new();
     };
     let s = String::from_utf8_lossy(&b);
     let lines: Vec<&str> = s.split('\n').collect();
     let (_, rows) = t.size();
-    let lines = &lines[t.scrollback_rows().min(lines.len())..];
     let lines = &lines[..rows.min(lines.len())];
     let mut out: Vec<&str> = lines.iter().map(|l| l.trim_end_matches(' ')).collect();
     while out.last() == Some(&"") {

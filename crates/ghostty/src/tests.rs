@@ -343,3 +343,29 @@ fn commit_matches_script() {
     let script = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/libghostty.sh")).unwrap();
     assert!(script.contains(&format!("\nGHOSTTY_COMMIT={COMMIT}\n")));
 }
+
+// active_text is the full plain format's active rows, wide characters,
+// blanks and blank rows included, whatever the scrollback holds.
+#[test]
+fn active_text_is_the_active_rows() {
+    let mut t = new_term(12, 4, Callbacks::default());
+    let active = |t: &Terminal| -> Vec<String> {
+        let full = String::from_utf8(t.format(Format::Plain, false, false).unwrap()).unwrap();
+        let lines: Vec<String> = full.split('\n').map(String::from).collect();
+        let (_, rows) = t.size();
+        let mut want: Vec<String> = lines[t.scrollback_rows()..].to_vec();
+        want.resize(rows, String::new());
+        want
+    };
+    let got = |t: &Terminal| -> Vec<String> {
+        let s = String::from_utf8(t.active_text().unwrap()).unwrap();
+        let mut rows: Vec<String> = s.split('\n').map(String::from).collect();
+        rows.resize(t.size().1, String::new());
+        rows
+    };
+    for chunk in [&b"$ "[..], b"ls  ", b"\r\nold\r\n\r\n", b"wide \xe4\xbd\xa0\xe5\xa5\xbd!", b"\r\nmore\r\nlines\r\nthan\r\nrows\r\n$ x  "] {
+        t.write(chunk);
+        assert_eq!(got(&t), active(&t), "after {:?}", String::from_utf8_lossy(chunk));
+    }
+    assert!(t.scrollback_rows() > 0, "no scrollback to leave out");
+}
