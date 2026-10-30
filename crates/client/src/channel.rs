@@ -523,6 +523,14 @@ impl Exec {
         Exec { ch }
     }
 
+    pub(crate) fn stream_id(&self) -> u32 {
+        self.ch.id
+    }
+
+    pub(crate) fn is_over(&self) -> bool {
+        self.ch.done.is_set()
+    }
+
     /// Wait's answer for a stream already over.
     pub(crate) fn wait_now(&self) -> Result<i64> {
         self.ch.exit()
