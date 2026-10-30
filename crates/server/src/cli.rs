@@ -1,6 +1,9 @@
 //! `osewa server`.
 
+use std::future::Future;
 use std::rc::Rc;
+
+use tokio::net::TcpListener;
 
 use crate::{Config, Server};
 
@@ -54,7 +57,7 @@ pub fn check_args(args: &[String]) -> Result<(), String> {
     parse(args).map(|_| ())
 }
 
-fn parse(args: &[String]) -> Result<(String, Config), String> {
+pub(crate) fn parse(args: &[String]) -> Result<(String, Config), String> {
     let mut fs = osewa_flag::FlagSet::new("server");
     fs.value("listen", &format!(":{DEFAULT_PORT}"), "address to listen on")
         .value("name", "", "server name reported to clients (default hostname)")
@@ -79,11 +82,40 @@ fn parse(args: &[String]) -> Result<(String, Config), String> {
 
 /// Runs a server with the user's identity, devices and run directory until
 /// stop resolves.
-async fn serve(listen: String, cfg: Config, stop: impl std::future::Future<Output = ()>) -> Result<(), String> {
+pub(crate) async fn serve(listen: String, mut cfg: Config, stop: impl Future<Output = ()>) -> Result<(), String> {
+    let id = osewa_auth::Identity::load_or_create(&osewa_auth::identity_path()).map_err(|e| e.to_string())?;
+    cfg.identity = Some(Rc::new(id));
+    cfg.devices = Some(osewa_auth::Devices::new(osewa_auth::devices_path()));
+    cfg.run_dir = osewa_paths::run_dir();
     let s: Rc<Server> = Server::new(cfg)?;
-    let _ = (listen, stop);
+    let ln = bind(&listen).await.map_err(|e| format!("listen tcp {listen}: {e}"))?;
+    // The QUIC carrier (docs/QUIC.md) will listen on the UDP port of the
+    // same number unless --no-quic, and advertise it with set_quic_port;
+    // until then WELCOME lists no other carrier.
+    let serving = s.serve(ln);
+    tokio::pin!(serving);
+    tokio::select! {
+        r = &mut serving => {
+            s.close().await;
+            return r.map_err(|e| e.to_string());
+        }
+        _ = stop => {}
+    }
+    // close waits for exec processes, whose SIGKILL needs us alive.
     s.close().await;
-    Err("TLS is not wired into the Rust server yet".into())
+    serving.await.map_err(|e| e.to_string())
+}
+
+/// Listens as Go's net.Listen("tcp", addr) does: an empty host is every
+/// address, IPv6 and IPv4 where the system has both.
+async fn bind(addr: &str) -> std::io::Result<TcpListener> {
+    match addr.strip_prefix(':') {
+        Some(port) => match TcpListener::bind(format!("[::]:{port}")).await {
+            Ok(ln) => Ok(ln),
+            Err(_) => TcpListener::bind(format!("0.0.0.0:{port}")).await,
+        },
+        None => TcpListener::bind(addr).await,
+    }
 }
 
 #[cfg(test)]

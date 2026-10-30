@@ -117,6 +117,11 @@ pub struct Env {
     pub holders: Rc<Holders>,
     pub srv: Rc<Server>,
     pub run_dir: TempDir,
+    pub server_key: osewa_auth::PublicKey,
+    /// An enrolled device.
+    pub device: Rc<osewa_auth::Identity>,
+    /// Where serve listens, once listen has started it.
+    pub addr: Option<std::net::SocketAddr>,
 }
 
 impl Env {
@@ -133,10 +138,62 @@ impl Env {
 
     pub fn with_spawn(spawn: Option<Spawn>, holders: Rc<Holders>, f: impl FnOnce(&mut Config)) -> Env {
         let run_dir = TempDir::new();
-        let mut cfg = Config { run_dir: run_dir.0.join("run"), name: "testsrv".into(), spawn, ..Default::default() };
+        let id = osewa_auth::Identity::generate();
+        let server_key = id.public();
+        let device = Rc::new(osewa_auth::Identity::generate());
+        let devices = osewa_auth::Devices::new(run_dir.0.join("config/devices"));
+        devices.add(osewa_auth::Device { name: "test".into(), key: osewa_auth::encode_key(&device.public()) }).unwrap();
+        let mut cfg = Config {
+            identity: Some(Rc::new(id)),
+            devices: Some(devices),
+            run_dir: run_dir.0.join("run"),
+            name: "testsrv".into(),
+            spawn,
+            ..Default::default()
+        };
         f(&mut cfg);
         let srv = Server::new(cfg).unwrap();
-        Env { holders, srv, run_dir }
+        Env { holders, srv, run_dir, server_key, device, addr: None }
+    }
+
+    /// Serves TLS and WebSocket on a loopback port.
+    pub async fn listen(&mut self) {
+        let ln = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        self.addr = Some(ln.local_addr().unwrap());
+        let srv = self.srv.clone();
+        tokio::task::spawn_local(async move { srv.serve(ln).await.unwrap() });
+    }
+
+    /// Opens TLS to the listening server as id, returning the stream and a
+    /// count of the bytes the server wrote to it below TLS.
+    pub async fn tls(&self, id: &osewa_auth::Identity) -> std::io::Result<(TlsStream, Rc<std::cell::Cell<u64>>)> {
+        let tcp = tokio::net::TcpStream::connect(self.addr.unwrap()).await?;
+        let (tcp, read) = Counting::new(tcp);
+        let cfg = osewa_auth::client_config(id, self.server_key);
+        let tls = tokio_rustls::TlsConnector::from(std::sync::Arc::new(cfg));
+        let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap().to_owned();
+        Ok((tls.connect(name, tcp).await?, read))
+    }
+
+    /// Dials over TLS and WebSocket, as an osewa client does.
+    pub async fn dial_ws(&self, id: &osewa_auth::Identity) -> Result<Tc, String> {
+        let (s, read) = self.tls(id).await.map_err(|e| e.to_string())?;
+        let ws = osewa_carrier::ws::dial(s, "127.0.0.1").await.map_err(|e| e.to_string())?;
+        ws.set_read_limit(1 << 30);
+        let mut c = Tc::new(Transport::Ws(ws));
+        c.link_read = Some(read);
+        Ok(c)
+    }
+
+    /// dial_ws as the enrolled device, then HELLO/WELCOME.
+    pub async fn connect_ws(&self, client_id: &str) -> Tc {
+        let mut c = self.dial_ws(&self.device).await.unwrap();
+        let hello = wire::Hello { client_id: client_id.into(), ..Default::default() };
+        c.send(wire::json(wire::TYPE_HELLO, 0, &hello)).await;
+        let f = c.next().await;
+        assert_eq!(f.ty, wire::TYPE_WELCOME, "got 0x{:02x}, want WELCOME", f.ty);
+        c.welcome = f.decode().unwrap();
+        c
     }
 
     pub fn dir(&self) -> &Path {
@@ -148,7 +205,7 @@ impl Env {
         let (end, peer) = mem::pair();
         let srv = self.srv.clone();
         tokio::task::spawn_local(async move { srv.serve_conn(end as Rc<dyn Conn>).await });
-        Tc { peer, welcome: wire::Welcome::default(), hold_channel: false, lazy_channel: false, owed: HashMap::new() }
+        Tc::new(Transport::Mem(peer))
     }
 
     /// Dials and completes HELLO/WELCOME, listing every feature.
@@ -174,9 +231,19 @@ impl Env {
 
 static REQ_ID: AtomicU64 = AtomicU64::new(0);
 
+pub type TlsStream = tokio_rustls::client::TlsStream<Counting<tokio::net::TcpStream>>;
+
+/// How a test client reaches the server.
+pub enum Transport {
+    Mem(mem::Peer),
+    Ws(osewa_carrier::ws::Conn<TlsStream>),
+}
+
 /// A test client.
 pub struct Tc {
-    pub peer: mem::Peer,
+    pub peer: Transport,
+    /// Bytes the server wrote below TLS, for a client on the network.
+    pub link_read: Option<Rc<std::cell::Cell<u64>>>,
     pub welcome: wire::Welcome,
     /// Stops read from crediting CHANNEL_DATA.
     pub hold_channel: bool,
@@ -186,6 +253,29 @@ pub struct Tc {
     /// hid stalls only a real client's batching shows.
     pub lazy_channel: bool,
     owed: HashMap<u32, usize>,
+}
+
+impl Tc {
+    fn new(peer: Transport) -> Tc {
+        Tc {
+            peer,
+            link_read: None,
+            welcome: wire::Welcome::default(),
+            hold_channel: false,
+            lazy_channel: false,
+            owed: HashMap::new(),
+        }
+    }
+
+    /// Drops the connection, as a client process exiting does.
+    pub fn hang_up(&mut self) {
+        match &mut self.peer {
+            Transport::Mem(p) => p.close(),
+            Transport::Ws(ws) => {
+                let _ = ws.close_now();
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -205,17 +295,28 @@ impl Tc {
     }
 
     pub async fn send_raw(&self, b: Vec<u8>) -> std::io::Result<()> {
-        match tokio::time::timeout(Duration::from_secs(5), self.peer.send(b)).await {
+        let send = async {
+            match &self.peer {
+                Transport::Mem(p) => p.send(b).await,
+                Transport::Ws(ws) => ws.write(&b).await.map_err(|e| std::io::Error::other(e.to_string())),
+            }
+        };
+        match tokio::time::timeout(Duration::from_secs(5), send).await {
             Ok(r) => r,
             Err(_) => Err(std::io::ErrorKind::TimedOut.into()),
         }
     }
 
     pub async fn read(&mut self, d: Duration) -> Result<wire::Frame, ReadErr> {
-        let m = tokio::time::timeout(d, self.peer.recv()).await.map_err(|_| ReadErr::Timeout)?;
-        let b = match m {
-            Msg::Data(b) => b,
-            Msg::Close(..) => return Err(ReadErr::Closed),
+        let b = match &mut self.peer {
+            Transport::Mem(p) => match tokio::time::timeout(d, p.recv()).await.map_err(|_| ReadErr::Timeout)? {
+                Msg::Data(b) => b,
+                Msg::Close(..) => return Err(ReadErr::Closed),
+            },
+            Transport::Ws(ws) => match tokio::time::timeout(d, ws.read()).await.map_err(|_| ReadErr::Timeout)? {
+                Ok(b) => b,
+                Err(_) => return Err(ReadErr::Closed),
+            },
         };
         let f = wire::Frame::unmarshal(&b).map_err(|e| ReadErr::Bad(e.to_string()))?;
         self.credit(&f).await;
@@ -554,4 +655,59 @@ where
         }
     });
     (port, task)
+}
+
+/// Counts the bytes read through it.
+pub struct Counting<S> {
+    inner: S,
+    read: Rc<std::cell::Cell<u64>>,
+}
+
+impl<S> Counting<S> {
+    pub fn new(inner: S) -> (Counting<S>, Rc<std::cell::Cell<u64>>) {
+        let read = Rc::new(std::cell::Cell::new(0));
+        (Counting { inner, read: read.clone() }, read)
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Counting<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let r = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        let n = buf.filled().len() - before;
+        self.read.set(self.read.get() + n as u64);
+        r
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Counting<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// A config with a fresh identity and an empty devices file in dir.
+pub fn auth_config(dir: &Path) -> Config {
+    Config {
+        identity: Some(Rc::new(osewa_auth::Identity::generate())),
+        devices: Some(osewa_auth::Devices::new(dir.join("devices"))),
+        ..Default::default()
+    }
 }

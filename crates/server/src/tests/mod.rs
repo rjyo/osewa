@@ -6,6 +6,7 @@
 #[allow(dead_code)]
 mod helpers;
 mod channel;
+mod net;
 mod relay;
 mod server;
 mod trace;

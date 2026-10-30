@@ -442,7 +442,7 @@ fn channels_end_with_connection() {
         let script = format!("echo $$ > {}; trap '' HUP; while :; do sleep 0.1; done", pid_file.display());
         assert!(c.exec(2, &["sh", "-c", &script]).await.error.is_empty());
         let pid = read_pid(&pid_file).await;
-        c.peer.close();
+        c.hang_up();
         tokio::time::timeout(Duration::from_secs(5), closed.notified()).await.expect("forwarded connection still open");
         // It ignores SIGHUP, so it takes the SIGKILL 2 s later.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);

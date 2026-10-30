@@ -10,24 +10,23 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
+use std::os::fd::AsRawFd;
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime};
 
 use osewa_wire as wire;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, UnixStream};
 use tokio::sync::Notify;
 
 mod channel;
 mod client;
 pub mod conn;
 mod flight;
-// Both serve TLS, which lands with the auth and carrier crates.
-#[allow(dead_code)]
 mod limits;
-#[allow(dead_code)]
 mod lowat;
 mod cli;
 mod queue;
@@ -104,6 +103,9 @@ impl Default for Tunables {
 /// Configures a Server.
 #[derive(Clone, Default)]
 pub struct Config {
+    /// The server's key and the enrolled devices; both required.
+    pub identity: Option<Rc<osewa_auth::Identity>>,
+    pub devices: Option<osewa_auth::Devices>,
     pub run_dir: PathBuf,
     /// Reported in WELCOME; default the hostname.
     pub name: String,
@@ -138,6 +140,37 @@ pub struct Server {
     execs_done: Notify,
     /// Fires once close starts, for listeners.
     closing: Notify,
+    /// Anyone who can reach the port can fail a handshake, and each failure
+    /// is a log line.
+    log: RefCell<limits::LimitedLog<io::Stderr>>,
+}
+
+/// Bounds the TLS handshake, as Go's http.Server does with its
+/// ReadHeaderTimeout.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The WebSocket carrier.
+struct WsConn<S>(osewa_carrier::ws::Conn<S>);
+
+fn ws_err(e: osewa_carrier::ws::Error) -> io::Error {
+    match e {
+        osewa_carrier::ws::Error::Io(e) => e,
+        e => io::Error::other(e.to_string()),
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Conn for WsConn<S> {
+    fn read(&self) -> LocalBoxFuture<'_, io::Result<Vec<u8>>> {
+        Box::pin(async { self.0.read().await.map_err(ws_err) })
+    }
+    fn write<'a>(&'a self, frame: &'a [u8]) -> LocalBoxFuture<'a, io::Result<()>> {
+        Box::pin(async { self.0.write(frame).await.map_err(ws_err) })
+    }
+    fn close(&self, code: u16, reason: String) -> LocalBoxFuture<'_, ()> {
+        Box::pin(async move {
+            let _ = self.0.close(code, &reason).await;
+        })
+    }
 }
 
 #[derive(Default)]
@@ -152,6 +185,9 @@ struct State {
 impl Server {
     /// Checks cfg, fills in defaults and creates the run directory.
     pub fn new(mut cfg: Config) -> Result<Rc<Server>, String> {
+        if cfg.identity.is_none() || cfg.devices.is_none() {
+            return Err("server: identity and devices are required".into());
+        }
         if cfg.run_dir.as_os_str().is_empty() {
             cfg.run_dir = osewa_paths::run_dir();
         }
@@ -175,6 +211,7 @@ impl Server {
             execs: Cell::new(0),
             execs_done: Notify::new(),
             closing: Notify::new(),
+            log: RefCell::new(limits::LimitedLog::new(io::stderr(), 20, Duration::from_secs(60))),
         }))
     }
 
@@ -216,6 +253,44 @@ impl Server {
     pub async fn closed(&self) {
         while !self.is_closed() {
             self.closing.notified().await;
+        }
+    }
+
+    /// Accepts TLS connections on ln until close: pinned mutual TLS (only
+    /// enrolled devices get past the handshake), then the WebSocket upgrade
+    /// on wire::PATH, then a client.
+    pub async fn serve(self: &Rc<Self>, ln: TcpListener) -> io::Result<()> {
+        let (id, devs) = (self.cfg.identity.as_ref().unwrap(), self.cfg.devices.as_ref().unwrap());
+        let tls = tokio_rustls::TlsAcceptor::from(Arc::new(osewa_auth::server_config(id, devs)));
+        let ws = osewa_carrier::ws::Acceptor { compress: !self.cfg.no_compress, ..Default::default() };
+        loop {
+            let accepted = tokio::select! {
+                r = ln.accept() => r,
+                _ = self.closed() => return Ok(()),
+            };
+            let (tcp, peer) = match accepted {
+                Ok(a) => a,
+                Err(e) => {
+                    // Out of descriptors and the like: back off, as Go's
+                    // http.Server does, rather than spin.
+                    self.log.borrow_mut().line(&format!("osewa server: accept: {e}"));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
+            lowat::tune(tcp.as_raw_fd());
+            let (srv, tls, ws) = (self.clone(), tls.clone(), ws.clone());
+            tokio::task::spawn_local(async move {
+                let t = tokio::time::timeout(HANDSHAKE_TIMEOUT, tls.accept(tcp)).await;
+                let stream = match t {
+                    Ok(Ok(s)) => s,
+                    Ok(Err(e)) => return srv.log.borrow_mut().line(&format!("http: TLS handshake error from {peer}: {e}")),
+                    Err(_) => return srv.log.borrow_mut().line(&format!("http: TLS handshake error from {peer}: timeout")),
+                };
+                // A refused upgrade has had its answer; nothing to log.
+                let Ok(conn) = ws.accept(stream).await else { return };
+                srv.serve_conn(Rc::new(WsConn(conn))).await;
+            });
         }
     }
 

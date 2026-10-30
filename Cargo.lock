@@ -356,6 +356,8 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "osewa"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "osewa-auth",
  "osewa-ghostty",
  "osewa-holder",
  "osewa-server",
@@ -441,6 +443,8 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "libc",
+ "osewa-auth",
+ "osewa-carrier",
  "osewa-execproc",
  "osewa-flag",
  "osewa-ghostty",
@@ -448,8 +452,10 @@ dependencies = [
  "osewa-paths",
  "osewa-wire",
  "rand",
+ "rustls",
  "serde_json",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -829,6 +835,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.26.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
+dependencies = [
+ "rustls",
+ "tokio",
 ]
 
 [[package]]

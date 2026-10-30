@@ -109,7 +109,7 @@ fn resume() {
         let r = a.attach(&id, 1, true).await;
         a.input(1, 1, "one\r").await;
         let (pos, _) = a.output_ack(1, "one\r\none").await;
-        a.peer.close();
+        a.hang_up();
 
         let mut b = e.connect("phone").await;
         let r2 = b
@@ -375,7 +375,7 @@ fn disconnect_closes_holder_conns() {
         );
         let mut c = e.connect("phone").await;
         c.call(wire::Request { session: id.clone(), stream: 1, ..req(wire::METHOD_ATTACH) }).await;
-        c.peer.close();
+        c.hang_up();
         tokio::time::timeout(Duration::from_secs(5), closed.notified()).await.expect("holder connection left open");
     });
 }
@@ -420,7 +420,8 @@ fn new_and_defaults() {
     let run_dir = d.path().join("run");
     let old_shell = std::env::var("SHELL").ok();
     unsafe { std::env::set_var("SHELL", "") };
-    let s = Server::new(Config { run_dir: run_dir.clone(), ..Default::default() }).unwrap();
+    assert!(Server::new(Config::default()).is_err(), "new without identity");
+    let s = Server::new(Config { run_dir: run_dir.clone(), ..auth_config(d.path()) }).unwrap();
     assert!(s.cfg.shell[0] == "/bin/sh" && !s.cfg.name.is_empty(), "defaults {:?} {:?}", s.cfg.shell, s.cfg.name);
     unsafe { std::env::set_var("SHELL", "/bin/zsh") };
     assert_eq!(crate::default_shell(), ["/bin/zsh", "-l"]);

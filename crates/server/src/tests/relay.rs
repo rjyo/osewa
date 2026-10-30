@@ -181,8 +181,8 @@ fn busy_limit() {
 
 #[test]
 fn run_dir_must_be_private() {
-    let new = |dir: std::path::PathBuf| Server::new(Config { run_dir: dir, ..Default::default() }).map(|_| ());
     let d = TempDir::new();
+    let new = |dir: std::path::PathBuf| Server::new(Config { run_dir: dir, ..auth_config(d.path()) }).map(|_| ());
     let open = d.path().join("open");
     std::fs::create_dir(&open).unwrap();
     std::fs::set_permissions(&open, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
