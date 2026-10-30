@@ -345,7 +345,8 @@ fn commit_matches_script() {
 }
 
 // active_text is the full plain format's active rows, wide characters,
-// blanks and blank rows included, whatever the scrollback holds.
+// blanks, blank rows and soft-wrapped rows included, whatever the
+// scrollback holds.
 #[test]
 fn active_text_is_the_active_rows() {
     let mut t = new_term(12, 4, Callbacks::default());
@@ -363,7 +364,7 @@ fn active_text_is_the_active_rows() {
         rows.resize(t.size().1, String::new());
         rows
     };
-    for chunk in [&b"$ "[..], b"ls  ", b"\r\nold\r\n\r\n", b"wide \xe4\xbd\xa0\xe5\xa5\xbd!", b"\r\nmore\r\nlines\r\nthan\r\nrows\r\n$ x  "] {
+    for chunk in [&b"$ "[..], b"ls  ", b"\r\nold\r\n\r\n", b"wide \xe4\xbd\xa0\xe5\xa5\xbd!", b"\r\nmore\r\nlines\r\nthan\r\nrows\r\n$ x  ", b"\r\nsoft-wrapped past twelve \xe4\xbd\xa0 columns", b"\r\n$ "] {
         t.write(chunk);
         assert_eq!(got(&t), active(&t), "after {:?}", String::from_utf8_lossy(chunk));
     }

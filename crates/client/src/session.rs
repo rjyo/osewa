@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError, Weak};
 use std::time::{Duration, Instant};
 
 use osewa_wire as wire;
@@ -787,7 +787,21 @@ impl Stream for SessionInner {
     }
 
     fn credit_sent(&self, c: &Conn) {
-        let mut st = self.lock();
+        // This runs on the network thread, which must never wait on an
+        // apply (a slow renderer holds the lock): a busy session gets its
+        // ACK a little later instead.
+        let mut st = match self.st.try_lock() {
+            Ok(st) => st,
+            Err(TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                let (s, c) = (self.arc(), c.clone());
+                rt::spawn(async move {
+                    tokio::time::sleep(ACK_DELAY).await;
+                    Stream::credit_sent(&*s, &c);
+                });
+                return;
+            }
+        };
         if st.conn.as_ref() != Some(c) || st.pos == st.acked {
             return;
         }

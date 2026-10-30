@@ -88,6 +88,10 @@ pub(crate) struct Inner {
     suspect: Latch,
     /// Asks keepalive to watch for an answer to input just sent.
     probe: Notify,
+    /// When everything queued before it had been handed to the transport,
+    /// so a ping sent after it follows that input on the ordered main
+    /// stream.
+    written: Mutex<Instant>,
     /// Pings sent, which the tests bound.
     pub(crate) pings: AtomicU64,
     close: mpsc::UnboundedSender<CloseCmd>,
@@ -261,6 +265,7 @@ impl Conn {
             suspect: Latch::default(),
             probe: Notify::new(),
             pings: AtomicU64::new(0),
+            written: Mutex::new(Instant::now()),
             close: close_tx,
             wq: Mutex::default(),
             wake_writer: Notify::new(),
@@ -568,14 +573,18 @@ impl Conn {
 
     /// Records n received bytes on stream and sends CREDIT once enough has
     /// built up, or soon after.
-    fn credit(&self, stream: u32, n: usize) {
+    pub(crate) fn credit(&self, stream: u32, n: usize) {
         let backlogged = self.backlogged();
         let mut st = self.0.st.lock().unwrap();
         let Some(cr) = credit_for(&mut st, stream) else { return };
         cr.n += n as u32;
         if !backlogged {
             if cr.n >= CREDIT_BYTES {
-                self.send_credit(stream, cr);
+                if self.send_credit(stream, cr) {
+                    let s = st.streams.get(&stream).cloned();
+                    drop(st);
+                    self.credit_sent(s);
+                }
             } else if cr.timer.is_none() {
                 let c = self.clone();
                 cr.timer = Some(rt::spawn(async move {
@@ -601,8 +610,13 @@ impl Conn {
             }
             st.streams.get(&stream).cloned()
         };
-        // Outside the lock: the stream takes its own, and holds it while
-        // asking credit_due.
+        self.credit_sent(s);
+    }
+
+    /// Tells the stream its delayed CREDIT went, so an ACK waiting for it
+    /// goes too. Outside the state lock: the stream takes its own, and
+    /// holds it while asking credit_due.
+    fn credit_sent(&self, s: Option<Arc<dyn Stream>>) {
         if let Some(s) = s {
             s.credit_sent(self);
         }
@@ -616,24 +630,38 @@ impl Conn {
 
     /// Sends credit held back while the apply queue was full.
     fn release_credit(&self) {
-        let mut st = self.0.st.lock().unwrap();
-        if !st.held {
-            return;
-        }
-        st.held = false;
-        for (&stream, cr) in st.credits.iter_mut() {
-            self.send_credit(stream, cr);
+        let due: Vec<_> = {
+            let mut st = self.0.st.lock().unwrap();
+            if !st.held {
+                return;
+            }
+            st.held = false;
+            let st = &mut *st;
+            let mut due = Vec::new();
+            for (&stream, cr) in st.credits.iter_mut() {
+                if self.send_credit(stream, cr) {
+                    due.push(st.streams.get(&stream).cloned());
+                }
+            }
+            due
+        };
+        for s in due {
+            self.credit_sent(s);
         }
     }
 
-    fn send_credit(&self, stream: u32, cr: &mut Credit) {
-        if let Some(t) = cr.timer.take() {
+    /// Sends what the stream has to credit. True when that cut a delayed
+    /// CREDIT short, which an ACK may be waiting for (credit_sent).
+    fn send_credit(&self, stream: u32, cr: &mut Credit) -> bool {
+        let timer = cr.timer.take();
+        if let Some(t) = &timer {
             t.abort();
         }
         if cr.n > 0 {
             let _ = self.send(wire::credit(stream, cr.n));
             cr.n = 0;
         }
+        timer.is_some()
     }
 
     /// Queues f for the writer. It never blocks.
@@ -649,14 +677,16 @@ impl Conn {
         Ok(())
     }
 
-    /// The next frames to write into batch; false once closed.
-    fn next_frames(&self, batch: &mut Vec<Vec<u8>>) -> bool {
+    /// The next frames to write into batch, and the time the queue was
+    /// empty of all else but uploads, if it was (Inner::written); false
+    /// once closed.
+    fn next_frames(&self, batch: &mut Vec<Vec<u8>>) -> Option<Option<Instant>> {
         let mut wq = self.0.wq.lock().unwrap();
         if wq.closed {
-            return false;
+            return None;
         }
         wq.pop_batch(batch);
-        true
+        Some(wq.q.is_empty().then(Instant::now))
     }
 
     /// Writes what is queued. Frames queued together (a CREDIT and the ACK
@@ -666,9 +696,7 @@ impl Conn {
         let mut batch = Vec::new();
         loop {
             batch.clear();
-            if !self.next_frames(&mut batch) {
-                return;
-            }
+            let Some(drained) = self.next_frames(&mut batch) else { return };
             if batch.is_empty() {
                 tokio::select! {
                     _ = self.0.cancel.wait() => return,
@@ -683,6 +711,9 @@ impl Conn {
                 self.fail(Error::closed(e));
                 t.close_now();
                 return;
+            }
+            if let Some(at) = drained {
+                *self.0.written.lock().unwrap() = at;
             }
             if let Some(tr) = &self.0.tr {
                 for b in &batch {
@@ -708,8 +739,9 @@ impl Conn {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut missed = 0;
         let mut rtt = Duration::ZERO;
-        // Input sent before the last answered ping reached the server: the
-        // main stream is ordered.
+        // Input written before the last answered ping reached the server:
+        // the main stream is ordered. Input still queued when the ping went
+        // may follow it, so only what was written by then counts.
         let mut vouched = Instant::now();
         loop {
             let probe = tokio::select! {
@@ -725,6 +757,7 @@ impl Conn {
                 late = sent + wait;
             }
             let start = Instant::now();
+            let written = *self.0.written.lock().unwrap();
             self.0.pings.fetch_add(1, Ordering::Relaxed);
             let pong = tokio::time::timeout(ping, t.ping());
             tokio::pin!(pong);
@@ -732,14 +765,27 @@ impl Conn {
                 _ = self.0.cancel.wait() => return,
                 r = &mut pong => r,
                 _ = tokio::time::sleep_until(late.into()) => {
-                    // An INPUT_ACK that came in meanwhile answers the input,
-                    // whatever keeps the pong.
-                    if !probe || self.oldest_unacked(vouched).is_some_and(|s| s + wait <= Instant::now()) {
+                    // INPUT_ACKs that came in meanwhile answer their input,
+                    // whatever keeps the pong; input still unacked gets its
+                    // own deadline.
+                    if probe {
+                        tokio::select! {
+                            _ = self.0.cancel.wait() => return,
+                            r = &mut pong => r,
+                            _ = self.overdue(vouched, wait) => {
+                                self.mark_suspect();
+                                tokio::select! {
+                                    _ = self.0.cancel.wait() => return,
+                                    r = &mut pong => r,
+                                }
+                            }
+                        }
+                    } else {
                         self.mark_suspect();
-                    }
-                    tokio::select! {
-                        _ = self.0.cancel.wait() => return,
-                        r = &mut pong => r,
+                        tokio::select! {
+                            _ = self.0.cancel.wait() => return,
+                            r = &mut pong => r,
+                        }
                     }
                 }
             };
@@ -749,7 +795,7 @@ impl Conn {
             match res {
                 Ok(Ok(())) => {
                     missed = 0;
-                    vouched = vouched.max(start);
+                    vouched = vouched.max(written.min(start));
                     let d = start.elapsed();
                     rtt = if rtt.is_zero() {
                         d
@@ -774,6 +820,19 @@ impl Conn {
     fn oldest_unacked(&self, after: Instant) -> Option<Instant> {
         let streams: Vec<_> = self.0.st.lock().unwrap().streams.values().cloned().collect();
         streams.iter().filter_map(|s| s.unacked_since(after)).min()
+    }
+
+    /// Returns once input sent after `after` has gone unacked for wait.
+    async fn overdue(&self, after: Instant, wait: Duration) {
+        loop {
+            let at = match self.oldest_unacked(after) {
+                Some(sent) if Instant::now() >= sent + wait => return,
+                Some(sent) => sent + wait,
+                // Input typed later is checked as it goes overdue.
+                None => Instant::now() + wait,
+            };
+            tokio::time::sleep_until(at.into()).await;
+        }
     }
 
     /// Waits until input sent after `after` has been unacked for grace.
