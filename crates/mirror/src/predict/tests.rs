@@ -349,6 +349,32 @@ fn predict_timeout() {
     );
 }
 
+/// The deadline is exactly when check drops an unechoed guess, so a caller
+/// can sleep until it instead of polling.
+#[test]
+fn predict_deadline() {
+    let (mut p, mut t, clk) = predictor_at();
+    assert_eq!(p.deadline(), None, "a deadline with nothing pending");
+    let start = (p.now)();
+    p.input(&t, b"ab");
+    clk.add(Duration::from_millis(400));
+    p.input(&t, b"c");
+    assert_eq!(p.deadline(), Some(start + Duration::from_secs(1)), "not the oldest guess's timeout");
+    t.write(b"ab");
+    p.check(&t);
+    assert_eq!(
+        p.deadline(),
+        Some(start + Duration::from_millis(1400)),
+        "confirmed guesses still count"
+    );
+    clk.add(Duration::from_millis(999));
+    p.check(&t);
+    assert_eq!(overlay(&mut p), "c", "dropped before its deadline");
+    clk.add(Duration::from_millis(1));
+    p.check(&t);
+    assert!(p.overlay().is_empty() && p.deadline().is_none(), "kept at its deadline");
+}
+
 #[test]
 fn predict_barrier_miss_is_free() {
     let (mut p, mut t, _) = predictor_at();

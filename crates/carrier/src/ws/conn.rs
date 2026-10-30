@@ -370,6 +370,29 @@ impl<S: AsyncRead + AsyncWrite> Conn<S> {
         self.inner.send(OP_BINARY, msg, level).await
     }
 
+    /// Sends binary messages as write does, in one write to the stream: a
+    /// burst of small frames (an input and its credit) then costs one TLS
+    /// record and one syscall, not one each.
+    pub async fn write_all(&self, msgs: &[Vec<u8>]) -> Result<(), Error> {
+        let c = &*self.inner;
+        let mut w = c.lock_wr().await?;
+        let mut res = Ok(());
+        for m in msgs {
+            res = c.encode(&mut w, OP_BINARY, m, Level::Fast);
+            if res.is_err() {
+                break;
+            }
+        }
+        if res.is_ok() {
+            res = c.flush(&mut w).await;
+        }
+        if let Err(Error::Io(_)) = res {
+            c.shutdown();
+        }
+        c.release_wr(&mut w);
+        res
+    }
+
     /// Pings the peer and waits for its pong. The pong is only seen while
     /// some task is reading.
     pub async fn ping(&self) -> Result<(), Error> {
@@ -746,6 +769,12 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
     }
 
     async fn send_locked(&self, w: &mut Writer<S>, op: u8, p: &[u8], level: Level) -> Result<(), Error> {
+        self.encode(w, op, p, level)?;
+        self.flush(w).await
+    }
+
+    /// Appends a frame for p to what the writer has to write.
+    fn encode(&self, w: &mut Writer<S>, op: u8, p: &[u8], level: Level) -> Result<(), Error> {
         if self.close_sent.get() || self.closed.get() {
             return Err(Error::Closed);
         }
@@ -773,7 +802,7 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
         if op == OP_CLOSE {
             self.close_sent.set(true);
         }
-        self.flush(w).await
+        Ok(())
     }
 
     async fn flush(&self, w: &mut Writer<S>) -> Result<(), Error> {

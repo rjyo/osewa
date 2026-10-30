@@ -199,6 +199,58 @@ async fn round_trip() {
     .await;
 }
 
+/// Counts the writes that reach a stream.
+struct Counted(DuplexStream, std::rc::Rc<std::cell::Cell<usize>>);
+
+impl tokio::io::AsyncRead for Counted {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for Counted {
+    fn poll_write(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, b: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        self.1.set(self.1.get() + 1);
+        std::pin::Pin::new(&mut self.0).poll_write(cx, b)
+    }
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+/// write_all sends its messages in order, as one write to the stream.
+#[tokio::test]
+async fn write_all_is_one_write() {
+    local(async {
+        for compress in [true, false] {
+            let (c, s) = duplex(4 << 20);
+            let server = spawn_local(async move { accept(s, compress).await });
+            let writes = std::rc::Rc::new(std::cell::Cell::new(0));
+            let client = dial(Counted(c, writes.clone()), "h:1").await.unwrap();
+            let server = server.await.unwrap().unwrap();
+            let msgs: Vec<Vec<u8>> = [3, 40, 0, 200, 70_000].iter().map(|&n| text(n, n)).collect();
+            writes.set(0);
+            client.write_all(&msgs).await.unwrap();
+            assert_eq!(writes.get(), 1, "client writes for {} messages", msgs.len());
+            for m in &msgs {
+                assert_eq!(&server.read().await.unwrap(), m);
+            }
+            server.write_all(&msgs).await.unwrap();
+            for m in &msgs {
+                assert_eq!(&client.read().await.unwrap(), m);
+            }
+        }
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn concurrent_read_write_ping_close() {
     local(async {

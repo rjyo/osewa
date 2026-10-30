@@ -276,6 +276,18 @@ impl Predictor {
         self.cfg.timeout.max(3 * self.srtt)
     }
 
+    /// When `check` would next time a prediction out with no output
+    /// arriving, so a caller can sleep until then instead of polling: None
+    /// while nothing is pending.
+    pub fn deadline(&self) -> Option<Instant> {
+        let timeout = self.timeout();
+        self.preds
+            .iter()
+            .filter(|pr| pr.p.state == CellState::Tentative)
+            .map(|pr| pr.at + timeout)
+            .min()
+    }
+
     pub(crate) fn new_epoch(&mut self) {
         self.epoch += 1;
         self.confirmed = false;
@@ -638,15 +650,14 @@ struct Screen {
 
 impl Screen {
     fn new(t: &Terminal) -> Screen {
-        let b = t
-            .format(ghostty::Format::Plain, false, false)
-            .unwrap_or_default();
+        // Every keystroke and echo builds one, so it reads the active area
+        // only: a long scrollback would cost its length each time.
+        let b = t.active_text().unwrap_or_default();
         let s = String::from_utf8_lossy(&b);
-        let lines: Vec<&str> = s.split('\n').collect();
         let (_, n) = t.size();
-        let lines = &lines[t.scrollback_rows().min(lines.len())..];
+        let lines = s.split('\n');
         let mut rows = vec![Vec::new(); n];
-        for (y, line) in lines.iter().take(n).enumerate() {
+        for (y, line) in lines.take(n).enumerate() {
             let mut row = Vec::new();
             for cl in clusters(line) {
                 let r = cl.chars().next().unwrap_or('\0');

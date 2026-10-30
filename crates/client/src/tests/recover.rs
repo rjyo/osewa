@@ -103,6 +103,62 @@ fn suspect_after_unanswered_input() {
     c.close_now();
 }
 
+/// Typing on a healthy connection costs no pings of its own: each
+/// INPUT_ACK shows the link carried the keystroke.
+#[test]
+fn typing_sends_no_pings() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let c = dial_ping(&f, "a", Duration::from_secs(60));
+    let s = attach(&c, &id, own());
+    for _ in 0..20 {
+        s.send_text("x").unwrap();
+        sleep(Duration::from_millis(30));
+    }
+    run(s.flush()).unwrap();
+    sleep(Duration::from_millis(700));
+    assert_eq!(c.0.pings.load(Ordering::Relaxed), 0, "pings while typing");
+}
+
+/// Input the holder parks goes unacked; a ping shows the link is fine, so
+/// the connection doesn't turn suspect.
+#[test]
+fn unacked_input_pings_instead_of_suspecting() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let c = dial_ping(&f, "a", Duration::from_secs(60));
+    let s = attach(&c, &id, own());
+    run(s.flush()).unwrap();
+    f.set(|st| st.no_ack = true);
+    s.send_text("parked").unwrap();
+    assert!(run_for(Duration::from_millis(1500), c.suspect()).is_none(), "suspect over parked input");
+    assert_eq!(c.0.pings.load(Ordering::Relaxed), 1, "pings for parked input");
+}
+
+/// While a ping for unacked input goes unanswered, an INPUT_ACK for that
+/// input doesn't excuse input typed after it: that input is suspect at its
+/// own deadline, not when the pong times out.
+#[test]
+fn later_input_keeps_its_own_deadline() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let c = dial_ping(&f, "a", Duration::from_secs(60));
+    let s = attach(&c, &id, own());
+    run(s.flush()).unwrap();
+    f.set(|st| st.no_ack = true);
+    s.send_text("first").unwrap();
+    eventually("first applied", || f.with(&id, |fs| fs.applied.len() == 1));
+    let _stall = f.stall(); // the ping for first goes unanswered
+    sleep(Duration::from_millis(200));
+    s.send_text("second").unwrap();
+    let start = Instant::now();
+    sleep(Duration::from_millis(500));
+    f.ack_inputs(&id); // answers first only
+    assert!(run_for(Duration::from_secs(2), c.suspect()).is_some(), "not suspect over unanswered input");
+    let d = start.elapsed();
+    assert!(d >= Duration::from_millis(900) && d <= Duration::from_millis(1500), "suspect {d:?} after the input");
+}
+
 /// Idle, the regular ping finds a silent connection.
 #[test]
 fn suspect_when_idle() {

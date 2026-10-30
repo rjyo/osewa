@@ -345,6 +345,52 @@ fn ui_cursor_at_prediction() {
     h.matches();
 }
 
+/// Counts the writes a Ui makes: each costs a syscall, and a wakeup of the
+/// terminal that reads them.
+#[derive(Clone, Default)]
+struct Writes(Arc<std::sync::Mutex<Vec<Vec<u8>>>>);
+
+impl std::io::Write for Writes {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().push(b.to_vec());
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An echo with a prediction over it, and a keystroke's overlay and cursor
+/// move, each go out in one write.
+#[test]
+fn ui_writes_once_per_frame() {
+    let w = Writes::default();
+    let now = Instant::now();
+    let pred = Predictor::new(PredictorConfig { mode: PredictMode::Always, now: Some(Arc::new(move || now)), ..Default::default() });
+    let mut u = Ui::new(Box::new(w.clone()), false, pred);
+    let mut mirror = term(20, 4);
+    u.ready(&mirror);
+    u.event(&wire::EventMsg { echo: Some(true), canonical: Some(true), ..wire::EventMsg::kind(wire::EVENT_INPUT_MODE) }, true);
+    let frame = |u: &mut Ui, mirror: &mut Terminal, s: &str| {
+        w.0.lock().unwrap().clear();
+        mirror.write(s.as_bytes());
+        u.output(s.as_bytes());
+        u.applied(mirror);
+        w.0.lock().unwrap().len()
+    };
+    assert_eq!(frame(&mut u, &mut mirror, "$ "), 1, "writes for a frame");
+    w.0.lock().unwrap().clear();
+    u.pred.input(&mirror, b"ab");
+    u.paint(&mirror);
+    frame(&mut u, &mut mirror, "a"); // confirms the epoch: b is drawn from now on
+    w.0.lock().unwrap().clear();
+    u.pred.input(&mirror, b"c");
+    u.paint(&mirror);
+    let typed = w.0.lock().unwrap().clone();
+    assert!(typed.len() == 1 && String::from_utf8_lossy(&typed[0]).contains("\x1b[4mc"), "writes for a keystroke: {typed:?}");
+    assert_eq!(frame(&mut u, &mut mirror, "b"), 1, "writes for an echo under predictions");
+}
+
 /// status_test.go's TestStatusNotice: a live blocked or done status shows
 /// a notice, unless quiet, typing, or from a catch-up.
 #[test]

@@ -24,7 +24,7 @@ extern "C" {
     pub fn osewa_snapshot_alloc(t: Term, ptr: *mut *mut u8, len: *mut usize) -> i32;
     pub fn osewa_free(ptr: *mut u8, len: usize);
     pub fn osewa_snapshot_encode(t: Term, ud: *mut c_void) -> i32;
-    pub fn osewa_format(t: Term, vt: bool, trim: bool, unwrap: bool, palette: bool, ud: *mut c_void) -> i32;
+    pub fn osewa_format(t: Term, vt: bool, trim: bool, unwrap: bool, palette: bool, active: bool, ud: *mut c_void) -> i32;
     pub fn osewa_decoder_new(out: *mut Decoder, ud: *mut c_void) -> i32;
     pub fn osewa_decoder_ready(d: Decoder, out: *mut Term) -> i32;
     pub fn osewa_decoder_next(d: Decoder) -> i32;

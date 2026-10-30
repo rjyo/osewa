@@ -66,10 +66,17 @@ impl Transport {
         }
     }
 
-    pub async fn write(&self, b: &[u8]) -> Result<(), String> {
+    /// Writes frames in order; over the WebSocket in one write to the
+    /// socket. QUIC packs frames into packets on its own.
+    pub async fn write_all(&self, frames: &[Vec<u8>]) -> Result<(), String> {
         match self {
-            Transport::Ws(c) => c.write(b).await.map_err(|e| e.to_string()),
-            Transport::Quic(c) => c.write(b).await.map_err(|e| e.to_string()),
+            Transport::Ws(c) => c.write_all(frames).await.map_err(|e| e.to_string()),
+            Transport::Quic(c) => {
+                for b in frames {
+                    c.write(b).await.map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
         }
     }
 

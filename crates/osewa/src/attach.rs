@@ -123,7 +123,10 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
         // No input at all: as an immediate EOF.
         let _ = detach_tx.send(());
     }
-    let tasks = [tokio::spawn(ticker(a.clone(), s.clone())), tokio::spawn(resize_on_winch(s.clone()))];
+    let tasks = [tokio::spawn(ticker(a.clone(), {
+        let s = s.clone();
+        async move { s.done().await }
+    })), tokio::spawn(resize_on_winch(s.clone()))];
     let r = tokio::select! {
         _ = s.done() => {
             // Say why we're back: the session ended for every client, maybe
@@ -152,13 +155,22 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
     r
 }
 
-/// Checks predictions for timeouts while attached.
-async fn ticker(a: Attached, s: Session) {
-    let mut t = tokio::time::interval(crate::ui::TICK_EVERY);
+/// Checks predictions for timeouts while attached. It sleeps until the
+/// oldest prediction's deadline, or until typing makes one, never on a
+/// period: a laptop or phone attached all day should not wake for nothing.
+pub(crate) async fn ticker(a: Attached, done: impl std::future::Future<Output = ()>) {
+    tokio::pin!(done);
     loop {
-        tokio::select! {
-            _ = t.tick() => a.tick(),
-            _ = s.done() => return,
+        match a.next_tick() {
+            Some(at) => tokio::select! {
+                _ = tokio::time::sleep_until(at.into()) => a.tick(),
+                _ = a.wake.notified() => {}
+                _ = &mut done => return,
+            },
+            None => tokio::select! {
+                _ = a.wake.notified() => {}
+                _ = &mut done => return,
+            },
         }
     }
 }

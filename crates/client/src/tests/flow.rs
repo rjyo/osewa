@@ -24,6 +24,71 @@ fn credit_covers_received_bytes() {
     });
 }
 
+/// An echo's ACK goes out with its CREDIT, in the same write, rather than
+/// on a timer of its own ACK_DELAY later: one wakeup and write fewer per
+/// keystroke on both ends.
+#[test]
+fn ack_rides_with_credit() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let s = attach(&f.dial("a"), &id, Default::default());
+    s.wait_text("");
+    for i in 0..3 {
+        let acked = f.with(&id, |fs| fs.acked);
+        f.output(&id, "x");
+        let credited = || {
+            let (sent, credited) = f.credited(&id);
+            sent == credited
+        };
+        let start = Instant::now();
+        while credited() {
+            assert!(start.elapsed() < WAIT, "echo {i} never sent");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        while !credited() {
+            assert!(start.elapsed() < WAIT, "echo {i} never credited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at = Instant::now();
+        while f.with(&id, |fs| fs.acked) == acked {
+            assert!(at.elapsed() < CREDIT_DELAY / 5, "echo {i}: ACK {:?} after its CREDIT", at.elapsed());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+/// A CREDIT that goes at once (16 KiB built up) cuts the delayed one
+/// short; an ACK that waited for the delayed one must go with it, or it
+/// waits for output that may never come.
+#[test]
+fn early_credit_carries_the_waiting_ack() {
+    use crate::conn::{Stream, CREDIT_BYTES};
+    #[derive(Default)]
+    struct Waiting(Mutex<usize>);
+    impl Stream for Waiting {
+        fn handle(&self, _: &Conn, _: wire::Frame) -> Result<()> {
+            Ok(())
+        }
+        fn lost(&self, _: &Conn) {}
+        fn suspect(&self) {}
+        fn credits_on_receipt(&self) -> bool {
+            true
+        }
+        fn credit_sent(&self, _: &Conn) {
+            *self.0.lock().unwrap() += 1;
+        }
+    }
+    let f = Fake::new();
+    let c = f.dial("a");
+    let w = Arc::new(Waiting::default());
+    let stream = c.add_stream(w.clone()).unwrap();
+    c.credit(stream, 10);
+    c.credit(stream, CREDIT_BYTES as usize);
+    assert_eq!(*w.0.lock().unwrap(), 1, "the early CREDIT left its ACK behind");
+    c.credit(stream, CREDIT_BYTES as usize);
+    assert_eq!(*w.0.lock().unwrap(), 1, "told of a CREDIT nothing waited for");
+}
+
 /// Credit is sent on receipt: an apply that is stuck (here a blocked
 /// on_output) must not hold back the window.
 #[test]

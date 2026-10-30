@@ -9,6 +9,7 @@ use osewa_client::Session;
 use osewa_ghostty::Terminal;
 use osewa_mirror::{InputMode, Mirror, Predictor};
 use osewa_wire as wire;
+use tokio::sync::Notify;
 
 use crate::cli::Ctx;
 use crate::commands::owner_name;
@@ -19,8 +20,6 @@ use crate::vtfilter::{printable, QueryFilter};
 /// How long a notice stays on the bottom row, and how often one can show.
 pub(crate) const NOTICE_FOR: Duration = Duration::from_secs(3);
 pub(crate) const NOTICE_EVERY: Duration = Duration::from_secs(1);
-/// Paces prediction timeouts while no output arrives.
-pub(crate) const TICK_EVERY: Duration = Duration::from_millis(100);
 /// How long after a keystroke status notices wait.
 const TYPING_QUIET: Duration = Duration::from_secs(2);
 
@@ -39,6 +38,9 @@ struct Later {
 /// then this, so writes never interleave.
 pub(crate) struct Ui {
     out: Box<dyn Write + Send>,
+    /// What one frame or keystroke draws, written at once: a write per
+    /// piece costs a syscall each, and the user's terminal a wakeup each.
+    buf: Vec<u8>,
     pub pred: Predictor,
     pub filter: QueryFilter,
     mode: InputMode,
@@ -62,12 +64,18 @@ pub(crate) struct Ui {
     displaced: bool,
     real_x: usize,
     real_y: usize,
+    /// The ticker has a prediction deadline to sleep until; without one it
+    /// waits to be woken (Attached::wake), so an idle attach never wakes.
+    ticking: bool,
+    /// The ticker's wakeups, which the tests bound.
+    pub ticker_wakes: u64,
 }
 
 impl Ui {
     pub fn new(out: Box<dyn Write + Send>, quiet: bool, pred: Predictor) -> Ui {
         Ui {
             out,
+            buf: Vec::new(),
             pred,
             filter: QueryFilter::default(),
             mode: InputMode::default(),
@@ -82,12 +90,20 @@ impl Ui {
             displaced: false,
             real_x: 0,
             real_y: 0,
+            ticking: false,
+            ticker_wakes: 0,
         }
     }
 
     fn write(&mut self, b: &[u8]) {
-        if !b.is_empty() {
-            let _ = self.out.write_all(b);
+        self.buf.extend_from_slice(b);
+    }
+
+    /// Writes out what was drawn since the last flush.
+    pub fn flush(&mut self) {
+        if !self.buf.is_empty() {
+            let _ = self.out.write_all(&self.buf);
+            self.buf.clear();
         }
     }
 
@@ -110,10 +126,11 @@ impl Ui {
         }
         self.filter.reset(&tail_style(t));
         (self.real_x, self.real_y) = t.cursor();
+        self.flush();
     }
 
     /// Writes remote output, after putting the cursor back if an overlay
-    /// had moved it.
+    /// had moved it. It goes out with what applied draws next.
     pub fn output(&mut self, b: &[u8]) {
         if self.displaced {
             let cup = format!("\x1b[{};{}H", self.real_y + 1, self.real_x + 1);
@@ -126,11 +143,12 @@ impl Ui {
 
     pub fn applied(&mut self, t: &Terminal) {
         self.pred.check(t);
-        self.paint(t);
+        self.paint_buffered(t);
         if !self.status_note.is_empty() {
             let note = std::mem::take(&mut self.status_note);
             self.notice(Some(t), &note);
         }
+        self.flush();
     }
 
     /// Checks predictions with no output arriving, so one whose echo never
@@ -140,6 +158,25 @@ impl Ui {
             self.pred.check(t);
             self.paint(t);
         }
+    }
+
+    /// When the ticker should next tick, or None to wait for a wake; the
+    /// ticker counts as asleep from then on.
+    pub fn next_tick(&mut self) -> Option<Instant> {
+        self.ticker_wakes += 1;
+        let at = self.pred.deadline();
+        self.ticking = at.is_some();
+        at
+    }
+
+    /// Whether the ticker must be woken for predictions just made: it is
+    /// asleep without a deadline. Later ones only push the deadline out.
+    pub fn arm_ticker(&mut self) -> bool {
+        if self.ticking || !self.pred.pending() {
+            return false;
+        }
+        self.ticking = true;
+        true
     }
 
     pub fn event(&mut self, e: &wire::EventMsg, live: bool) {
@@ -165,8 +202,14 @@ impl Ui {
         self.pred.input_mode(self.mode);
     }
 
-    /// Repaints after dropped predictions and draws the ones pending.
+    /// Repaints after dropped predictions and draws the ones pending, then
+    /// writes it all out.
     pub fn paint(&mut self, t: &Terminal) {
+        self.paint_buffered(t);
+        self.flush();
+    }
+
+    fn paint_buffered(&mut self, t: &Terminal) {
         if self.pred.take_repaint() {
             self.repaint_later = true;
         }
@@ -211,6 +254,7 @@ impl Ui {
         self.notice_at = Some(Instant::now());
         let style = self.filter.style();
         self.write(&notice_draw(t, msg, &style));
+        self.flush();
         self.displaced = false;
         self.notice_gen += 1;
         let Some(later) = &self.later else { return };
@@ -256,6 +300,8 @@ pub(crate) struct Attached {
     pub m: Mirror,
     pub s: Arc<Mutex<Option<Session>>>,
     pub id: String,
+    /// Wakes the ticker (attach.rs) when predictions start pending.
+    pub wake: Arc<Notify>,
 }
 
 fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
@@ -269,15 +315,14 @@ impl Attached {
         let m = Mirror::new(osewa_mirror::Options {
             on_ready: Some(Box::new(move |t| lock(&u1).ready(t))),
             on_output: Some(Box::new(move |b| lock(&u2).output(b))),
-            on_applied: Some(Box::new(move |t| {
-                if let Some(t) = t {
-                    lock(&u3).applied(t)
-                }
+            on_applied: Some(Box::new(move |t| match t {
+                Some(t) => lock(&u3).applied(t),
+                None => lock(&u3).flush(),
             })),
             on_event: Some(Box::new(move |e, live| lock(&u4).event(e, live))),
         });
         lock(&ui).later = Some(Later { m: m.clone(), ui: Arc::downgrade(&ui) });
-        Attached { ui, m, s: Arc::default(), id }
+        Attached { ui, m, s: Arc::default(), id, wake: Arc::default() }
     }
 
     fn session(&self) -> Option<Session> {
@@ -294,6 +339,27 @@ impl Attached {
         self.m.view(|t| {
             if let Some(t) = t {
                 lock(&self.ui).tick(t)
+            }
+        });
+    }
+
+    /// When to tick next (Ui::next_tick). Under the mirror lock, as send's
+    /// arm_ticker is, so a wake can't fall between the two.
+    pub fn next_tick(&self) -> Option<Instant> {
+        self.m.view(|_| lock(&self.ui).next_tick())
+    }
+
+    /// Predicts and draws what typing text will show.
+    pub fn predict(&self, text: &str) {
+        self.m.view(|t| {
+            let mut u = lock(&self.ui);
+            u.typed_at = Some(Instant::now());
+            if let Some(t) = t {
+                u.pred.input(t, text.as_bytes());
+                u.paint(t);
+            }
+            if u.arm_ticker() {
+                self.wake.notify_one();
             }
         });
     }
@@ -323,14 +389,7 @@ impl InputHandler for Attached {
             self.notice(&viewer_notice(&owner, &self.id));
             return;
         }
-        self.m.view(|t| {
-            let mut u = lock(&self.ui);
-            u.typed_at = Some(Instant::now());
-            if let Some(t) = t {
-                u.pred.input(t, text.as_bytes());
-                u.paint(t);
-            }
-        });
+        self.predict(text);
         let _ = s.send_text(text);
     }
 
