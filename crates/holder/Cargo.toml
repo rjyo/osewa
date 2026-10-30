@@ -1,0 +1,17 @@
+[package]
+name = "osewa-holder"
+description = "One osewa session: PTY, child, terminal, output log, input, owner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-ghostty.workspace = true
+osewa-paths.workspace = true
+osewa-flag.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+rand.workspace = true
+hex.workspace = true
+tokio = { version = "1", features = ["rt", "net", "time", "process", "signal", "io-util", "macros", "sync"] }

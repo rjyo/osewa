@@ -1,0 +1,15 @@
+[package]
+name = "osewa"
+description = "The single osewa binary: server, holder, enrollment and client commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "osewa"
+path = "src/main.rs"
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-ghostty.workspace = true
+osewa-holder.workspace = true
