@@ -6,6 +6,7 @@
 // Shared by every ported test file; not each uses all of it.
 #[allow(dead_code)]
 mod helpers;
+mod flow;
 mod holder;
 mod main;
 mod unit;
