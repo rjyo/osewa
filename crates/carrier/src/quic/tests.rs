@@ -324,70 +324,131 @@ fn socket_buffers_grow() {
     assert!(v as usize >= 1 << 20, "receive buffer {v}");
 }
 
-/// A raw quinn client on a pair's server, for what Conn hides: when bytes
-/// arrive on which stream. transport_tweak adjusts its transport parameters.
-async fn raw_client(
-    compress: bool,
-    transport_tweak: impl FnOnce(&mut TransportConfig),
-) -> (Conn, Connection, quinn::SendStream, quinn::RecvStream, Endpoint, Keys) {
+/// A UDP relay that passes the server's packets on one at a time once
+/// stepping, so a test sees exactly which of them have reached the client.
+struct StepRelay {
+    addr: SocketAddr,
+    stepping: Arc<AtomicBool>,
+    /// Releases that many more of the server's packets.
+    release: mpsc::UnboundedSender<usize>,
+}
+
+impl StepRelay {
+    async fn new(server: SocketAddr) -> StepRelay {
+        let sock = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let addr = sock.local_addr().unwrap();
+        let stepping = Arc::new(AtomicBool::new(false));
+        let (release, mut releases) = mpsc::unbounded_channel::<usize>();
+        let st = stepping.clone();
+        tokio::spawn(async move {
+            let mut client = None;
+            let mut held = std::collections::VecDeque::new();
+            let mut budget = 0usize;
+            let mut b = vec![0u8; 65536];
+            loop {
+                tokio::select! {
+                    r = sock.recv_from(&mut b) => {
+                        let Ok((n, from)) = r else { return };
+                        if from != server {
+                            client = Some(from);
+                            let _ = sock.send_to(&b[..n], server).await;
+                            continue;
+                        }
+                        held.push_back(b[..n].to_vec());
+                    }
+                    Some(n) = releases.recv() => budget += n,
+                }
+                while let (Some(c), Some(p)) = (client, held.front()) {
+                    if st.load(Ordering::Relaxed) {
+                        if budget == 0 {
+                            break;
+                        }
+                        budget -= 1;
+                    }
+                    let _ = sock.send_to(p, c).await;
+                    held.pop_front();
+                }
+            }
+        });
+        StepRelay { addr, stepping, release }
+    }
+}
+
+/// A raw quinn client on a pair's server, through a StepRelay, for what
+/// Conn hides: which stream's bytes have arrived.
+async fn raw_client(compress: bool) -> (Conn, Connection, quinn::RecvStream, StepRelay, quinn::SendStream, Endpoint, Keys) {
     let k = keys();
     let (ep, mut conns) = listen(&k, compress, Congestion::Cubic);
-    let mut cfg = client_config(osewa_auth::client_config(&k.device, k.server.public()), Congestion::Cubic).unwrap();
-    let mut t = transport(Congestion::Cubic);
-    transport_tweak(&mut t);
-    cfg.transport_config(Arc::new(t));
+    let relay = StepRelay::new(ep.local_addr().unwrap()).await;
+    let cfg = client_config(osewa_auth::client_config(&k.device, k.server.public()), Congestion::Cubic).unwrap();
     let cep = endpoint(UdpSocket::bind("127.0.0.1:0").unwrap(), None).unwrap();
-    let qc = cep.connect_with(cfg, ep.local_addr().unwrap(), "localhost").unwrap().await.unwrap();
+    let qc = cep.connect_with(cfg, relay.addr, "localhost").unwrap().await.unwrap();
     let (mut send, recv) = qc.open_bi().await.unwrap();
     let hello = frame(wire::TYPE_HELLO, 0, b"{}");
     send.write_all(&(hello.len() as u32).to_be_bytes()).await.unwrap();
     send.write_all(&hello).await.unwrap();
     let srv = conns.recv().await.unwrap();
     assert_eq!(read(&srv).await, hello);
-    (srv, qc, send, recv, cep, k)
+    (srv, qc, recv, relay, send, cep, k)
 }
 
-/// Splits length-prefixed frames.
-fn split(mut b: &[u8]) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    while b.len() >= 4 {
-        let n = u32::from_be_bytes(b[..4].try_into().unwrap()) as usize;
-        out.push(b[4..4 + n].to_vec());
-        b = &b[4 + n..];
-    }
-    out
-}
-
-// A channel's end goes out before what the main stream carries after it:
-// once the stream.close RESPONSE has arrived, the lane's data and its
-// STREAM_END are all there (no waiting on the network for them).
+// Streams have no order between them on the wire: a stream.close RESPONSE
+// on the main stream (priority above lanes) may overtake the end of the
+// channel's lane (docs/QUIC.md). What it overtakes is bounded by what
+// quinn holds unsent, LOWAT: the backlog waits in the caller's queue.
+// The server's packets reach the client one at a time until the RESPONSE
+// has arrived, and then no more.
 #[tokio::test]
-async fn lane_end_goes_before_later_main_frames() {
-    for _ in 0..5 {
-        let (srv, qc, _send, mut recv, _cep, _k) = raw_client(false, |_| {}).await;
-        let data = frame(wire::TYPE_CHANNEL_DATA, 3, &text(30_000));
-        let end = frame(wire::TYPE_STREAM_END, 3, b"{}");
-        let resp = frame(wire::TYPE_RESPONSE, 0, br#"{"id":7}"#);
-        let (srv2, resp2) = (srv.clone(), resp.clone());
-        let writer = tokio::spawn(async move {
-            let resp = resp2;
-            for _ in 0..20 {
-                srv2.write(&data).await.unwrap();
+async fn response_overtakes_at_most_the_unsent_tail() {
+    let (srv, qc, mut recv, relay, _send, _cep, _k) = raw_client(false).await;
+    relay.stepping.store(true, Ordering::Relaxed);
+    let data = frame(wire::TYPE_CHANNEL_DATA, 3, &text(4000));
+    let end = frame(wire::TYPE_STREAM_END, 3, b"{}");
+    let resp = frame(wire::TYPE_RESPONSE, 0, br#"{"id":7}"#);
+    let total = 40 * (4 + data.len()) + 4 + end.len();
+    let writer = {
+        let (srv, data, end, resp) = (srv.clone(), data.clone(), end.clone(), resp.clone());
+        tokio::spawn(async move {
+            for _ in 0..40 {
+                srv.write(&data).await.unwrap();
             }
-            srv2.write(&end).await.unwrap();
-            srv2.write(&resp).await.unwrap();
-        });
-        let mut got = vec![0u8; 4 + resp.len()];
-        tokio::time::timeout(Duration::from_secs(10), recv.read_exact(&mut got)).await.unwrap().unwrap();
-        assert_eq!(&got[4..], &resp[..]);
-        // Everything the lane carried was received before the RESPONSE.
-        let mut lane = tokio::time::timeout(Duration::ZERO, qc.accept_uni()).await.expect("no lane yet").unwrap();
-        let b = tokio::time::timeout(Duration::ZERO, lane.read_to_end(1 << 30)).await.expect("lane data still on its way").unwrap();
-        let frames = split(&b);
-        assert_eq!(frames.len(), 21);
-        assert_eq!(frames.last().unwrap(), &frame(wire::TYPE_STREAM_END, 3, b"{}"));
-        writer.await.unwrap();
+            srv.write(&end).await.unwrap();
+            srv.write(&resp).await.unwrap();
+        })
+    };
+    let mut main = Vec::new();
+    let mut steps = 0;
+    while main.len() < 4 + resp.len() {
+        steps += 1;
+        assert!(steps < 2000, "no RESPONSE after {steps} packets");
+        let before = qc.stats().udp_rx.datagrams;
+        relay.release.send(1).unwrap();
+        // Until the packet is in (none may be waiting yet), then a moment
+        // for the client to take it apart.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while qc.stats().udp_rx.datagrams == before && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        while let Ok(Ok(Some(c))) = tokio::time::timeout(Duration::ZERO, recv.read_chunk(1 << 16, true)).await {
+            main.extend_from_slice(&c.bytes);
+        }
     }
+    assert_eq!(&main[4..], &resp[..]);
+    // Nothing more comes through: what the lane has now is all it got
+    // before the RESPONSE.
+    let mut lane = tokio::time::timeout(Duration::from_secs(2), qc.accept_uni()).await.expect("no lane").unwrap();
+    let mut got = 0;
+    while let Ok(Ok(Some(c))) = tokio::time::timeout(Duration::from_millis(300), lane.read_chunk(1 << 20, true)).await {
+        got += c.bytes.len();
+    }
+    let missing = total - got;
+    // LOWAT, give or take the frame being written when it was measured.
+    let bound = frames::LOWAT as usize + 4 + data.len();
+    assert!(missing <= bound, "the RESPONSE overtook {missing} of the lane's {total} bytes (bound {bound})");
+    relay.stepping.store(false, Ordering::Relaxed);
+    relay.release.send(0).unwrap();
+    writer.await.unwrap();
 }
 
 /// A UDP relay to server that stops passing the server's packets on
