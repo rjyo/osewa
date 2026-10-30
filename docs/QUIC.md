@@ -354,22 +354,27 @@ so it doesn't cap a download: 66 MB over a 120 ms relay took 2.5 s either
 way (`far_link_throughput`, ignored; 26 MB/s against 26-28 unbounded).
 
 **Order across streams.** Frames on different streams have no order on
-the wire; the protocol needs one place where it matters: a channel's
-STREAM_END (on its lane, after its data) comes before the stream.close
-RESPONSE that follows it (main stream). A lane's last frame is written
-with the highest priority (2, above the main stream's 1, lanes 0), so
-quinn sends all of that lane's data before what the main stream is given
-afterwards. As in Go this holds for first transmissions; a lost packet's
-retransmission can still come after. A reader that merges the streams
-(ours and Go's: a task or goroutine per stream feeding one queue) can
-also reorder what arrived close together, so a client must not take a
-stream.close RESPONSE as the end of the channel's data.
+the wire. The one place the protocol used to rely on one: a channel's
+STREAM_END (on its lane, after its data) is written before the
+stream.close RESPONSE that follows it (main stream). Over QUIC the
+RESPONSE may arrive first, so a client keeps the channel's data until its
+STREAM_END (PROTOCOL.md, Channel streams); over the WebSocket the order
+stays as written. Nothing cheap can promise it: quic-go round-robins
+streams with about a packet unsent on each; quinn applies a priority
+change to a stream only once it next sends from it, so raising an ending
+lane above the main stream doesn't reorder data already queued; holding
+the main stream until the lane is acknowledged would stall the server's
+writes for a round trip at every channel end. And a receiver that merges
+streams (ours and Go's: a task or goroutine per stream feeding one queue)
+reorders frames that arrive close together anyway. What the unsent bound
+does keep: the RESPONSE overtakes at most LOWAT of the lane
+(`response_overtakes_at_most_the_unsent_tail`; without the bound it
+overtook 159 of 160 KB).
 
 **Where it differs from Go, on purpose:**
 - The main stream has a higher send priority than lanes, so an echo goes
   ahead of the download data quinn holds unsent (at most the 16 KiB
-  above, 130 ms at 1 Mbit/s); quic-go round-robins. Ordering comes first:
-  an ending lane outranks the main stream (above).
+  above, 130 ms at 1 Mbit/s); quic-go round-robins.
 - Each lane has its own write lock, so the carrier never makes a write to
   one stream wait for another. The server doesn't use that: its write
   loop (`client.rs` `write_loop`) awaits each frame in turn, so a write

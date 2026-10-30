@@ -365,7 +365,7 @@ stream limit with session streams.
 | --- | --- | --- |
 | `forward.open` | `stream`, `host`, `port` | `{}` once connected |
 | `exec.start` | `stream`, `argv`, `cwd`?, `env`? | `{}` once started |
-| `stream.close` | `stream` | `{}`, after the STREAM_END |
+| `stream.close` | `stream` | `{}`, written after the STREAM_END (see below for QUIC) |
 
 - **forward.open** connects from the server to `host:port`, as `ssh -L`
   does; `localhost` reaches the server's own loopback. The connection is
@@ -385,7 +385,14 @@ stream limit with session streams.
   connection or stdin, and the half-close (`CloseWrite`, or closing stdin).
 - **stream.close** ends a stream early: the server closes the connection,
   or sends SIGHUP to the process group and SIGKILL 2 s later. The STREAM_END
-  is `closed` for a forward and `exited` or `killed` for a process.
+  is `closed` for a forward and `exited` or `killed` for a process. The
+  server writes the STREAM_END before the `{}`. Over a WebSocket they
+  arrive in that order. Over QUIC they may not: the STREAM_END and the
+  channel's last data travel on the channel's own QUIC stream (a lane,
+  [QUIC.md](QUIC.md)) and the RESPONSE on the main stream, and QUIC
+  orders nothing across streams. So a client keeps a channel's data, its
+  exit code included, until the STREAM_END, and doesn't take the
+  RESPONSE as the channel's end.
 - **Flow control.** The client returns CREDIT for CHANNEL_DATA bytes it
   has consumed (payload bytes, the channel byte included), at least every
   8 KiB or 50 ms while it has unreturned bytes; the server returns GRANT

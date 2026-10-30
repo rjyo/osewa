@@ -335,7 +335,6 @@ struct Out {
 
 /// quinn sends a higher priority stream's data first. Lanes are 0.
 const PRIORITY_MAIN: i32 = 1;
-const PRIORITY_ENDING: i32 = 2;
 
 /// Frames read but not yet taken by read; past it the readers wait, and
 /// QUIC's flow control pushes back on the peer.
@@ -461,12 +460,6 @@ impl Out {
             *w = Some(Writer::new(&self.qc, s, false));
         }
         let lw = w.as_mut().unwrap();
-        if last {
-            // A lane's end goes out ahead of what the main stream is given
-            // after it: a stream.close RESPONSE follows its STREAM_END, and
-            // must not overtake it or the channel's last data.
-            let _ = lw.s.set_priority(PRIORITY_ENDING);
-        }
         lw.write(frame).await?;
         if last {
             let _ = lw.s.finish();
