@@ -293,6 +293,63 @@ Network.framework (`NWProtocolQUIC`, with stream multiplexing through
 or a Rust or Java stack. Their stream layout and TLS pinning must match
 this note exactly.
 
+## Rust: quinn (osewa_carrier::quic)
+
+The Rust carrier is quinn 0.11 (rustls with ring, as osewa-auth), wire
+compatible with the Go one: the same ALPNs, main stream, lanes, ping and
+deflate, WebSocket status codes as QUIC application error codes. It is
+tested both ways against quic-go (`crates/osewa/tests/go_quic.rs`).
+
+**Congestion control: Cubic without HyStart, by default.** quinn's Cubic
+(RFC 9438) leaves slow start only on a loss or an ECN mark, never on a
+rise in delay, so the early exit above (jitter read as a queue, a window
+stuck at 106-372 KB) can't happen; acknowledgments of app-limited sends
+don't grow the window. Everything else stays as on the Go side and as
+ssh's TCP: the same algorithm family, quic-go's first window (32 packets),
+its first RTT guess (100 ms). A comparison against Go then measures the
+HyStart change and nothing else. Why not BBR by default: quinn marks its
+BBR experimental; it is BBRv1 (ProbeRTT drops the window to 4 packets for
+200 ms every 10 s, loss doesn't slow it, so it overruns a shallow buffer
+and crowds out TCP beside it). The risk of Cubic without HyStart is the
+opposite one: slow start on a deep-buffer link fills the buffer before
+its first loss. The server's flight control (credit bounded to rate x
+(base RTT + 40/200 ms)) bounds what osewa offers, which bounds that.
+
+The knob: `OSEWA_QUIC_CC=cubic|bbr|newreno` in a process's environment
+picks its sender's controller (an unknown value says so on stderr and
+uses cubic). The server's governs downloads, so for an A/B on the real
+path set it in the server's environment (the launchd/systemd unit, or the
+container) and dial fresh connections. Pacing is always on: quinn paces
+every controller's sends over the RTT, with no setting.
+
+**Transport parameters**, against Go's `QUICConfig`:
+
+| | Go (quic-go) | Rust (quinn) |
+| --- | --- | --- |
+| initial packet size | 1200 | 1200 (`initial_mtu`, `min_mtu`), PMTUD on up to 1452 |
+| idle timeout / keepalive | 30 s / 15 s | 30 s / 15 s |
+| stream receive window | 6 MiB, auto-tuned to 8 MiB | 8 MiB (quinn doesn't auto-tune) |
+| connection receive window | 32 MiB, auto-tuned to 64 MiB | 64 MiB |
+| incoming uni / bidi streams | 4096 / 100 | 4096 / 100 |
+| datagrams | off | off |
+| initial RTT | 100 ms | 100 ms (quinn's default is 333) |
+| first congestion window | 32 packets | 32 x 1200 bytes (quinn's default is 10) |
+| send buffer | unbounded | 16 MiB per connection, the WebSocket queue's hard cap |
+| UDP socket buffers | 7 MiB asked for | 7 MiB asked for (and forced on Linux where allowed) |
+
+**Where it differs from Go, on purpose:**
+- The main stream has a higher send priority than lanes, so an echo
+  queued behind a download in quinn's buffers goes first; quic-go
+  round-robins. Lanes keep their own write locks, so a lane blocked on
+  flow control holds up neither the main stream nor another lane.
+- A dial gives up at once when the server answers no (a refused handshake,
+  a closed connection), where Go keeps starting attempts until its
+  deadline; on a silent path both start a new attempt every 500 ms, at
+  most four in flight.
+- quinn holds a handshake until the server takes the connection, so the
+  server accepts at once and bounds the wait for the main stream to 10 s,
+  as Go does.
+
 ## Open questions
 
 1. **Dependency.** quic-go is a new dependency, with more under it
