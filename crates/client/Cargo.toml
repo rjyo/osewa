@@ -1,0 +1,30 @@
+[package]
+name = "osewa-client"
+description = "osewa's client library: connect, attach, resume, channels, hosts and login (no libghostty)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-auth.workspace = true
+osewa-paths.workspace = true
+osewa-carrier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util", "process"] }
+tokio-rustls = { version = "0.26", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# SHA-256 of the binary install copies; already in the tree under rustls.
+ring = "0.17"
+
+[dev-dependencies]
+# Tests render with libghostty, as the Go client tests do through
+# client/mirror; the library itself never links it.
+osewa-ghostty.workspace = true
+# A dev-dependency cycle: tests drive the mirror through an adapter, since
+# its Renderer impl is for the non-test build of this crate.
+osewa-mirror.workspace = true
+rand.workspace = true
+hex.workspace = true

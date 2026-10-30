@@ -1,0 +1,12 @@
+[package]
+name = "osewa-mirror"
+description = "A libghostty mirror of an osewa session, and local echo prediction over it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+osewa-client.workspace = true
+osewa-wire.workspace = true
+osewa-ghostty.workspace = true
+tokio = { version = "1", features = ["sync"] }

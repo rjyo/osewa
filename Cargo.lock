@@ -448,8 +448,10 @@ dependencies = [
  "libc",
  "osewa-auth",
  "osewa-carrier",
+ "osewa-client",
  "osewa-ghostty",
  "osewa-holder",
+ "osewa-mirror",
  "osewa-server",
  "osewa-wire",
  "tokio",
@@ -491,6 +493,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "osewa-client"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "libc",
+ "osewa-auth",
+ "osewa-carrier",
+ "osewa-ghostty",
+ "osewa-mirror",
+ "osewa-paths",
+ "osewa-wire",
+ "rand 0.8.8",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "osewa-execproc"
 version = "0.1.0"
 dependencies = [
@@ -522,6 +545,16 @@ dependencies = [
  "osewa-wire",
  "rand 0.8.8",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "osewa-mirror"
+version = "0.1.0"
+dependencies = [
+ "osewa-client",
+ "osewa-ghostty",
+ "osewa-wire",
  "tokio",
 ]
 
