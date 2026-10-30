@@ -13,8 +13,13 @@
 //! programs that only relay streams (app-hook) build without it.
 
 mod mirror;
+mod predict;
 
 pub use mirror::{key, Mirror, Options};
+pub use predict::{
+    parse_predict_mode, CellState, Clock, InputMode, PredictMode, Prediction, Predictor,
+    PredictorConfig,
+};
 
 /// A libghostty terminal or decoder that may move between threads.
 ///
