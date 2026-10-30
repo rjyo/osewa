@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use osewa_execproc as execproc;
 use osewa_wire as wire;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::Notify;
 
 use crate::client::{Client, ClientState};
@@ -481,18 +480,13 @@ impl Channel {
 
     async fn forward(self: Rc<Self>, req: wire::Request) {
         let timeout = self.c.srv.cfg.tune.forward_timeout;
-        let target = format!("{}:{}", join_host(&req.host), req.port);
-        // A dial deadline: a connect that completes past it failed too.
-        let start = Instant::now();
         let dial = tokio::select! {
-            _ = tokio::time::sleep(timeout) => None,
-            r = TcpStream::connect((req.host.as_str(), req.port as u16)) => Some(r),
-            _ = self.until(|s| s.stopped) => Some(Err(io::ErrorKind::Interrupted.into())),
+            r = crate::dial::dial_tcp(&req.host, req.port as u16, timeout) => r,
+            _ = self.until(|s| s.stopped) => Err("dial tcp: operation was canceled".into()),
         };
         let conn = match dial {
-            Some(Ok(c)) if start.elapsed() <= timeout => c,
-            Some(Ok(_)) | None => return self.fail_start(req.id, wire::ERR_UNREACHABLE, &format!("dial tcp {target}: i/o timeout")),
-            Some(Err(e)) => return self.fail_start(req.id, wire::ERR_UNREACHABLE, &format!("dial tcp {target}: {e}")),
+            Ok(c) => c,
+            Err(e) => return self.fail_start(req.id, wire::ERR_UNREACHABLE, &e),
         };
         self.c.respond(response_ok(req.id));
         // The pump and the sink stop on their own when the channel stops,
@@ -522,6 +516,7 @@ impl Channel {
         self.c.respond(response_ok(req.id));
         let pid = p.pid();
         let (stopper, closer) = (p.stopper(), p.closer());
+        let release = closer.clone();
         let (stdin, mut stdout, mut stderr) = (p.take_stdin(), p.take_stdout(), p.take_stderr());
         let reaped = Rc::new(Notify::new());
         let code = Rc::new(std::cell::Cell::new(None::<i32>));
@@ -594,6 +589,9 @@ impl Channel {
         tokio::join!(out, err);
         let code = wait_reaped().await;
         let reason = if self.s.borrow().signaled { wire::END_KILLED } else { wire::END_EXITED };
+        // The pipes go with the process: a sink blocked on a stdin that a
+        // background child holds and never reads would wait forever.
+        release.close();
         drop((stdout, stderr));
         self.end(wire::StreamEnd { reason: reason.into(), exit_code: Some(code as i64) });
         let hupped = {
@@ -617,14 +615,6 @@ async fn await_group(pgid: i32, d: Duration) {
     let deadline = Instant::now() + d;
     while execproc::group_alive(pgid) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-fn join_host(host: &str) -> String {
-    if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_string()
     }
 }
 
