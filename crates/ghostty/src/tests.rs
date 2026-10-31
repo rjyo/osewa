@@ -392,6 +392,53 @@ fn png_2x1() -> Vec<u8> {
 }
 
 #[test]
+fn notifications() {
+    let got = Rc::new(RefCell::new(Vec::new()));
+    let g = got.clone();
+    let mut t = new_term(20, 5, Callbacks { notify: Some(Box::new(move |title, body| g.borrow_mut().push((title, body)))), ..Default::default() });
+    t.write(b"\x1b]9;build done\x07\x1b]777;notify;CI;all green\x1b\\");
+    assert_eq!(*got.borrow(), [("".to_string(), "build done".to_string()), ("CI".to_string(), "all green".to_string())]);
+}
+
+/// DSR 996 is answered from the callback, and not at all until it knows.
+#[test]
+fn color_scheme_reports() {
+    let replies = Rc::new(RefCell::new(Vec::new()));
+    let scheme = Rc::new(std::cell::Cell::new(None));
+    let (r, s) = (replies.clone(), scheme.clone());
+    let mut t = new_term(
+        20,
+        5,
+        Callbacks {
+            write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))),
+            color_scheme: Some(Box::new(move || s.get())),
+            ..Default::default()
+        },
+    );
+    t.write(b"\x1b[?996n");
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "", "answered without knowing");
+    for (dark, want) in [(true, "\x1b[?997;1n"), (false, "\x1b[?997;2n")] {
+        scheme.set(Some(dark));
+        replies.borrow_mut().clear();
+        t.write(b"\x1b[?996n");
+        assert_eq!(String::from_utf8_lossy(&replies.borrow()), want);
+    }
+}
+
+#[test]
+fn pointer_shapes() {
+    let mut t = new_term(20, 5, Callbacks::default());
+    assert_eq!(t.pointer_shape(), "text");
+    for (osc, want) in [("pointer", "pointer"), ("zoom-out", "zoom-out"), ("ew-resize", "ew-resize"), ("", "text")] {
+        t.write(format!("\x1b]22;{osc}\x1b\\").as_bytes());
+        assert_eq!(t.pointer_shape(), want, "OSC 22 {osc:?}");
+    }
+    t.write(b"\x1b]22;wait\x1b\\");
+    let snap = t.snapshot().unwrap();
+    assert_eq!(restore(&snap, Callbacks::default()).unwrap().pointer_shape(), "wait", "lost in a snapshot");
+}
+
+#[test]
 fn images_off_by_default() {
     let mut t = new_term(20, 5, Callbacks::default());
     t.write(RGB_2X2);

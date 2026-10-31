@@ -17,6 +17,9 @@ extern void osewa_rs_status(void *ud, int state, int kind, int progress,
                             const uint8_t *app, size_t app_len,
                             const uint8_t *title, size_t title_len,
                             const uint8_t *msg, size_t msg_len);
+extern void osewa_rs_notify(void *ud, const uint8_t *title, size_t title_len,
+                            const uint8_t *body, size_t body_len);
+extern int osewa_rs_color_scheme(void *ud);
 extern bool osewa_rs_sink(void *ud, const uint8_t *data, size_t len);
 extern size_t osewa_rs_read(void *ud, uint8_t *buf, size_t cap);
 
@@ -64,6 +67,25 @@ static void on_program_status(GhosttyTerminal t, void *ud,
                   r->title.len, r->message.ptr, r->message.len);
 }
 
+static void on_notify(GhosttyTerminal t, void *ud,
+                      const GhosttyTerminalDesktopNotification *n) {
+  (void)t;
+  osewa_rs_notify(ud, n->title.ptr, n->title.len, n->body.ptr, n->body.len);
+}
+
+// DSR 996: the owner's light or dark appearance, once a client said which;
+// until then the query goes unanswered, as on a terminal without it.
+static bool on_color_scheme(GhosttyTerminal t, void *ud,
+                            GhosttyColorScheme *out) {
+  (void)t;
+  int s = osewa_rs_color_scheme(ud);
+  if (s < 0) {
+    return false;
+  }
+  *out = s ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT;
+  return true;
+}
+
 uint16_t osewa_term_cols(GhosttyTerminal t);
 uint16_t osewa_term_rows(GhosttyTerminal t);
 uint32_t osewa_term_width_px(GhosttyTerminal t);
@@ -98,7 +120,11 @@ void osewa_term_install(GhosttyTerminal t, void *ud, bool write_pty) {
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                          (const void *)on_write_pty);
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_SIZE, (const void *)on_size);
+    ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
+                         (const void *)on_color_scheme);
   }
+  ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
+                       (const void *)on_notify);
   ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_BELL, (const void *)on_bell);
   ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
                        (const void *)on_title_changed);
@@ -142,6 +168,12 @@ uint32_t osewa_term_height_px(GhosttyTerminal t) {
   uint32_t v = 0;
   ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_HEIGHT_PX, &v);
   return v;
+}
+
+int osewa_term_mouse_shape(GhosttyTerminal t) {
+  GhosttyMouseShape v = GHOSTTY_MOUSE_SHAPE_TEXT;
+  ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &v);
+  return (int)v;
 }
 
 // Implemented in Rust: decodes PNG data into RGBA pixels it allocates with

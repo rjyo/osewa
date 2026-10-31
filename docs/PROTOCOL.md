@@ -139,6 +139,7 @@ Methods (REQUEST `method`):
 | `session.detach` | `stream` | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
 | `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |
+| `session.color_scheme` | `stream`, `color_scheme` (`light` or `dark`) | `{}` (applies only for the owner) |
 | `session.kill` | `session` | `{}` |
 
 `status` is the session's latest root OSC 7501 record
@@ -317,10 +318,11 @@ EVENT JSON, by `kind`:
 | `owner` | `owner` |
 | `exit` | `code` |
 | `input_mode` | `echo`, `canonical`: the PTY's ECHO and ICANON flags, sent at attach and whenever they change |
+| `notify` | `title` (may be empty), `msg`: a desktop notification (OSC 9, OSC 777) |
 
 Events are log records, so they are ordered exactly with output. Clients fire
-effects (`bell`, `clipboard`) only for records received live, never during a
-snapshot or a resume catch-up.
+effects (`bell`, `clipboard`, `notify`) only for records received live, never
+during a snapshot or a resume catch-up.
 
 ## Idle sessions
 
@@ -372,6 +374,18 @@ fall back from. A client that draws images on another terminal passes the
 holder's graphics commands through with `q=2`, since the holder already
 replied, and draws placements again from its mirror after redrawing from a
 snapshot.
+
+## Appearance
+
+The owner's client says whether its terminal is light or dark with
+`session.color_scheme`, as it learns it and whenever it changes. The holder
+answers DSR 996 (`CSI ? 996 n`) from it, and leaves the query unanswered
+until a client has said; a program that set mode 2031 gets the report
+unasked when it changes. Clients keep mode 2031 on their own terminal for
+themselves and don't pass a program's on.
+
+The pointer shape a program sets (OSC 22) is part of the terminal's state
+and of a snapshot; a client gives its terminal the same shape.
 
 ## Clipboard
 

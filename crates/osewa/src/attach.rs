@@ -17,7 +17,11 @@ use crate::ui::{viewer_notice, Attached, InputHandler, Ui};
 /// screen, hidden cursor, mouse and focus reporting, bracketed paste, kitty
 /// keyboard), since the local terminal outlives the attach.
 pub(crate) const RESET_MODES: &str =
-    "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\r\n";
+    "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[?2031l\x1b]22;\x1b\\\r\n";
+
+/// Asks the local terminal whether it is dark or light, now (DSR 996) and
+/// whenever that changes (mode 2031), for the programs that ask the holder.
+pub(crate) const ASK_COLOR_SCHEME: &str = "\x1b[?2031h\x1b[?996n";
 
 /// Runs `attach [--take] [--quiet] [--predict auto|always|never]
 /// [--graphics auto|always|never] <host> [id]` and returns the exit code.
@@ -74,6 +78,9 @@ async fn attach_on(
         ui = ui.with_graphics();
     }
     let a = Attached::new(ui, me.clone());
+    if restore.is_some() {
+        let _ = env.out().write_all(ASK_COLOR_SCHEME.as_bytes());
+    }
     let r = run_attached(ctx, env, l, &a, &id, cols, rows, take).await;
     if let Some(s) = a.s.lock().unwrap().take() {
         s.close();
@@ -130,6 +137,7 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
             None => return Ok(1), // interrupted, as in the loop below
             Some(r) => r?,
         }
+        a.send_color_scheme().await;
     } else {
         let _ = tokio::time::timeout(Duration::from_secs(5), a.m.wait_text("")).await;
         a.notice(&viewer_notice(&owner, &a.id));
@@ -220,6 +228,7 @@ async fn resize_on_winch(s: Session) {
 pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
     let mut esc = Escaper { nl: true, tilde: false };
     let mut carry: Vec<u8> = Vec::new();
+    let mut reports = SchemeReports::default();
     let mut buf = [0u8; 4096];
     loop {
         let n = match r.read(&mut buf) {
@@ -229,7 +238,11 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
             }
             Ok(n) => n,
         };
-        let mut input = &buf[..n];
+        let (typed, schemes) = reports.feed(&buf[..n]);
+        for dark in schemes {
+            h.color_scheme(dark);
+        }
+        let mut input = &typed[..];
         while !input.is_empty() {
             let (out, act, rest) = esc.feed(input);
             carry.extend_from_slice(&out);
@@ -248,6 +261,69 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
             }
             input = rest;
         }
+    }
+}
+
+/// Takes the local terminal's color scheme reports (CSI ? 997 ; 1|2 n)
+/// out of what is typed. A report cut by a read is held for the next one,
+/// but only from "ESC [ ?" on: a lone ESC is a key that must not wait.
+#[derive(Default)]
+pub(crate) struct SchemeReports {
+    held: Vec<u8>,
+}
+
+const SCHEME_REPORT: &[u8] = b"\x1b[?997;";
+
+impl SchemeReports {
+    /// The typed bytes, and each report's dark (true) or light.
+    pub fn feed(&mut self, input: &[u8]) -> (Vec<u8>, Vec<bool>) {
+        let mut data = std::mem::take(&mut self.held);
+        data.extend_from_slice(input);
+        let (mut out, mut schemes) = (Vec::with_capacity(data.len()), Vec::new());
+        let mut i = 0;
+        while i < data.len() {
+            let rest = &data[i..];
+            if rest[0] != 0x1b {
+                out.push(rest[0]);
+                i += 1;
+                continue;
+            }
+            let n = rest.len().min(SCHEME_REPORT.len());
+            if rest[..n] != SCHEME_REPORT[..n] {
+                out.push(rest[0]);
+                i += 1;
+                continue;
+            }
+            if n < SCHEME_REPORT.len() {
+                if n >= 3 {
+                    self.held = rest.to_vec();
+                } else {
+                    out.extend_from_slice(rest);
+                }
+                break;
+            }
+            // At most 3 digits, then n.
+            let digits = rest[n..].iter().take_while(|b| b.is_ascii_digit()).count();
+            match rest.get(n + digits) {
+                Some(b'n') if (1..=3).contains(&digits) => {
+                    match &rest[n..n + digits] {
+                        b"1" => schemes.push(true),
+                        b"2" => schemes.push(false),
+                        _ => {}
+                    }
+                    i += n + digits + 1;
+                }
+                None if digits <= 3 => {
+                    self.held = rest.to_vec();
+                    break;
+                }
+                _ => {
+                    out.push(rest[0]);
+                    i += 1;
+                }
+            }
+        }
+        (out, schemes)
     }
 }
 

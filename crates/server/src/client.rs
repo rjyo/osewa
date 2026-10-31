@@ -334,7 +334,7 @@ impl Client {
             wire::METHOD_ATTACH => self.attach(req),
             wire::METHOD_FORWARD_OPEN | wire::METHOD_EXEC_START => self.open(req),
             wire::METHOD_STREAM_CLOSE => self.close_stream(req),
-            wire::METHOD_DETACH | wire::METHOD_OWN | wire::METHOD_RESIZE => {
+            wire::METHOD_DETACH | wire::METHOD_OWN | wire::METHOD_RESIZE | wire::METHOD_COLOR_SCHEME => {
                 let Some(st) = self.stream(req.stream) else {
                     return self.fail(req.id, wire::ERR_NOT_FOUND, "no such stream");
                 };

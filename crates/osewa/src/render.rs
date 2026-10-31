@@ -301,6 +301,26 @@ fn send_image(t: &Terminal, id: u32, sent: &mut SentImages, out: &mut Vec<u8>) -
     true
 }
 
+/// OSC 22 that sets the local terminal's pointer shape; "text" is the
+/// shape a terminal starts with, so it resets instead.
+pub(crate) fn pointer_set(shape: &str) -> Vec<u8> {
+    let shape = if shape == "text" { "" } else { shape };
+    format!("\x1b]22;{shape}\x1b\\").into_bytes()
+}
+
+/// A desktop notification on the local terminal: OSC 777 with a title,
+/// OSC 9 without, which more terminals take. Neither may carry controls,
+/// nor the title a ';'.
+pub(crate) fn notify_set(title: &str, body: &str) -> Vec<u8> {
+    let body = String::from_utf8_lossy(&crate::vtfilter::strip_controls(body.as_bytes())).into_owned();
+    let title = String::from_utf8_lossy(&crate::vtfilter::strip_controls(title.as_bytes())).replace(';', ",");
+    if title.is_empty() {
+        format!("\x1b]9;{body}\x1b\\").into_bytes()
+    } else {
+        format!("\x1b]777;notify;{title};{body}\x1b\\").into_bytes()
+    }
+}
+
 /// OSC 52 that puts data on the local clipboard. The remote's selection
 /// target isn't carried, so it is always the clipboard.
 pub(crate) fn clipboard_set(data: &[u8]) -> Vec<u8> {

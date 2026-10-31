@@ -63,11 +63,37 @@ fn split_utf8_holds_back_partial_runes() {
     assert!(done.len() == 1 && rest.is_empty(), "invalid byte held back");
 }
 
+#[test]
+fn scheme_reports_leave_typing() {
+    let cases: &[(&[&str], &str, &[bool])] = &[
+        (&["ab\x1b[?997;1nc"], "abc", &[true]),
+        (&["\x1b[?997;2n\x1b[?997;1n"], "", &[false, true]),
+        (&["a\x1b[?99", "7;2nb"], "ab", &[false]),
+        (&["\x1b[?997;", "1", "n"], "", &[true]),
+        // Keys: a lone ESC, arrows and other reports pass, now.
+        (&["\x1b", "x"], "\x1bx", &[]),
+        (&["\x1b[A\x1b[?1;2c"], "\x1b[A\x1b[?1;2c", &[]),
+        (&["\x1b[?997;9n"], "", &[]),
+        (&["\x1b[?997;12345n"], "\x1b[?997;12345n", &[]),
+    ];
+    for (reads, want, want_schemes) in cases {
+        let mut r = crate::attach::SchemeReports::default();
+        let (mut got, mut schemes) = (Vec::new(), Vec::new());
+        for read in *reads {
+            let (b, s) = r.feed(read.as_bytes());
+            got.extend(b);
+            schemes.extend(s);
+        }
+        assert_eq!((String::from_utf8_lossy(&got).into_owned(), schemes), (want.to_string(), want_schemes.to_vec()), "{reads:?}");
+    }
+}
+
 #[derive(Default)]
 struct Sink {
     got: Mutex<Vec<String>>,
     flushed: Mutex<usize>,
     takes: Mutex<usize>,
+    schemes: Mutex<Vec<bool>>,
 }
 
 impl InputHandler for Sink {
@@ -77,6 +103,9 @@ impl InputHandler for Sink {
     fn take(&self) {
         *self.takes.lock().unwrap() += 1;
     }
+    fn color_scheme(&self, dark: bool) {
+        self.schemes.lock().unwrap().push(dark);
+    }
     fn flush(&self, _: &Ctx) {
         *self.flushed.lock().unwrap() = self.got.lock().unwrap().len();
     }
@@ -85,9 +114,10 @@ impl InputHandler for Sink {
 #[test]
 fn forward_input_sends_takes_and_detaches() {
     let s = Sink::default();
-    forward_input(&ctx(), &mut "echo 你好\r~tx\r~.ignored".as_bytes(), &s);
+    forward_input(&ctx(), &mut "echo 你好\x1b[?997;1n\r~tx\r~.ignored".as_bytes(), &s);
     assert!(s.got.lock().unwrap().concat() == "echo 你好\rx\r" && *s.flushed.lock().unwrap() == 0, "got {:?}", s.got.lock().unwrap());
     assert_eq!(*s.takes.lock().unwrap(), 1);
+    assert_eq!(*s.schemes.lock().unwrap(), [true], "the color scheme report");
     // EOF detaches too, but only once everything typed was delivered.
     let s = Sink::default();
     forward_input(&ctx(), &mut "x".as_bytes(), &s);
@@ -115,6 +145,7 @@ fn forward_input_waits_for_take() {
             std::thread::sleep(Duration::from_millis(30)); // a round trip
             self.st.lock().unwrap().0 = true;
         }
+        fn color_scheme(&self, _: bool) {}
         fn flush(&self, _: &Ctx) {}
     }
     let s = TakeSink::default();
@@ -183,6 +214,21 @@ fn clipboard_events_set_the_local_clipboard() {
     assert_eq!(out.string(), "", "a catch-up clipboard event was applied");
     a.m.event(&clip(b"hi!"), true).unwrap();
     assert_eq!(out.string(), "\x1b]52;c;aGkh\x1b\\");
+}
+
+/// Live notifications reach the local terminal, with nothing in them that
+/// could end or extend the sequence; catch-up ones don't.
+#[test]
+fn notify_events_notify_locally() {
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let out = Buf::default();
+    let a = crate::ui::Attached::new(crate::ui::Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())), "me".into());
+    let notify = |title: &str, msg: &str| osewa_wire::EventMsg { title: title.into(), msg: msg.into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_NOTIFY) };
+    a.m.event(&notify("", "old"), false).unwrap();
+    assert_eq!(out.string(), "", "a catch-up notification was shown");
+    a.m.event(&notify("", "done\x07"), true).unwrap();
+    a.m.event(&notify("CI; main", "all\x1b\\ green"), true).unwrap();
+    assert_eq!(out.string(), "\x1b]9;done\x1b\\\x1b]777;notify;CI, main;all\\ green\x1b\\");
 }
 
 #[test]

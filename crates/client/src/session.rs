@@ -1034,6 +1034,14 @@ impl Session {
         self.request(req).await.map(drop)
     }
 
+    /// Tells the holder whether this client's terminal is dark or light, for
+    /// programs that ask (DSR 996, mode 2031). Only the owner's applies.
+    pub async fn color_scheme(&self, dark: bool) -> Result<()> {
+        let s = if dark { "dark" } else { "light" };
+        let req = wire::Request { method: wire::METHOD_COLOR_SCHEME.into(), color_scheme: s.into(), ..Default::default() };
+        self.request(req).await.map(drop)
+    }
+
     /// Detaches the stream. The session keeps running on the host.
     pub async fn detach(&self) -> Result<()> {
         let r = self.request(wire::Request { method: wire::METHOD_DETACH.into(), ..Default::default() }).await;

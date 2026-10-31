@@ -329,6 +329,11 @@ fn detach_own_resize() {
     for s in [&a, &b] {
         eventually("resize", || s.size().0 == 50);
     }
+    assert!(run(b.color_scheme(true)).unwrap_err().is_code(wire::ERR_NOT_OWNER), "non-owner color scheme");
+    for (dark, want) in [(true, "dark"), (false, "light")] {
+        run(a.color_scheme(dark)).unwrap();
+        assert_eq!(f.with(&id, |s| s.color_scheme.clone()), want);
+    }
     run(a.detach()).unwrap();
     wait_for("done", a.done());
     assert!(a.err().is_none(), "{:?}", a.err());

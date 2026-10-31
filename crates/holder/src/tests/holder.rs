@@ -249,6 +249,34 @@ fn pixel_size() {
     a.wait_text("R:4;720;960:END");
 }
 
+/// Notifications reach clients as events. The owner's appearance answers
+/// DSR 996 and, once the program asked for changes (mode 2031), reaches it
+/// when it changes; a viewer's doesn't count.
+#[test]
+fn notify_and_color_scheme() {
+    let report = r#"s=; while c=$(dd bs=1 count=1 2>/dev/null); [ "$c" != n ]; do s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033[')""#;
+    let h = start(cfg(sh(&format!(
+        r#"stty raw -echo; printf '\033]777;notify;CI;all green\033\\GO'; dd bs=1 count=1 >/dev/null 2>&1; printf '\033[?2031h\033[?996n'; {report}; {report}; sleep 30"#
+    ))));
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.wait_text("GO");
+    a.wait_for("notify event", |c| c.has_event(|e| e.kind == wire::EVENT_NOTIFY && e.title == "CI" && e.msg == "all green"));
+    let scheme = |s: &str| wire::Request { stream: 7, color_scheme: s.into(), ..method(wire::METHOD_COLOR_SCHEME) };
+    assert_eq!(a.request(scheme("blue")).error, wire::ERR_BAD_REQUEST);
+    let mut b = h.dial("b");
+    b.attach(wire::Request { stream: 7, cols: 80, rows: 24, ..method(wire::METHOD_ATTACH) });
+    assert_eq!(b.request(scheme("light")).error, wire::ERR_NOT_OWNER);
+    assert!(a.request(scheme("dark")).error.is_empty());
+    a.text_input(1, "x");
+    a.wait_text("R:?997;1:END");
+    // Unchanged: nothing to report. Changed: reported unasked.
+    assert!(a.request(scheme("dark")).error.is_empty());
+    assert!(a.request(scheme("light")).error.is_empty());
+    a.wait_text("R:?997;2:END");
+    assert_eq!(unwrapped(&a.text()).matches("R:").count(), 2, "{:?}", a.text());
+}
+
 #[test]
 fn key_paste_focus_input() {
     // The child prints what it reads as one run of hex digits after "H:",

@@ -157,6 +157,22 @@ fn query_filter_size_reports() {
     }
 }
 
+/// Color scheme reports stay the client's: the program's mode 2031 never
+/// reaches the local terminal, and its DSR 996 is the holder's to answer.
+#[test]
+fn query_filter_color_scheme() {
+    for (input, want) in [
+        ("\x1b[?2031h", ""),
+        ("\x1b[?2031l", ""),
+        ("\x1b[?1049;2031h", "\x1b[?1049h"),
+        ("\x1b[?2031;25;1004l", "\x1b[?25;1004l"),
+        ("\x1b[?20311h\x1b[2031h", "\x1b[?20311h\x1b[2031h"),
+        ("\x1b[?996n", ""),
+    ] {
+        assert_eq!(String::from_utf8_lossy(&QueryFilter::default().filter(input.as_bytes())), want, "{input:?}");
+    }
+}
+
 #[test]
 fn query_filter_reset() {
     let mut f = QueryFilter::default();

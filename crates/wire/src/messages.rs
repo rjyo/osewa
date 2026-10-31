@@ -79,6 +79,7 @@ pub const METHOD_ATTACH: &str = "session.attach";
 pub const METHOD_DETACH: &str = "session.detach";
 pub const METHOD_OWN: &str = "session.own";
 pub const METHOD_RESIZE: &str = "session.resize";
+pub const METHOD_COLOR_SCHEME: &str = "session.color_scheme";
 pub const METHOD_KILL: &str = "session.kill";
 pub const METHOD_FORWARD_OPEN: &str = "forward.open";
 pub const METHOD_EXEC_START: &str = "exec.start";
@@ -109,6 +110,9 @@ pub struct Request {
     pub height: i64,
     #[serde(default, skip_serializing_if = "is_false")]
     pub own: bool,
+    /// session.color_scheme: "light" or "dark"
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color_scheme: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub epoch: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,6 +291,7 @@ pub const EVENT_STATUS: &str = "status";
 pub const EVENT_OWNER: &str = "owner";
 pub const EVENT_EXIT: &str = "exit";
 pub const EVENT_INPUT_MODE: &str = "input_mode";
+pub const EVENT_NOTIFY: &str = "notify";
 
 /// An EVENT's JSON body. Only the fields its kind uses are set.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]

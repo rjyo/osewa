@@ -550,6 +550,30 @@ fn ui_images_scaled_scrolled_partly_off() {
     assert_eq!((p.row, p.grid, (p.cols, p.rows), p.source), (0, (2, 2), (2, 2), (0, 20, 2, 20)), "{p:?}");
 }
 
+/// The local terminal's pointer follows the program's (OSC 22), set once
+/// per change and again on a fresh attach.
+#[test]
+fn ui_pointer_shape() {
+    let mut h = Harness::new();
+    h.output("\x1b]22;pointer\x1b\\a");
+    assert_eq!(h.local.pointer_shape(), "pointer");
+    for b in ["b\x1b]22;pointer\x1b\\", "c"] {
+        h.mirror.write(b.as_bytes());
+        h.u.output(b.as_bytes());
+        h.u.applied(&h.mirror);
+        assert!(!h.out.string().contains("\x1b]22"), "set again unchanged: {:?}", h.out.string());
+        h.sync();
+    }
+    h.local = term(20, 4);
+    h.u = Ui::new(Box::new(h.out.clone()), true, Predictor::new(PredictorConfig::default()));
+    h.u.ready(&h.mirror);
+    h.sync();
+    assert_eq!(h.local.pointer_shape(), "pointer", "a fresh attach");
+    h.output("\x1b]22;\x1b\\");
+    assert_eq!(h.local.pointer_shape(), "text");
+    h.matches();
+}
+
 /// Without graphics the local terminal never sees the image, but what
 /// follows it still lands where the mirror has it.
 #[test]

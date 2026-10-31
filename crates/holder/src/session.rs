@@ -165,6 +165,9 @@ pub(crate) struct Core {
     pub master: RawFd,
     pub input: Rc<RefCell<PtyInput>>,
     pub input_wake: Rc<Notify>,
+    /// The owner's appearance, dark when true, once its client said; the
+    /// terminal answers DSR 996 from it.
+    color_scheme: Rc<Cell<Option<bool>>>,
     pub pid: i32,
     pub reaped: Rc<Cell<bool>>,
 
@@ -234,8 +237,10 @@ impl Session {
         let fx: Rc<RefCell<Vec<Raised>>> = Rc::default();
         let input = Rc::new(RefCell::new(PtyInput::new(tr.clone())));
         let input_wake = Rc::new(Notify::new());
+        let color_scheme = Rc::new(Cell::new(None));
         let callbacks = {
-            let (f1, f2, f3, f4) = (fx.clone(), fx.clone(), fx.clone(), fx.clone());
+            let (f1, f2, f3, f4, f5) = (fx.clone(), fx.clone(), fx.clone(), fx.clone(), fx.clone());
+            let scheme = color_scheme.clone();
             let (inp, wake) = (input.clone(), input_wake.clone());
             ghostty::Callbacks {
                 write_pty: Some(Box::new(move |b| {
@@ -249,6 +254,10 @@ impl Session {
                     f3.borrow_mut().push(Raised::Event(ev))
                 })),
                 status: Some(Box::new(move |st| f4.borrow_mut().push(Raised::Status(st)))),
+                notify: Some(Box::new(move |title, msg| {
+                    f5.borrow_mut().push(Raised::Event(wire::EventMsg { kind: wire::EVENT_NOTIFY.into(), title, msg, ..Default::default() }))
+                })),
+                color_scheme: Some(Box::new(move || scheme.get())),
             }
         };
         let mut term = ghostty::Terminal::new(
@@ -272,6 +281,7 @@ impl Session {
             master,
             input,
             input_wake,
+            color_scheme,
             pid: 0,
             reaped: Rc::default(),
             owner: String::new(),
@@ -648,6 +658,7 @@ impl Session {
             }
             wire::METHOD_OWN => self.own(cid, &req, &mut resp),
             wire::METHOD_RESIZE => self.resize_req(cid, &req),
+            wire::METHOD_COLOR_SCHEME => self.color_scheme_req(cid, &req),
             wire::METHOD_KILL => self.kill(&req),
             m => Err((wire::ERR_BAD_REQUEST, format!("unknown method {}", wire::quote(m)))),
         };
@@ -773,6 +784,32 @@ impl Session {
         self.set_owner(&client);
         self.resize(cols, rows, width, height);
         resp.owner = self.core.owner.clone();
+        Ok(())
+    }
+
+    /// Takes the owner's light or dark appearance. A program that asked
+    /// for changes (mode 2031) hears of one as a terminal would tell it.
+    fn color_scheme_req(&mut self, cid: u64, req: &wire::Request) -> Result<(), (&'static str, String)> {
+        let owner = self.core.owner.clone();
+        let c = self.conns.get_mut(&cid).ok_or((wire::ERR_INTERNAL, String::new()))?;
+        let client = c.client.clone();
+        if c.stream_for(req.stream).is_none() {
+            return Err((wire::ERR_BAD_REQUEST, format!("stream {} is not attached", req.stream)));
+        }
+        let dark = match req.color_scheme.as_str() {
+            "dark" => true,
+            "light" => false,
+            s => return Err((wire::ERR_BAD_REQUEST, format!("color scheme {}: want light or dark", wire::quote(s)))),
+        };
+        if client.is_empty() || client != owner {
+            return Err((wire::ERR_NOT_OWNER, "not the owner".into()));
+        }
+        let core = &mut self.core;
+        if core.color_scheme.replace(Some(dark)) != Some(dark) && !core.exited && core.term.mode(2031, false) {
+            let report: &[u8] = if dark { b"\x1b[?997;1n" } else { b"\x1b[?997;2n" };
+            core.input.borrow_mut().push(report, true);
+            core.input_wake.notify_one();
+        }
         Ok(())
     }
 

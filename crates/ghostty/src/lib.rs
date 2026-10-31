@@ -85,6 +85,12 @@ pub struct Callbacks {
     pub clipboard: Option<BytesFn>,
     /// Program status reports (OSC 7501).
     pub status: Option<Box<dyn FnMut(Status)>>,
+    /// Desktop notifications (OSC 9, OSC 777): title, possibly empty, and
+    /// body.
+    pub notify: Option<Box<dyn FnMut(String, String)>>,
+    /// Answers DSR 996 on a terminal that replies: Some(true) for dark,
+    /// Some(false) for light, None to leave it unanswered.
+    pub color_scheme: Option<Box<dyn FnMut() -> Option<bool>>>,
 }
 
 /// Options for a new terminal.
@@ -218,6 +224,13 @@ impl Terminal {
     /// Reports a DEC private (ansi false) or ANSI mode.
     pub fn mode(&self, number: u16, ansi: bool) -> bool {
         unsafe { ffi::osewa_term_mode(self.t, number, ansi) }
+    }
+
+    /// The pointer shape the program asked for (OSC 22), as its CSS name;
+    /// "text" until it asks.
+    pub fn pointer_shape(&self) -> &'static str {
+        let i = unsafe { ffi::osewa_term_mouse_shape(self.t) };
+        POINTER_SHAPES.get(i as usize).copied().unwrap_or("text")
     }
 
     /// Whether the parser is between sequences, where bytes can be inserted
@@ -431,6 +444,59 @@ extern "C" fn osewa_rs_clipboard(ud: *mut c_void, data: *const u8, len: usize) {
         f(bytes(data, len));
     }
 }
+
+#[no_mangle]
+extern "C" fn osewa_rs_notify(ud: *mut c_void, title: *const u8, title_len: usize, body: *const u8, body_len: usize) {
+    if let Some(f) = state(ud).cb.notify.as_mut() {
+        f(String::from_utf8_lossy(bytes(title, title_len)).into_owned(), String::from_utf8_lossy(bytes(body, body_len)).into_owned());
+    }
+}
+
+#[no_mangle]
+extern "C" fn osewa_rs_color_scheme(ud: *mut c_void) -> i32 {
+    match state(ud).cb.color_scheme.as_mut().and_then(|f| f()) {
+        Some(dark) => dark as i32,
+        None => -1,
+    }
+}
+
+/// GhosttyMouseShape's values, in order, by the names OSC 22 takes.
+const POINTER_SHAPES: [&str; 34] = [
+    "default",
+    "context-menu",
+    "help",
+    "pointer",
+    "progress",
+    "wait",
+    "cell",
+    "crosshair",
+    "text",
+    "vertical-text",
+    "alias",
+    "copy",
+    "move",
+    "no-drop",
+    "not-allowed",
+    "grab",
+    "grabbing",
+    "all-scroll",
+    "col-resize",
+    "row-resize",
+    "n-resize",
+    "e-resize",
+    "s-resize",
+    "w-resize",
+    "ne-resize",
+    "nw-resize",
+    "se-resize",
+    "sw-resize",
+    "ew-resize",
+    "ns-resize",
+    "nesw-resize",
+    "nwse-resize",
+    "zoom-in",
+    "zoom-out",
+];
 
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]

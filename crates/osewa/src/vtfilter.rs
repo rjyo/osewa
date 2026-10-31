@@ -237,7 +237,7 @@ impl QueryFilter {
                 self.buf.push(b);
                 if (0x40..=0x7e).contains(&b) {
                     if !csi_query(&self.buf) {
-                        out.extend_from_slice(&self.buf);
+                        out.extend_from_slice(&without_own_modes(&self.buf));
                     }
                     if b == b'm' {
                         let seq = std::mem::take(&mut self.buf);
@@ -510,6 +510,29 @@ fn csi_query(seq: &[u8]) -> bool {
         }
         _ => false,
     }
+}
+
+/// A DEC mode set or reset (CSI ? Pm h/l) without the modes the client
+/// keeps for itself: color scheme reports (2031), which the holder answers
+/// for the program and the client needs on to learn of changes. Empty when
+/// none are left.
+fn without_own_modes(seq: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let fin = seq[seq.len() - 1];
+    if seq.len() < 4 || seq[2] != b'?' || !matches!(fin, b'h' | b'l') {
+        return seq.into();
+    }
+    let params = &seq[3..seq.len() - 1];
+    if !params.split(|&c| c == b';').any(|p| p == b"2031") {
+        return seq.into();
+    }
+    let kept: Vec<&[u8]> = params.split(|&c| c == b';').filter(|&p| p != b"2031").collect();
+    if kept.is_empty() {
+        return Vec::new().into();
+    }
+    let mut out = b"\x1b[?".to_vec();
+    out.extend_from_slice(&kept.join(&b';'));
+    out.push(fin);
+    out.into()
 }
 
 /// Parses an OSC's leading number from its body, or -1.

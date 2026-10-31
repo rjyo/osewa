@@ -72,6 +72,8 @@ pub(crate) struct Ui {
     /// The images the local terminal has, while graphics pass
     /// (filter.graphics).
     sent: SentImages,
+    /// The pointer shape the local terminal was last given (OSC 22).
+    pointer: &'static str,
 }
 
 impl Ui {
@@ -96,6 +98,7 @@ impl Ui {
             ticking: false,
             ticker_wakes: 0,
             sent: SentImages::new(),
+            pointer: "text",
         }
     }
 
@@ -137,6 +140,7 @@ impl Ui {
         }
         self.filter.reset(&tail_style(t));
         (self.real_x, self.real_y) = t.cursor();
+        self.sync_pointer(t);
         if self.filter.graphics {
             // A new mirror: its generations aren't the old one's.
             self.sent.values_mut().for_each(|g| *g = None);
@@ -144,6 +148,15 @@ impl Ui {
             self.write(&draw);
         }
         self.flush();
+    }
+
+    /// Gives the local terminal the pointer shape the program asked for.
+    fn sync_pointer(&mut self, t: &Terminal) {
+        let shape = t.pointer_shape();
+        if shape != self.pointer {
+            self.pointer = shape;
+            self.write(&pointer_set(shape));
+        }
     }
 
     /// The snapshot's images have their pixels now.
@@ -182,6 +195,7 @@ impl Ui {
             self.write(&screen_redraw(t));
             self.displaced = false;
         }
+        self.sync_pointer(t);
         self.pred.check(t);
         self.paint_buffered(t);
         if !self.status_note.is_empty() {
@@ -234,6 +248,12 @@ impl Ui {
             // catch-up would overwrite whatever was copied since.
             if live {
                 self.write(&clipboard_set(&e.data));
+            }
+            return;
+        }
+        if e.kind == wire::EVENT_NOTIFY {
+            if live {
+                self.write(&notify_set(&e.title, &e.msg));
             }
             return;
         }
@@ -337,6 +357,8 @@ pub(crate) fn viewer_notice(owner: &str, self_id: &str) -> String {
 pub(crate) trait InputHandler {
     fn send(&self, text: &str);
     fn take(&self);
+    /// The local terminal reported its color scheme, dark when true.
+    fn color_scheme(&self, dark: bool);
     fn flush(&self, ctx: &Ctx);
 }
 
@@ -350,6 +372,8 @@ pub(crate) struct Attached {
     pub id: String,
     /// Wakes the ticker (attach.rs) when predictions start pending.
     pub wake: Arc<Notify>,
+    /// The local terminal's last color scheme report, dark when true.
+    scheme: Arc<Mutex<Option<bool>>>,
 }
 
 fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
@@ -371,7 +395,7 @@ impl Attached {
             on_event: Some(Box::new(move |e, live| lock(&u4).event(e, live))),
         });
         lock(&ui).later = Some(Later { m: m.clone(), ui: Arc::downgrade(&ui) });
-        Attached { ui, m, s: Arc::default(), id, wake: Arc::default() }
+        Attached { ui, m, s: Arc::default(), id, wake: Arc::default(), scheme: Arc::default() }
     }
 
     fn session(&self) -> Option<Session> {
@@ -413,6 +437,17 @@ impl Attached {
         });
     }
 
+    /// Tells the holder the local terminal's color scheme, once it is known
+    /// and this client owns the session.
+    pub async fn send_color_scheme(&self) {
+        let dark = *self.scheme.lock().unwrap();
+        if let (Some(dark), Some(s)) = (dark, self.session()) {
+            if s.owner() == self.id {
+                let _ = osewa_client::timeout(Duration::from_secs(5), s.color_scheme(dark)).await;
+            }
+        }
+    }
+
     /// A round trip sample, for the predictor; it is used with the mirror
     /// locked.
     pub fn rtt(&self, d: Duration) {
@@ -446,7 +481,10 @@ impl InputHandler for Attached {
     fn take(&self) {
         let Some(s) = self.session() else { return };
         let msg = match osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.own())) {
-            Some(Ok(())) => " you own this session now ".to_string(),
+            Some(Ok(())) => {
+                osewa_client::block_on(self.send_color_scheme());
+                " you own this session now ".to_string()
+            }
             Some(Err(e)) => format!(" taking over failed: {e} "),
             None => " taking over failed: context deadline exceeded ".to_string(),
         };
@@ -455,6 +493,13 @@ impl InputHandler for Attached {
             u.notice_at = None; // always show how it went
             u.notice(t.map(|t| &*t), &msg);
         });
+    }
+
+    fn color_scheme(&self, dark: bool) {
+        let old = self.scheme.lock().unwrap().replace(dark);
+        if old != Some(dark) {
+            osewa_client::block_on(self.send_color_scheme());
+        }
     }
 
     fn flush(&self, ctx: &Ctx) {
