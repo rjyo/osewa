@@ -496,6 +496,8 @@ fn create_options() {
     run(f.dial("a").create(CreateOptions {
         cols: 80,
         rows: 24,
+        width: 800,
+        height: 480,
         argv: vec!["sh".into()],
         cwd: "/tmp".into(),
         env: vec!["A=1".into()],
@@ -503,6 +505,7 @@ fn create_options() {
     .unwrap();
     let r = f.lock().creates[0].clone();
     assert!(r.cwd == "/tmp" && r.env == ["A=1"] && r.argv == ["sh"], "create request {r:?}");
+    assert_eq!((r.width, r.height), (800, 480));
 }
 
 /// Over QUIC the stream.close RESPONSE may overtake the channel's last

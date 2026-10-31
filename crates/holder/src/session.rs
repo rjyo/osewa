@@ -15,7 +15,7 @@ use crate::log::{OutputLog, Record, REC_EVENT, REC_OUTPUT};
 use crate::pty::{self, InputMode};
 use crate::queue::{Clock, SendQueue};
 use crate::trace::Tracer;
-use crate::{valid_size, Config, MAX_RECORD_DATA};
+use crate::{cell_px, pixels, valid_size, Config, MAX_RECORD_DATA};
 
 /// Caps one connection's parked input payloads; past it events are acked
 /// and dropped. Clients keep less than half this unacked (docs/PROTOCOL.md,
@@ -39,6 +39,9 @@ pub(crate) struct Stream {
     pub snaps: u32,
     pub cols: i64,
     pub rows: i64,
+    /// The client's text area in pixels, 0 when unknown.
+    pub width: i64,
+    pub height: i64,
     /// The last snapshot's position; earlier records are in it.
     pub from: u64,
     // Catch-up (docs/PROTOCOL.md, Lagging clients and catch-up).
@@ -69,13 +72,15 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub fn new(uid: u64, id: u32, cols: i64, rows: i64) -> Stream {
+    pub fn new(uid: u64, id: u32, cols: i64, rows: i64, width: i64, height: i64) -> Stream {
         Stream {
             uid,
             id,
             snaps: 0,
             cols,
             rows,
+            width,
+            height,
             from: 0,
             catch_up: false,
             streaming: false,
@@ -246,12 +251,14 @@ impl Session {
                 status: Some(Box::new(move |st| f4.borrow_mut().push(Raised::Status(st)))),
             }
         };
-        let term = ghostty::Terminal::new(
+        let mut term = ghostty::Terminal::new(
             cfg.cols as usize,
             cfg.rows as usize,
             ghostty::Options { scrollback_bytes: cfg.scrollback_bytes, continuation: true, images: true, callbacks },
         )
         .map_err(|e| e.to_string())?;
+        let (cw, ch) = cell_px(cfg.cols, cfg.rows, cfg.width, cfg.height);
+        term.resize_cells(cfg.cols as usize, cfg.rows as usize, cw, ch).map_err(|e| e.to_string())?;
         let mut e = [0u8; 16];
         rand::Rng::fill(&mut rand::thread_rng(), &mut e);
         let now = clock();
@@ -694,7 +701,8 @@ impl Session {
             core.end_stream(c, wire::END_DETACHED);
         }
         core.next_uid += 1;
-        let st = Stream::new(core.next_uid, req.stream, req.cols, req.rows);
+        let (width, height) = (pixels(req.width), pixels(req.height));
+        let st = Stream::new(core.next_uid, req.stream, req.cols, req.rows, width, height);
         let client = c.client.clone();
         if !self.core.exited {
             if req.own {
@@ -702,7 +710,7 @@ impl Session {
             }
             if !client.is_empty() && client == self.core.owner {
                 self.core.owner_token += 1;
-                self.resize(req.cols, req.rows);
+                self.resize(req.cols, req.rows, width, height);
             }
         }
         let mut recs = None;
@@ -758,12 +766,12 @@ impl Session {
         let Some(st) = c.stream_for(req.stream) else {
             return Err((wire::ERR_BAD_REQUEST, format!("stream {} is not attached", req.stream)));
         };
-        let (cols, rows) = (st.cols, st.rows);
+        let (cols, rows, width, height) = (st.cols, st.rows, st.width, st.height);
         if self.core.exited {
             return Err((wire::ERR_ENDED, "session exited".into()));
         }
         self.set_owner(&client);
-        self.resize(cols, rows);
+        self.resize(cols, rows, width, height);
         resp.owner = self.core.owner.clone();
         Ok(())
     }
@@ -780,11 +788,14 @@ impl Session {
         }
         st.cols = req.cols;
         st.rows = req.rows;
+        st.width = pixels(req.width);
+        st.height = pixels(req.height);
+        let (width, height) = (st.width, st.height);
         if client.is_empty() || client != owner {
             return Err((wire::ERR_NOT_OWNER, "not the owner".into()));
         }
         if !self.core.exited {
-            self.resize(req.cols, req.rows);
+            self.resize(req.cols, req.rows, width, height);
         }
         Ok(())
     }
@@ -819,19 +830,22 @@ impl Session {
 
     /// Gives the PTY and the terminal the owner's size. The terminal goes
     /// first so output drawn for the new size lands on a terminal of that
-    /// size.
-    fn resize(&mut self, cols: i64, rows: i64) {
+    /// size. The cell size places images, so a change of font size alone is
+    /// a resize too.
+    fn resize(&mut self, cols: i64, rows: i64, width: i64, height: i64) {
         if !valid_size(cols, rows) {
             return;
         }
-        if self.core.term.size() == (cols as usize, rows as usize) {
+        let (cw, ch) = cell_px(cols, rows, width, height);
+        let t = &mut self.core.term;
+        if t.size() == (cols as usize, rows as usize) && t.cell_size() == (cw, ch) {
             return;
         }
-        if self.core.term.resize(cols as usize, rows as usize).is_err() {
+        if t.resize_cells(cols as usize, rows as usize, cw, ch).is_err() {
             return;
         }
-        let _ = pty::set_size(self.core.master, cols as u16, rows as u16);
-        self.emit(wire::EventMsg { kind: wire::EVENT_RESIZE.into(), cols, rows, ..Default::default() });
+        let _ = pty::set_size(self.core.master, cols as u16, rows as u16, width as u16, height as u16);
+        self.emit(wire::EventMsg { kind: wire::EVENT_RESIZE.into(), cols, rows, width, height, ..Default::default() });
     }
 
     fn kill(&mut self, req: &wire::Request) -> Result<(), (&'static str, String)> {

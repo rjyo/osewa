@@ -47,6 +47,10 @@ const SUSPECT_MIN: Duration = Duration::from_secs(1);
 pub struct CreateOptions {
     pub cols: i64,
     pub rows: i64,
+    /// The text area in pixels, for programs that draw images; 0 when
+    /// unknown.
+    pub width: i64,
+    pub height: i64,
     /// Empty runs the user's login shell.
     pub argv: Vec<String>,
     /// Empty is the home directory.
@@ -917,6 +921,8 @@ impl Conn {
             method: wire::METHOD_CREATE.into(),
             cols: o.cols,
             rows: o.rows,
+            width: o.width,
+            height: o.height,
             argv: o.argv,
             cwd: o.cwd,
             env: o.env,

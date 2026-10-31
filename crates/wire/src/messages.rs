@@ -102,6 +102,11 @@ pub struct Request {
     pub cols: i64,
     #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub rows: i64,
+    /// The text area in pixels, with cols and rows; 0 when unknown.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub width: i64,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub height: i64,
     #[serde(default, skip_serializing_if = "is_false")]
     pub own: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -292,6 +297,11 @@ pub struct EventMsg {
     pub cols: i64,
     #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub rows: i64,
+    /// resize: the text area in pixels, 0 when unknown
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub width: i64,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub height: i64,
     /// clipboard, base64 in JSON
     #[serde(default, with = "base64_bytes", skip_serializing_if = "Vec::is_empty")]
     pub data: Vec<u8>,

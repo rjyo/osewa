@@ -60,6 +60,10 @@ type EventFn = dyn FnMut(&wire::EventMsg, bool) + Send;
 pub struct AttachOptions {
     pub cols: i64,
     pub rows: i64,
+    /// The text area in pixels, for programs that draw images; 0 when
+    /// unknown.
+    pub width: i64,
+    pub height: i64,
     /// Claims ownership on attach. Resume never claims it: another client
     /// may have taken over meanwhile, and the holder keeps our ownership
     /// through its grace period anyway.
@@ -271,6 +275,8 @@ impl SessionInner {
                 stream,
                 cols: st.opt.cols,
                 rows: st.opt.rows,
+                width: st.opt.width,
+                height: st.opt.height,
                 own,
                 epoch: st.epoch.clone(),
                 // Without a whole screen there is nothing to resume onto;
@@ -1013,15 +1019,19 @@ impl Session {
         Ok(())
     }
 
-    /// Asks for a new size. Only the owner's applies; a renderer follows the
-    /// holder's resize event, not this call.
-    pub async fn resize(&self, cols: i64, rows: i64) -> Result<()> {
+    /// Asks for a new size, in cells and (0 when unknown) pixels. Only the
+    /// owner's applies; a renderer follows the holder's resize event, not
+    /// this call.
+    pub async fn resize(&self, cols: i64, rows: i64, width: i64, height: i64) -> Result<()> {
         {
             let mut st = self.0.lock();
             st.opt.cols = cols;
             st.opt.rows = rows;
+            st.opt.width = width;
+            st.opt.height = height;
         }
-        self.request(wire::Request { method: wire::METHOD_RESIZE.into(), cols, rows, ..Default::default() }).await.map(drop)
+        let req = wire::Request { method: wire::METHOD_RESIZE.into(), cols, rows, width, height, ..Default::default() };
+        self.request(req).await.map(drop)
     }
 
     /// Detaches the stream. The session keeps running on the host.

@@ -95,12 +95,17 @@ fn mirror_follows_stream() {
             kind: wire::EVENT_RESIZE.into(),
             cols: 50,
             rows: 6,
+            width: 500,
+            height: 120,
             ..Default::default()
         },
         false,
     )
     .unwrap();
-    m.view(|t| assert_eq!(t.unwrap().size(), (50, 6), "size after resize"));
+    m.view(|t| {
+        let t = t.unwrap();
+        assert_eq!((t.size(), t.cell_size()), ((50, 6), (10, 20)), "size after resize")
+    });
     m.event(&wire::EventMsg::kind(wire::EVENT_BELL), true)
         .unwrap();
     let want = "ready applied out tail applied event resize false applied event bell true applied";

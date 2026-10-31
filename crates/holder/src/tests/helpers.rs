@@ -717,7 +717,7 @@ pub fn add_conn(s: &Rc<RefCell<Session>>, cid: u64, client: &str, stream: Option
 
 /// A stream with id that has sent snaps snapshots.
 pub fn unit_stream(uid: u64, id: u32, snaps: u32, catch_up: bool) -> Stream {
-    let mut st = Stream::new(uid, id, 0, 0);
+    let mut st = Stream::new(uid, id, 0, 0, 0, 0);
     st.snaps = snaps;
     st.catch_up = catch_up;
     st

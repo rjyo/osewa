@@ -66,6 +66,8 @@ pub const MAX_FRAME: usize = 1 << 20;
 /// session.
 pub const MAX_COLS: i64 = 2000;
 pub const MAX_ROWS: i64 = 1000;
+/// A terminal's pixel size fits a winsize's u16 fields; 0 is unknown.
+pub const MAX_PIXELS: i64 = 0xffff;
 /// Streams per client connection.
 pub const MAX_STREAMS: usize = 64;
 

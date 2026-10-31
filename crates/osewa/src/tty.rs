@@ -39,3 +39,13 @@ pub(crate) fn term_size(fd: RawFd) -> (i64, i64) {
     }
     (ws.ws_col as i64, ws.ws_row as i64)
 }
+
+/// fd's text area in pixels, or zeros when fd isn't a terminal or the
+/// terminal doesn't say.
+pub(crate) fn term_pixels(fd: RawFd) -> (i64, i64) {
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } != 0 || ws.ws_xpixel == 0 || ws.ws_ypixel == 0 {
+        return (0, 0);
+    }
+    (ws.ws_xpixel as i64, ws.ws_ypixel as i64)
+}

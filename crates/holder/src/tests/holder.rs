@@ -231,6 +231,24 @@ fn non_owner_input_dropped() {
     assert!(!b.text().contains("L:late"), "former owner's input applied");
 }
 
+/// The owner's pixel size reaches the terminal, which answers size reports
+/// (CSI 14 t) with it and places images by it, and follows the owner's
+/// resizes, a change of font size alone included.
+#[test]
+fn pixel_size() {
+    let report = r#"stty raw -echo; printf '\033[14t'; s=; while c=$(dd bs=1 count=1 2>/dev/null); [ "$c" != t ]; do s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033[')""#;
+    let h = start(Config { cols: 80, rows: 24, width: 800, height: 480, ..cfg(sh(&format!("{report}; dd bs=1 count=1 >/dev/null 2>&1; {report}; sleep 30"))) });
+    let mut a = h.dial("a");
+    a.attach(wire::Request { cols: 80, rows: 24, width: 800, height: 480, ..own() });
+    a.wait_text("R:4;480;800:END");
+    // Same cells, bigger font.
+    let resp = a.request(wire::Request { stream: 7, cols: 80, rows: 24, width: 960, height: 720, ..method(wire::METHOD_RESIZE) });
+    assert!(resp.error.is_empty(), "resize: {resp:?}");
+    a.wait_for("resize event", |c| c.has_event(|e| e.kind == wire::EVENT_RESIZE && e.width == 960 && e.height == 720));
+    a.text_input(1, "x");
+    a.wait_text("R:4;720;960:END");
+}
+
 #[test]
 fn key_paste_focus_input() {
     // The child prints what it reads as one run of hex digits after "H:",

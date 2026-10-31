@@ -320,12 +320,12 @@ fn detach_own_resize() {
     let a = attach(&f.dial("a"), &id, Default::default());
     let b = attach(&f.dial("b"), &id, own());
     assert_eq!(b.owner(), "b");
-    let err = run(a.resize(50, 12)).unwrap_err();
+    let err = run(a.resize(50, 12, 0, 0)).unwrap_err();
     assert!(err.is_code(wire::ERR_NOT_OWNER), "non-owner resize: {err}");
     run(a.own()).unwrap();
     assert_eq!(a.owner(), "a");
     eventually("owner event", || b.owner() == "a");
-    run(a.resize(50, 12)).unwrap();
+    run(a.resize(50, 12, 0, 0)).unwrap();
     for s in [&a, &b] {
         eventually("resize", || s.size().0 == 50);
     }

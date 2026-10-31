@@ -51,7 +51,7 @@ async fn attach_on(
     let (cols, rows) = tty::term_size(1);
     let id = match pos.get(1) {
         Some(id) => id.clone(),
-        None => match ctx.run(pick_session(&c, cols, rows)).await {
+        None => match ctx.run(pick_session(&c, cols, rows, tty::term_pixels(1))).await {
             None => return Err(interrupted()),
             Some(r) => r?,
         },
@@ -87,9 +87,12 @@ fn make_raw(env: &Env) -> Result<Option<Box<dyn FnOnce() + Send>>> {
 #[allow(clippy::too_many_arguments)]
 async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, cols: i64, rows: i64, take: bool) -> Result<i32> {
     let ar = a.clone();
+    let (width, height) = tty::term_pixels(1);
     let opt = AttachOptions {
         cols,
         rows,
+        width,
+        height,
         renderer: Some(Box::new(a.m.clone())),
         on_rtt: Some(Box::new(move |d| ar.rtt(d))),
         ..Default::default()
@@ -186,8 +189,8 @@ async fn resize_on_winch(s: Session) {
             r = winch.recv() => if r.is_none() { return },
             _ = s.done() => return,
         }
-        let (cols, rows) = tty::term_size(1);
-        let _ = tokio::time::timeout(Duration::from_secs(5), s.resize(cols, rows)).await;
+        let ((cols, rows), (width, height)) = (tty::term_size(1), tty::term_pixels(1));
+        let _ = tokio::time::timeout(Duration::from_secs(5), s.resize(cols, rows, width, height)).await;
     }
 }
 

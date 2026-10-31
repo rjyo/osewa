@@ -369,6 +369,8 @@ impl Client {
             id: id.clone(),
             cols: req.cols,
             rows: req.rows,
+            width: req.width,
+            height: req.height,
             argv,
             cwd: req.cwd,
             env: req.env,

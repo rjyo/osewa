@@ -134,11 +134,11 @@ Methods (REQUEST `method`):
 | Method | Arguments | Result |
 | --- | --- | --- |
 | `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?}]}` |
-| `session.create` | `cols`, `rows`, `argv`?, `cwd`?, `env`? | `{"session_id"}` |
-| `session.attach` | `session`, `stream`, `cols`, `rows`, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
+| `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`? | `{"session_id"}` |
+| `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
 | `session.detach` | `stream` | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
-| `session.resize` | `stream`, `cols`, `rows` | `{}` (applies only for the owner) |
+| `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |
 | `session.kill` | `session` | `{}` |
 
 `status` is the session's latest root OSC 7501 record
@@ -146,7 +146,12 @@ Methods (REQUEST `method`):
 program never reported one or cleared it.
 
 Sizes are 1..2000 columns and 1..1000 rows; anything else is
-`bad_request`. A client connection may hold at most 64 streams.
+`bad_request`. `width` and `height` are the text area in pixels (a
+winsize's `ws_xpixel` and `ws_ypixel`), 0 or absent when unknown; values
+past 65535 count as unknown. The holder's terminal takes its cell size from
+them, `width / cols` by `height / rows`: it places images and answers size
+reports by it, and the PTY reports them to the program. A client connection
+may hold at most 64 streams.
 
 Error codes: `bad_request`, `not_found`, `not_owner`, `ended`, `unavailable`,
 `unreachable` (forward.open), `internal`.
@@ -304,7 +309,7 @@ EVENT JSON, by `kind`:
 
 | kind | Fields |
 | --- | --- |
-| `resize` | `cols`, `rows` |
+| `resize` | `cols`, `rows`, `width`?, `height`? |
 | `bell` | |
 | `clipboard` | `data` (base64), only to the owner |
 | `title` | `title` |

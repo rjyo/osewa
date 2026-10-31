@@ -147,8 +147,8 @@ impl Env {
     pub(crate) async fn new_session(&self, ctx: &Ctx, args: &[String]) -> Result<()> {
         let (args, argv) = split_dashes(args);
         let (c, _) = self.connect(ctx, &args, 1, 1).await?;
-        let (cols, rows) = crate::tty::term_size(1);
-        let id = ctx.run(c.create(CreateOptions { cols, rows, argv, ..Default::default() })).await;
+        let ((cols, rows), (width, height)) = (crate::tty::term_size(1), crate::tty::term_pixels(1));
+        let id = ctx.run(c.create(CreateOptions { cols, rows, width, height, argv, ..Default::default() })).await;
         c.close().await;
         let id = id.ok_or_else(crate::cli::interrupted)??;
         writeln!(self.out(), "{id}")?;
@@ -241,11 +241,11 @@ pub(crate) fn idle_string(d: Duration) -> String {
 
 /// Chooses what `attach <host>` attaches to: the only running session, or
 /// a new one when there is none.
-pub(crate) async fn pick_session(c: &Conn, cols: i64, rows: i64) -> Result<String> {
+pub(crate) async fn pick_session(c: &Conn, cols: i64, rows: i64, (width, height): (i64, i64)) -> Result<String> {
     let list = c.list().await?;
     let running: Vec<_> = list.into_iter().filter(|s| !s.exited).collect();
     match running.len() {
-        0 => Ok(c.create(CreateOptions { cols, rows, ..Default::default() }).await?),
+        0 => Ok(c.create(CreateOptions { cols, rows, width, height, ..Default::default() }).await?),
         1 => Ok(running[0].id.clone()),
         _ => {
             let mut b = Vec::new();

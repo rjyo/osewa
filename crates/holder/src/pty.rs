@@ -14,7 +14,7 @@ fn cvt(r: libc::c_int) -> io::Result<libc::c_int> {
 
 /// Opens a PTY pair: the master (non-blocking, close-on-exec) and the
 /// slave.
-pub(crate) fn open(cols: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
+pub(crate) fn open(cols: u16, rows: u16, width: u16, height: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     unsafe {
         let m = cvt(libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY))?;
         let master = OwnedFd::from_raw_fd(m);
@@ -32,14 +32,15 @@ pub(crate) fn open(cols: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
         let flags = cvt(libc::fcntl(m, libc::F_GETFL))?;
         cvt(libc::fcntl(m, libc::F_SETFL, flags | libc::O_NONBLOCK))?;
         cvt(libc::fcntl(m, libc::F_SETFD, libc::FD_CLOEXEC))?;
-        set_size(m, cols, rows)?;
+        set_size(m, cols, rows, width, height)?;
         Ok((master, slave))
     }
 }
 
-/// Gives the PTY a size; the kernel sends the child SIGWINCH.
-pub(crate) fn set_size(fd: RawFd, cols: u16, rows: u16) -> io::Result<()> {
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+/// Gives the PTY a size; the kernel sends the child SIGWINCH. Programs that
+/// draw images read the pixel size here.
+pub(crate) fn set_size(fd: RawFd, cols: u16, rows: u16, width: u16, height: u16) -> io::Result<()> {
+    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: width, ws_ypixel: height };
     cvt(unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as _, &ws) }).map(|_| ())
 }
 

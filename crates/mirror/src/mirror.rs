@@ -159,9 +159,12 @@ impl Mirror {
         let mut st = self.lock();
         // The holder's terminal resized at exactly this log position; the
         // mirror must follow here or the bytes after it render differently.
+        // The cell size goes with it, worked out as the holder does: it
+        // decides where images land and how far they move the cursor.
         if e.kind == wire::EVENT_RESIZE && e.cols > 0 && e.rows > 0 {
             if let Some(t) = st.term.as_mut() {
-                let _ = t.0.resize(e.cols as usize, e.rows as usize);
+                let (cw, ch) = ((e.width / e.cols) as u32, (e.height / e.rows) as u32);
+                let _ = t.0.resize_cells(e.cols as usize, e.rows as usize, cw, ch);
             }
         }
         if let Some(f) = st.opt.on_event.as_mut() {

@@ -103,6 +103,9 @@ pub struct Config {
     pub id: String,
     pub cols: i64,
     pub rows: i64,
+    /// The text area in pixels, 0 when unknown.
+    pub width: i64,
+    pub height: i64,
     /// Required.
     pub argv: Vec<String>,
     pub cwd: String,
@@ -137,6 +140,21 @@ pub fn socket_path(run_dir: &Path, id: &str) -> PathBuf {
 /// enormous terminal.
 pub(crate) fn valid_size(cols: i64, rows: i64) -> bool {
     cols > 0 && rows > 0 && cols <= wire::MAX_COLS && rows <= wire::MAX_ROWS
+}
+
+/// A pixel size as given, or 0 (unknown) when out of range: it only places
+/// images, so a bad one is no reason to refuse a size.
+pub(crate) fn pixels(v: i64) -> i64 {
+    if (0..=wire::MAX_PIXELS).contains(&v) {
+        v
+    } else {
+        0
+    }
+}
+
+/// One cell's pixel size for a text area of width x height pixels.
+pub(crate) fn cell_px(cols: i64, rows: i64, width: i64, height: i64) -> (u32, u32) {
+    ((width / cols.max(1)) as u32, (height / rows.max(1)) as u32)
 }
 
 impl Config {
@@ -207,6 +225,8 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         .value("id", "", "session id")
         .value("cols", "80", "columns")
         .value("rows", "24", "rows")
+        .value("width", "0", "width in pixels, 0 if unknown")
+        .value("height", "0", "height in pixels, 0 if unknown")
         .value("cwd", "", "working directory")
         .value("scrollback-bytes", &DEFAULT_SCROLLBACK_BYTES.to_string(), "scrollback cap in bytes")
         .value("idle-timeout", "24h0m0s", "end the session after this long unattached and silent; 0 disables");
@@ -217,6 +237,8 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         id: p.str("id"),
         cols: int("cols")?,
         rows: int("rows")?,
+        width: pixels(int("width")?),
+        height: pixels(int("height")?),
         cwd: p.str("cwd"),
         scrollback_bytes: int("scrollback-bytes")?.max(0) as usize,
         // A negative duration is accepted and disables the timeout as zero
@@ -270,7 +292,7 @@ pub async fn serve(
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600)).map_err(|e| e.to_string())?;
 
     let tune = cfg.tune.clone();
-    let (master, slave) = pty::open(cfg.cols as u16, cfg.rows as u16).map_err(|e| e.to_string())?;
+    let (master, slave) = pty::open(cfg.cols as u16, cfg.rows as u16, cfg.width as u16, cfg.height as u16).map_err(|e| e.to_string())?;
     let mut cmd = pty::command(&cfg.argv, &cfg.cwd, &cfg.env, &slave).map_err(|e| e.to_string())?;
     let mode_poll = if cfg.idle.is_zero() { tune.mode_poll } else { tune.mode_poll.min((cfg.idle / 4).max(Duration::from_millis(10))) };
     let s = Session::new(cfg, master.as_raw_fd(), real_clock())?;

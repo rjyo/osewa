@@ -551,6 +551,9 @@ fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
         "--rows".into(),
         cfg.rows.to_string(),
     ];
+    if cfg.width > 0 && cfg.height > 0 {
+        a.extend(["--width".into(), cfg.width.to_string(), "--height".into(), cfg.height.to_string()]);
+    }
     if !cfg.cwd.is_empty() {
         a.push("--cwd".into());
         a.push(cfg.cwd.clone());
