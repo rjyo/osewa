@@ -1,6 +1,6 @@
 [package]
 name = "osewa-flag"
-description = "Command-line flags parsed as Go's flag package does, and Go durations"
+description = "osewa's command-line flag syntax and duration strings"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 fn main() {
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
-    // The directory names follow `uname`, as the Go cgo flags do.
+    // The directory names follow `uname`, as scripts/libghostty.sh makes them.
     let platform = match (os.as_str(), arch.as_str()) {
         ("macos", "aarch64") => "darwin-arm64".to_string(),
         ("macos", a) => format!("darwin-{a}"),

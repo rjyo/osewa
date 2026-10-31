@@ -1,4 +1,4 @@
-//! Ported from catchup_test.go.
+//! Catch-up: screen data counted against credit and paced by it.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -81,7 +81,7 @@ fn catch_up_paced_by_credit() {
     c.wait_for("the next screen", |c| c.gens.len() > n);
 }
 
-/// A session without a holder loop, as Go's newSession builds.
+/// A session without a holder loop.
 pub fn session_cfg(cols: i64, rows: i64, lag_bytes: usize) -> Config {
     Config {
         id: "x".into(),

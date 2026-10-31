@@ -1,4 +1,4 @@
-//! client_test.go
+//! Connections: dial and welcome, list, create, kill, attach.
 
 use super::*;
 

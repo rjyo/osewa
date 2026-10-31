@@ -1,4 +1,4 @@
-//! trace_test.go
+//! OSEWA_TRACE events.
 
 use serde::Deserialize;
 

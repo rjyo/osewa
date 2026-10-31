@@ -1,4 +1,4 @@
-//! The command line (Go's cmd/osewa/main.go): dispatch, the client
+//! The command line: dispatch, the client
 //! commands' environment, flags, errors and their exit codes.
 
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ pub(crate) type Stdin = Box<dyn Read + Send>;
 /// when there was nothing to do (stdin is no terminal).
 pub(crate) type RawFn = Arc<dyn Fn() -> io::Result<Option<Box<dyn FnOnce() + Send>>> + Send + Sync>;
 
-/// What the client commands run with (Go's env).
+/// What the client commands run with.
 #[derive(Clone)]
 pub(crate) struct Env {
     /// Taken by the one command that reads it (exec, attach).
@@ -149,7 +149,7 @@ impl Env {
 /// Why a command failed.
 #[derive(Debug)]
 pub(crate) enum Error {
-    /// Print usage and exit 2 (Go's errUsage and flag.ErrHelp).
+    /// Print usage and exit 2 (a bad command line, or -h).
     Usage,
     Client(osewa_client::Error),
     Msg(String),
@@ -197,7 +197,7 @@ impl From<&str> for Error {
 
 pub(crate) type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Cancels a command, as Go's context: SIGINT and SIGTERM, or a test.
+/// Cancels a command: SIGINT and SIGTERM, or a test.
 #[derive(Clone)]
 pub(crate) struct Ctx {
     tx: Arc<watch::Sender<bool>>,
@@ -208,7 +208,7 @@ impl Ctx {
         Ctx { tx: Arc::new(watch::Sender::new(false)) }
     }
 
-    /// Cancelled on SIGINT or SIGTERM (Go's signal.NotifyContext). Needs a
+    /// Cancelled on SIGINT or SIGTERM. Needs a
     /// tokio runtime.
     pub fn signals() -> Ctx {
         let ctx = Ctx::new();
@@ -350,11 +350,11 @@ pub(crate) async fn run_client(ctx: &Ctx, cmd: &str, rest: &[String], env: &Env)
 pub(crate) enum Kind {
     Str,
     Bool,
-    /// Repeatable, collecting every value (Go's multiFlag).
+    /// Repeatable, collecting every value.
     Multi,
 }
 
-/// Flags as Go's flag package parses them: -x and --x, -x=v and -x v, bool
+/// Flags as osewa's command line takes them (osewa_flag's syntax): -x and --x, -x=v and -x v, bool
 /// flags take no separate value, -h and -help ask for usage.
 #[derive(Default)]
 pub(crate) struct Flags {

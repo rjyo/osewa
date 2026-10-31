@@ -1,5 +1,4 @@
-//! Echo prediction (Go's client/mirror/predict.go; PROTOCOL.md "Echo
-//! prediction").
+//! Echo prediction (PROTOCOL.md "Echo prediction").
 
 use std::collections::HashMap;
 use std::fmt;
@@ -628,8 +627,8 @@ fn split_escape(b: &[u8]) -> (usize, Vec<u8>) {
     (i, tail.to_vec())
 }
 
-/// Decodes the first UTF-8 character of b, or None if it isn't one (Go's
-/// utf8.DecodeRune returning RuneError with width 1).
+/// Decodes the first UTF-8 character of b, or None if it isn't one (an
+/// invalid byte, which counts as one byte wide).
 fn decode_rune(b: &[u8]) -> Option<(char, usize)> {
     let n = match b[0] {
         0x00..=0x7f => 1,

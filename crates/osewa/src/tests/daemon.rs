@@ -1,4 +1,5 @@
-//! daemon_test.go (TestLoginStartsServer is in main_test.rs).
+//! `osewa server` and `osewa service` (login starting a server is in
+//! main_test.rs).
 
 use std::path::PathBuf;
 
@@ -12,9 +13,9 @@ fn free_port() -> String {
 }
 
 /// A Service with a fake service manager that records what it ran.
-fn service(goos: &str, home: &Path, exe: &str, out: Buf, ran: Arc<Mutex<Vec<String>>>, fail: fn(&[&str]) -> Option<String>) -> Service {
+fn service(os_name: &str, home: &Path, exe: &str, out: Buf, ran: Arc<Mutex<Vec<String>>>, fail: fn(&[&str]) -> Option<String>) -> Service {
     Service {
-        goos: goos.into(),
+        os_name: os_name.into(),
         home: home.into(),
         exe: PathBuf::from(exe),
         stdout: Out::new(out),
@@ -129,7 +130,7 @@ fn service_systemd() {
     let mut sv = service("linux", home.path(), "/home/u/.local/bin/osewa", out.clone(), ran.clone(), never);
     sv.install(&args(&["--listen", ":7400", "--no-compress", "--no-forward", "--no-exec"])).unwrap();
     let unit = std::fs::read_to_string(home.path().join(".config/systemd/user/osewa.service")).unwrap();
-    // Byte for byte what the Go osewa writes.
+    // Byte for byte the v0 unit, so a reinstall by any osewa is a no-op.
     assert_eq!(
         unit,
         "[Unit]\nDescription=osewa server (persistent terminals)\n\n[Service]\n\
@@ -158,7 +159,7 @@ fn service_launchd() {
     let path = home.path().join("Library/LaunchAgents/dev.osewa.server.plist");
     let b = std::fs::read_to_string(&path).unwrap();
     let log = log_path().display().to_string();
-    // Byte for byte what the Go osewa writes.
+    // Byte for byte the v0 agent, so a reinstall by any osewa is a no-op.
     let want = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -213,7 +214,7 @@ fn service_errors() {
     let err = sv.install(&[]).unwrap_err();
     assert!(err.contains("--daemon"), "{err}");
     assert!(sv.uninstall().is_err(), "uninstalled on plan9");
-    sv.goos = "linux".into();
+    sv.os_name = "linux".into();
     assert!(sv.install(&args(&["--bogus"])).is_err(), "bad flag accepted");
     sv.run = Box::new(|_, _| Err("systemd not running".into()));
     let err = sv.install(&[]).unwrap_err();
@@ -273,17 +274,17 @@ fn service_restart() {
     fn no_gui(a: &[&str]) -> Option<String> {
         (a.len() > 2 && a[2].contains("gui/")).then(|| "no GUI session over ssh".into())
     }
-    for (goos, want) in [
+    for (os_name, want) in [
         ("darwin", format!("launchctl kickstart -k user/{uid}/dev.osewa.server")),
         ("linux", "systemctl --user restart osewa.service".to_string()),
     ] {
         let home = TempDir::new();
         let ran = Arc::new(Mutex::new(Vec::new()));
-        let mut sv = service(goos, home.path(), "", Buf::default(), ran.clone(), no_gui);
+        let mut sv = service(os_name, home.path(), "", Buf::default(), ran.clone(), no_gui);
         sv.restart().unwrap();
         let r = ran.lock().unwrap();
-        assert_eq!(r.last().unwrap(), &want, "{goos}: ran {r:?}");
-        assert!(!r.join(";").contains("bootout"), "{goos}: restart unloaded the service: {r:?}");
+        assert_eq!(r.last().unwrap(), &want, "{os_name}: ran {r:?}");
+        assert!(!r.join(";").contains("bootout"), "{os_name}: restart unloaded the service: {r:?}");
     }
     let home = TempDir::new();
     let mut sv = service("linux", home.path(), "", Buf::default(), Arc::default(), |_| Some("no systemd".into()));

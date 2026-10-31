@@ -1,4 +1,4 @@
-//! Ported from server/trace_test.go.
+//! OSEWA_TRACE events.
 
 use std::collections::HashMap;
 use std::path::Path;

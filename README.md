@@ -10,10 +10,9 @@ scrollback and running jobs never notice.
 Like ssh, but the session survives the network. Like mosh, but it forwards
 ports, runs commands and works where UDP is blocked.
 
-This is the Rust implementation. The Go implementation it was ported from,
-which speaks the same wire protocol, is
-[osewa-go](https://github.com/rjyo/osewa-go). The protocol is in
-[docs/PROTOCOL.md](docs/PROTOCOL.md), benchmark outputs in [bench/](bench/).
+The protocol is in [docs/PROTOCOL.md](docs/PROTOCOL.md) (QUIC in
+[docs/QUIC.md](docs/QUIC.md)), benchmark results in
+[bench/RESULTS.md](bench/RESULTS.md).
 
 ## Why now
 
@@ -178,7 +177,7 @@ open protocol.
   passwords, no trust on first use.
 - **Self-hosting:** `osewa login` installs over ssh once; `osewa update`
   upgrades over osewa.
-- **Open protocol, Go and Rust client libraries,** built on Ghostty's
+- **Open protocol and a client library,** built on Ghostty's
   terminal engine. Linux and macOS hosts.
 
 ## How it works
@@ -229,9 +228,9 @@ with 1% loss (20 ms, 20 Mbit/s) and a slow link (100 ms, 1 Mbit/s, 1%
 loss). Echo is the time from sending a key to seeing it, during a download
 on the same connection. Recovery is measured by moving the client to a new
 IP address after 5 s offline. Real-path checks ran against a host in Tokyo
-over Tailscale. The rig is osewa-go's e2e suite (`make bench-vs`,
-`make bench-mosh`), run against an image of this build; raw outputs are in
-[bench/](bench/).
+over Tailscale. The rig is an e2e suite in Docker, run against an image of
+this build (`docker build --target binary`); the results are in
+[bench/RESULTS.md](bench/RESULTS.md).
 
 ## FAQ
 

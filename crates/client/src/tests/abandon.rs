@@ -1,4 +1,5 @@
-//! abandon_test.go
+//! Abandoned sessions: the screen snapshot that follows, with and
+//! without a mirror.
 
 use super::nomirror::App;
 use super::*;

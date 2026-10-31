@@ -1,4 +1,4 @@
-//! Drawing the mirror on the local terminal (Go's cmd/osewa/render.go).
+//! Drawing the mirror on the local terminal.
 //!
 //! libghostty's VT format is: a preamble (modes, tab stops), CSI H, then one
 //! line per row (scrollback first) separated by CRLF, each styling itself

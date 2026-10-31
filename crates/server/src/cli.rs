@@ -88,10 +88,11 @@ pub(crate) async fn serve(listen: String, mut cfg: Config, stop: impl Future<Out
     cfg.devices = Some(osewa_auth::Devices::new(osewa_auth::devices_path()));
     cfg.run_dir = osewa_paths::run_dir();
     let s: Rc<Server> = Server::new(cfg)?;
-    // Worded as Go's net error, which `osewa server --daemon` relays.
+    // Worded as v0 servers word it ("listen tcp ..."), which `osewa server
+    // --daemon` relays.
     let ln = bind(&listen).await.map_err(|e| {
         let op = if e.raw_os_error().is_some() { "bind: " } else { "" };
-        format!("listen tcp {listen}: {op}{}", osewa_execproc::go_error(&e))
+        format!("listen tcp {listen}: {op}{}", osewa_execproc::error_text(&e))
     })?;
     let mut quic = None;
     if !s.config().no_quic {
@@ -135,7 +136,7 @@ pub(crate) async fn serve_until(s: &Rc<Server>, ln: TcpListener, stop: impl Futu
     r
 }
 
-/// Listens as Go's net.Listen("tcp", addr) does: an empty host is every
+/// Listens on addr: an empty host is every
 /// address, IPv6 and IPv4 where the system has both.
 async fn bind(addr: &str) -> std::io::Result<TcpListener> {
     match addr.strip_prefix(':') {

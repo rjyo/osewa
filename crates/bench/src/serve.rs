@@ -1,4 +1,4 @@
-//! `osewa-bench serve` and `bytes` (Go's serve.go): the HTTP and WebSocket
+//! `osewa-bench serve` and `bytes`: the HTTP and WebSocket
 //! target the forward tests reach through forward.open, and the transfer
 //! pattern for exec streams.
 //!
@@ -9,10 +9,9 @@
 //!      /ws              WebSocket echo
 //! ```
 //!
-//! Go's net/http and coder/websocket served this; here it is a small
-//! HTTP/1.1 server (keep-alive, Content-Length and chunked bodies) and a
-//! WebSocket echo without extensions, which is what the Go one negotiates
-//! with its defaults.
+//! A small HTTP/1.1 server (keep-alive, Content-Length and chunked bodies)
+//! and a WebSocket echo without extensions: all the forward tests need of
+//! a target, so nothing in it can be what a measurement measures.
 
 use std::io::{self, Read, Write};
 
@@ -46,7 +45,7 @@ pub async fn serve(ln: TcpListener) -> io::Result<()> {
     }
 }
 
-/// Bounds a request head, as net/http's default 1 MB.
+/// Bounds a request head: 1 MB, a common server default.
 const MAX_HEAD: usize = 1 << 20;
 
 struct Request {
@@ -169,7 +168,7 @@ async fn respond<W: AsyncWrite + Unpin>(w: &mut W, status: u16, reason: &str, ct
     w.flush().await
 }
 
-/// net/http's http.Error.
+/// A plain-text error response.
 async fn http_error<W: AsyncWrite + Unpin>(w: &mut W, status: u16, reason: &str, msg: &str) -> io::Result<()> {
     respond(w, status, reason, "text/plain; charset=utf-8", format!("{msg}\n").as_bytes()).await
 }
@@ -245,7 +244,7 @@ async fn conn(c: TcpStream) -> io::Result<()> {
     }
 }
 
-/// Bounds an echoed message, as the Go target's SetReadLimit.
+/// Bounds an echoed message, so a runaway client can't exhaust memory.
 const WS_READ_LIMIT: usize = 16 << 20;
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";

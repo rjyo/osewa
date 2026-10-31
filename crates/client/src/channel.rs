@@ -1,5 +1,4 @@
-//! Channel streams (Go's client/channel.go, PROTOCOL.md "Channel
-//! streams"): bytes from the server on channels 1 and 2, bytes to it as
+//! Channel streams (PROTOCOL.md "Channel streams"): bytes from the server on channels 1 and 2, bytes to it as
 //! DATA. Received data is bounded by the credit returned as the reader
 //! consumes, and sends by the server's GRANTs, so neither side queues more
 //! than a window.

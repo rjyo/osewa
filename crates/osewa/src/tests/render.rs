@@ -1,4 +1,4 @@
-//! render_test.go, predict_ui_test.go and status_test.go's TestStatusNotice.
+//! Drawing the mirror, predictions over it, and status notices.
 
 use std::sync::Arc;
 
@@ -249,7 +249,7 @@ fn ui_predictions_survive_screen_snapshot() {
     h.matches();
 }
 
-// predict_ui_test.go: the rendering findings of the prediction review.
+// The rendering findings of the prediction review.
 
 /// #4: a prediction whose echo never comes is taken down by the tick, with
 /// no output arriving.
@@ -391,7 +391,7 @@ fn ui_writes_once_per_frame() {
     assert_eq!(frame(&mut u, &mut mirror, "b"), 1, "writes for an echo under predictions");
 }
 
-/// status_test.go's TestStatusNotice: a live blocked or done status shows
+/// A live blocked or done status shows
 /// a notice, unless quiet, typing, or from a catch-up.
 #[test]
 fn status_notice() {

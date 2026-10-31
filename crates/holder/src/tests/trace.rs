@@ -1,6 +1,6 @@
-//! Ported from trace_test.go. TestTraceOffNoAllocs is not ported: Rust has
-//! no allocation counter like testing.AllocsPerRun, and an untraced holder
-//! holds no tracer at all (PtyInput::push_input checks for one first).
+//! OSEWA_TRACE events. Tracing off costs nothing to check: an untraced
+//! holder holds no tracer at all (PtyInput::push_input checks for one
+//! first).
 
 use std::path::Path;
 use std::time::Duration;
@@ -31,7 +31,8 @@ fn read_trace(path: &Path) -> Vec<TraceEvent> {
     evs
 }
 
-/// How Go's fmt.Sprint prints a decoded JSON value.
+/// A decoded JSON value as text: strings bare, absent as <nil>, the rest
+/// as JSON.
 fn sprint(v: Option<&Value>) -> String {
     match v {
         Some(Value::String(s)) => s.clone(),

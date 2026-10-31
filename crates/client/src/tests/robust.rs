@@ -1,4 +1,5 @@
-//! robust_test.go
+//! Robustness: keepalive, half-open connections, backed-up input, cut
+//! snapshots.
 
 use super::*;
 use crate::session::ACK_BYTES;

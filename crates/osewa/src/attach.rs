@@ -1,4 +1,4 @@
-//! `osewa attach` (Go's cmd/osewa/attach.go): a session on the local
+//! `osewa attach`: a session on the local
 //! terminal through a Link, which redials and resumes it whenever the
 //! connection dies or goes silent.
 

@@ -1,5 +1,6 @@
-//! The HTTP/1.1 upgrade, as osewa's Go server (net/http + coder/websocket
-//! Accept) and client (coder/websocket Dial) do it.
+//! The HTTP/1.1 upgrade, as v0 servers and clients do it
+//! (docs/PROTOCOL.md): the same statuses, headers and checks in the same
+//! order, so a peer sees the same answer from any server.
 
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ const MAX_HEADERS: usize = 64;
 pub struct Acceptor {
     /// Offer permessage-deflate (osewa's server unless --no-compress).
     pub compress: bool,
-    /// How long the request head may take (net/http's ReadHeaderTimeout).
+    /// How long the request head may take.
     pub header_timeout: Duration,
 }
 
@@ -31,8 +32,8 @@ impl Default for Acceptor {
     }
 }
 
-/// Accepts a WebSocket on an accepted stream (after TLS), as osewa's Go
-/// server does.
+/// Accepts a WebSocket on an accepted stream (after TLS), as a v0 server
+/// does.
 pub async fn accept<S>(stream: S, compress: bool) -> Result<Conn<S>, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -62,8 +63,7 @@ impl Headers {
         self.values(name).first().map(|v| v.trim()).unwrap_or("")
     }
 
-    /// The comma-separated tokens across every line (coder/websocket's
-    /// headerTokens).
+    /// The comma-separated tokens across every line of a header.
     fn tokens(&self, name: &str) -> Vec<String> {
         self.values(name).into_iter().flat_map(|v| v.trim().split(',').map(|t| t.trim().to_string())).collect()
     }
@@ -89,8 +89,8 @@ fn extensions(h: &Headers) -> Vec<Extension> {
         .collect()
 }
 
-/// coder/websocket's selectDeflate in CompressionContextTakeover mode:
-/// the first permessage-deflate offer whose parameters it can honor.
+/// The deflate a v0 server accepts, context takeover allowed: the first
+/// permessage-deflate offer whose parameters it can honor.
 pub(crate) fn select_deflate(h: &Headers) -> Option<Deflate> {
     'offers: for ext in extensions(h) {
         if ext.name != "permessage-deflate" {
@@ -178,8 +178,8 @@ fn parse_response(b: &[u8]) -> Result<Option<usize>, httparse::Error> {
     })
 }
 
-/// A refusal: status, reason, body and extra headers, as net/http's
-/// http.Error writes it.
+/// A refusal: status, reason, body and extra headers, a plain-text error
+/// page as v0 servers write it.
 struct Refusal {
     status: u16,
     reason: &'static str,
@@ -227,8 +227,9 @@ struct Upgrade {
     deflate: Option<Deflate>,
 }
 
-/// net/http's routing and coder/websocket's verifyClientRequest and
-/// authenticateOrigin, in their order.
+/// The request checks: path and method, the upgrade headers and the
+/// origin, in the order v0 servers apply them (the first failure decides
+/// the status).
 fn check_request(req: &httparse::Request<'_, '_>, h: &Headers, compress: bool) -> Result<Upgrade, Refusal> {
     let host = h.get("Host");
     if req.version == Some(1) && h.values("Host").is_empty() {
@@ -340,9 +341,8 @@ fn origin_host(origin: &str) -> &str {
 
 impl Acceptor {
     /// Reads the upgrade request, answers it, and returns the connection.
-    /// A request the Go server would refuse gets its HTTP status; one
-    /// without our subprotocol is upgraded and closed with 1008, as the Go
-    /// server does.
+    /// A request a v0 server refuses gets its HTTP status; one without our
+    /// subprotocol is upgraded and closed with 1008, as v0 servers do.
     pub async fn accept<S>(&self, mut stream: S) -> Result<Conn<S>, Error>
     where
         S: AsyncRead + AsyncWrite + Unpin,
@@ -404,8 +404,8 @@ pub(crate) struct Offer<'a> {
 
 pub(crate) const OSEWA_OFFER: Offer<'static> = Offer { path: PATH, subprotocol: Some(SUBPROTOCOL), deflate: true };
 
-/// Opens a WebSocket over a connected stream (after TLS), as osewa's Go
-/// client does: offering osewa.v0 and permessage-deflate with context
+/// Opens a WebSocket over a connected stream (after TLS), as a v0 client
+/// does: offering osewa.v0 and permessage-deflate with context
 /// takeover, never compressing what it sends. host is the Host header.
 pub async fn dial<S>(stream: S, host: &str) -> Result<Conn<S>, Error>
 where
@@ -453,7 +453,7 @@ where
     Ok(conn)
 }
 
-/// coder/websocket's verifyServerResponse.
+/// Checks the server's answer to the upgrade, as RFC 6455 has a client do.
 fn verify_response(
     status: u16,
     h: &Headers,

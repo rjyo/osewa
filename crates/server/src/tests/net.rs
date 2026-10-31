@@ -1,7 +1,6 @@
 //! The server on the network: pinned mutual TLS, the WebSocket upgrade and
-//! compression. Ported from server/server_test.go (TestWelcome,
-//! TestAuthRejected, TestMalformedFrames' text message, TestRun) and
-//! server/compress_test.go.
+//! compression: welcome, refused auth, a text message, running the
+//! server, and compression.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -342,7 +341,8 @@ fn handshake_and_upgrade_share_a_deadline() {
     });
 }
 
-// HELLO is decoded as Go decodes JSON: invalid UTF-8 becomes U+FFFD.
+// HELLO is decoded leniently, as v0 peers decode JSON: invalid UTF-8
+// becomes U+FFFD.
 #[test]
 fn hello_with_invalid_utf8() {
     run(async {

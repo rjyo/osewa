@@ -1,4 +1,4 @@
-//! The local terminal (Go's tty.go): raw mode and size.
+//! The local terminal: raw mode and size.
 
 use std::io;
 use std::os::fd::RawFd;

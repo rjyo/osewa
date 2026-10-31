@@ -10,16 +10,16 @@ pub(crate) const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 /// How hard a message is compressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
-    /// coder/websocket compresses with flate.BestSpeed: a frame waits on its
-    /// compression before it goes. Level 2 matches its ratio on terminal
-    /// output (level 1 falls 11% short) at about the same speed
-    /// (tests/compress.rs), and incompressible bulk costs the same at any
-    /// level from 2 up.
+    /// A frame waits on its compression before it goes, so this is about
+    /// speed. Level 2 gets the ratio of a classic deflate's fastest level
+    /// on terminal output (miniz's level 1 falls 11% short) at about the
+    /// same speed (tests/compress.rs), and incompressible bulk costs the
+    /// same at any level from 2 up.
     Fast,
     /// For what a person waits to see: screens and terminal output. A
-    /// full-screen TUI's screen (W2: 34 KB at 80x24) deflates to 3.6x at
-    /// level 2 against BestSpeed's 5.5x, and on a slow link every byte of
-    /// it is latency; level 5 gets 5.8x (tests/compress.rs).
+    /// full-screen TUI's screen (W2: 34 KB at 80x24) deflates to only 3.6x
+    /// at level 2, and on a slow link every byte of it is latency; level 5
+    /// gets 5.8x (tests/compress.rs).
     Dense,
 }
 

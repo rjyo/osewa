@@ -69,7 +69,7 @@ impl Proc {
         // first so that only a missing program is NotFound.
         if !dir.is_empty() {
             match std::fs::metadata(&dir) {
-                Err(e) => return Err(Error::Other(format!("dir: stat {dir}: {}", go_error(&e)))),
+                Err(e) => return Err(Error::Other(format!("dir: stat {dir}: {}", error_text(&e)))),
                 Ok(m) if !m.is_dir() => return Err(Error::Other(format!("dir {dir}: not a directory"))),
                 Ok(_) => {}
             }
@@ -93,8 +93,8 @@ impl Proc {
             cmd.current_dir(&dir);
         }
         let mut child = cmd.spawn().map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => Error::NotFound(format!("fork/exec {}: {}", prog.display(), go_error(&e))),
-            _ => Error::Other(format!("fork/exec {}: {}", prog.display(), go_error(&e))),
+            io::ErrorKind::NotFound => Error::NotFound(format!("fork/exec {}: {}", prog.display(), error_text(&e))),
+            _ => Error::Other(format!("fork/exec {}: {}", prog.display(), error_text(&e))),
         })?;
         let pid = child.id().map_or(0, |p| p as i32);
         let (closed, _) = watch::channel(false);
@@ -205,10 +205,10 @@ impl Stopper {
     }
 }
 
-/// Words an I/O error as Go does: a system error as Go's errno text (the C
-/// library's, first letter lowercased), anything else as it is. Messages a
-/// client shows read the same from either server.
-pub fn go_error(e: &io::Error) -> String {
+/// Words an I/O error as v0 servers do: a system error as its errno text
+/// (the C library's, first letter lowercased), anything else as it is.
+/// Messages a client shows read the same from any server.
+pub fn error_text(e: &io::Error) -> String {
     let Some(n) = e.raw_os_error() else { return e.to_string() };
     let s = unsafe { std::ffi::CStr::from_ptr(libc::strerror(n)) }.to_string_lossy().into_owned();
     let mut c = s.chars();

@@ -1,4 +1,4 @@
-//! cmd/osewa's Go tests, ported.
+//! The osewa binary's tests.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

@@ -239,10 +239,10 @@ pub fn json<T: serde::Serialize>(ty: u8, stream: u32, v: &T) -> Frame {
     Frame { ty, stream, payload: marshal(v) }
 }
 
-/// Encodes v as Go's encoding/json does: serde_json's output with `<`, `>`,
+/// Encodes v as protocol v0 has JSON: serde_json's output with `<`, `>`,
 /// `&`, U+2028 and U+2029 escaped. Those only ever occur inside strings, so
 /// the substitution can't touch the JSON's structure. Payload bytes count
-/// toward log positions, so the Go and Rust holders agree on them.
+/// toward log positions, so every v0 holder agrees on them.
 pub fn marshal<T: serde::Serialize>(v: &T) -> Vec<u8> {
     let b = serde_json::to_vec(v).expect("wire: marshal");
     if !b.iter().any(|&c| matches!(c, b'<' | b'>' | b'&' | 0xe2)) {
@@ -266,8 +266,8 @@ pub fn marshal<T: serde::Serialize>(v: &T) -> Vec<u8> {
     out
 }
 
-/// Quotes s as Go's %q does, for error messages a Go peer would word the
-/// same way.
+/// Quotes s for error messages ("\x1b", "\u0085" escapes), as v0 peers
+/// word them, so a message reads the same from any peer.
 pub fn go_quote(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -290,7 +290,7 @@ pub fn go_quote(s: &str) -> String {
     out
 }
 
-/// Decodes JSON as leniently as Go's encoding/json, which Go peers rely on:
+/// Decodes JSON as leniently as v0 peers expect:
 /// invalid UTF-8 becomes U+FFFD, `null` leaves a field at its zero value,
 /// keys match case-insensitively (every osewa key is lowercase) and the
 /// last of duplicate keys wins.

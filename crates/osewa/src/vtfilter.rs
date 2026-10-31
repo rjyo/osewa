@@ -1,4 +1,4 @@
-//! What remote output may reach the local terminal (Go's vtfilter.go), and
+//! What remote output may reach the local terminal, and
 //! printing remote strings safely.
 
 /// Decides what remote output reaches the local terminal, which is not the
@@ -75,8 +75,8 @@ fn utf8_len(b: u8) -> usize {
     }
 }
 
-/// Go's utf8.FullRune for a held lead byte and continuation bytes: the
-/// character is complete, or already can't be one.
+/// Whether a held lead byte and continuation bytes are a full character:
+/// it is complete, or already can't be one.
 fn full_rune(b: &[u8]) -> bool {
     if b.len() >= utf8_len(b[0]) {
         return true;
@@ -352,7 +352,7 @@ pub(crate) fn strip_controls(mut text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Decodes one UTF-8 character as Go's utf8.DecodeRune: its length, and the
+/// Decodes one UTF-8 character: its length, and the
 /// character, or None for an invalid byte (length 1).
 fn decode_rune(b: &[u8]) -> (usize, Option<char>) {
     let n = utf8_len(b[0]).max(1);
@@ -405,7 +405,7 @@ fn csi_query(seq: &[u8]) -> bool {
 /// Parses an OSC's leading number from its body, or -1.
 fn osc_number(body: &[u8]) -> i64 {
     let end = body.iter().position(|&c| c == b';').unwrap_or(body.len());
-    // Go's strconv.Atoi: an optional sign, then digits.
+    // A plain integer: an optional sign, then digits.
     let s = std::str::from_utf8(&body[..end]).unwrap_or("");
     s.parse::<i64>().unwrap_or(-1)
 }

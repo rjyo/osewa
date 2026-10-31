@@ -1,4 +1,5 @@
-//! Ported from server/server_test.go.
+//! Sessions through the server: welcome, lifecycle, detach, resume,
+//! errors.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};

@@ -1,44 +1,16 @@
-//! Shared by the integration tests: the Go helper, a byte-counting
-//! stream, and terminal-like data.
+//! Shared by the integration tests: a byte-counting stream and
+//! terminal-like data.
 
 #![allow(dead_code)]
 
 use std::cell::Cell;
 use std::fmt::Write as _;
 use std::io;
-use std::path::PathBuf;
 use std::pin::Pin;
-use std::process::Command;
 use std::rc::Rc;
-use std::sync::OnceLock;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-
-/// Builds the Go helper (tests/gohelper, coder/websocket v1.8.15), or None
-/// with a note when there's no Go toolchain.
-pub fn go_helper() -> Option<PathBuf> {
-    static HELPER: OnceLock<Option<PathBuf>> = OnceLock::new();
-    HELPER
-        .get_or_init(|| {
-            if Command::new("go").arg("version").output().is_err() {
-                eprintln!("SKIP: `go` is not on PATH; the Go interop tests need it");
-                return None;
-            }
-            let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("osewa-carrier-gohelper");
-            let status = Command::new("go")
-                .args(["build", "-o"])
-                .arg(&out)
-                .arg(".")
-                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/gohelper"))
-                .env("GOFLAGS", "-mod=mod")
-                .status()
-                .expect("go build");
-            assert!(status.success(), "building the Go helper failed");
-            Some(out)
-        })
-        .clone()
-}
 
 /// Counts the bytes read through it.
 pub struct Counting<S> {
@@ -75,14 +47,8 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Counting<S> {
     }
 }
 
-/// The Go helper's text().
-pub fn text(n: usize, seed: usize) -> Vec<u8> {
-    let line = format!("drwxr-xr-x  5 osewa staff  160 Oct 30 12:{:02} \x1b[1;34msrc{}\x1b[0m\r\n", seed % 60, seed);
-    line.bytes().cycle().take(n).collect()
-}
-
-/// Cuts terminal output into OUTPUT frames of varying size (the Go
-/// helper's frames()).
+/// Cuts terminal output into OUTPUT frames of varying size, from a
+/// keystroke's echo to a full read buffer.
 pub fn frames(data: &[u8]) -> Vec<Vec<u8>> {
     const SIZES: [usize; 5] = [64, 300, 1500, 4096, 16384];
     let mut out = Vec::new();
@@ -116,10 +82,10 @@ impl Rng {
 const SOURCES: [(&str, &str); 6] = [
     ("docs/PROTOCOL.md", include_str!("../../../../docs/PROTOCOL.md")),
     ("docs/QUIC.md", include_str!("../../../../docs/QUIC.md")),
-    ("docs/RUST.md", include_str!("../../../../docs/RUST.md")),
+    ("README.md", include_str!("../../../../README.md")),
     ("src/ws/conn.rs", include_str!("../../src/ws/conn.rs")),
     ("src/ws/handshake.rs", include_str!("../../src/ws/handshake.rs")),
-    ("tests/gohelper/main.go", include_str!("../gohelper/main.go")),
+    ("src/ws/mod.rs", include_str!("../../src/ws/mod.rs")),
 ];
 
 /// Text files paged with line numbers, as a pager or `cat -n` shows them.
@@ -205,15 +171,4 @@ pub fn terminal_data() -> Vec<u8> {
         }
     }
     s.into_bytes()
-}
-
-/// terminal_data() in a file, for the Go helper.
-pub fn terminal_data_file() -> PathBuf {
-    static FILE: OnceLock<PathBuf> = OnceLock::new();
-    FILE.get_or_init(|| {
-        let p = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(concat!("osewa-carrier-terminal-", env!("CARGO_CRATE_NAME"), ".bin"));
-        std::fs::write(&p, terminal_data()).unwrap();
-        p
-    })
-    .clone()
 }

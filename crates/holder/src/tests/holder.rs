@@ -1,4 +1,4 @@
-//! Ported from holder_test.go.
+//! The holder's requests: attach, output, resume, bad requests.
 
 use std::time::{Duration, Instant};
 
@@ -547,7 +547,7 @@ fn run() {
     c.wait_for("cwd", move |c| c.text().contains(&d2) || c.text().contains(&real) || c.text().contains("/oh"));
     let info = c.info();
     assert!(info.cols == 30 && info.rows == 6, "info = {info:?}");
-    // Go's test cancels Serve's context; a process gets SIGTERM.
+    // A holder process stops on SIGTERM.
     p.signal(libc::SIGTERM);
     assert_eq!(p.wait_exit(WAIT), 0, "code");
 
@@ -587,7 +587,7 @@ fn attach_head_and_input_ack() {
     assert!(r3.head.is_some_and(|h| h >= r2.head.unwrap()), "head went back: {:?} after {:?}", r3.head, r2.head);
 }
 
-/// Not in the Go tests: a holder for a live session refuses to start.
+/// A holder for a live session refuses to start.
 #[test]
 fn stale_socket_replaced_live_refused() {
     let h = start(cfg(sh("sleep 30")));

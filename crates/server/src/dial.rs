@@ -1,4 +1,4 @@
-//! TCP dials for forward.open, as Go's net.Dialer makes them: the deadline
+//! TCP dials for forward.open: the deadline
 //! split across a name's addresses, and IPv6 raced against IPv4 (RFC 6555)
 //! so that an address family that blackholes costs 300 ms, not the whole
 //! deadline.
@@ -8,17 +8,18 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use osewa_execproc::go_error;
+use osewa_execproc::error_text;
 use tokio::time::Instant;
 
 /// How long the first address family has before the other starts beside
-/// it (Go's fallbackDelay).
+/// it (RFC 6555's "Happy Eyeballs" delay).
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);
 /// The least an address gets of the deadline, when that much is left
-/// (Go's saneMinimum).
+/// so that one slow address can't leave the next none.
 const SANE_MINIMUM: Duration = Duration::from_secs(2);
 
-/// Dials host:port within timeout, with errors worded as Go's.
+/// Dials host:port within timeout, with errors worded as v0 servers word
+/// them ("dial tcp ...: connect: ..."), since clients show them.
 pub(crate) async fn dial_tcp(host: &str, port: u16, timeout: Duration) -> Result<tokio::net::TcpStream, String> {
     let deadline = Instant::now() + timeout;
     let addrs: Vec<SocketAddr> = match host.parse::<IpAddr>() {
@@ -98,7 +99,7 @@ where
                 // A connect that completes past its deadline failed too.
                 Ok(Ok(c)) if start.elapsed() <= share => return Ok(c),
                 Ok(Ok(_)) | Err(_) => format!("dial tcp {a}: i/o timeout"),
-                Ok(Err(e)) => format!("dial tcp {a}: connect: {}", go_error(&e)),
+                Ok(Err(e)) => format!("dial tcp {a}: connect: {}", error_text(&e)),
             }
         };
         first.get_or_insert(err);

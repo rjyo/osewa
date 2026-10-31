@@ -1,4 +1,4 @@
-//! incompat_test.go
+//! A host built from another libghostty commit.
 
 use osewa_carrier::ws;
 use osewa_client::hosts;

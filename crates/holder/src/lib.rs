@@ -219,8 +219,8 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         rows: int("rows")?,
         cwd: p.str("cwd"),
         scrollback_bytes: int("scrollback-bytes")?.max(0) as usize,
-        // Go's flag takes a negative duration, which disables the timeout
-        // as zero does.
+        // A negative duration is accepted and disables the timeout as zero
+        // does: v0 holders take one.
         idle: match p.str("idle-timeout").strip_prefix('-') {
             Some(neg) => osewa_flag::parse_duration(neg).map(|_| Duration::ZERO).map_err(|e| e.to_string())?,
             None => p.duration("idle-timeout").map_err(|e| e.to_string())?,
@@ -519,7 +519,7 @@ async fn read_pty(s: &Weak<RefCell<Session>>, master: &AsyncFd<OwnedFd>) {
                     }
                     s.handle_output(&buf[..n]);
                 }
-                // Go's loop picks among ready events at random; a PTY that
+                // Yield after each read: a PTY that
                 // stays readable under a flood must not starve a keystroke
                 // arriving on a connection, the writers or the echo timers.
                 tokio::task::yield_now().await;
@@ -657,7 +657,7 @@ async fn run_writer<W: tokio::io::AsyncWrite + Unpin>(
             let before = buf.len();
             let sent = q.next_into(&mut buf);
             // wire::write's bound: an oversized frame (one huge event) ends
-            // the connection here, as the Go holder's sender does, rather
+            // the connection here, at the sender, rather
             // than at the peer's reader.
             if sent.is_some() && buf.len() - before - 4 > wire::MAX_FRAME {
                 return Err(wire::Error::TooLarge.into());

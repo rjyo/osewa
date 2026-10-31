@@ -92,11 +92,10 @@ fn json_request() {
     assert!(Frame::new(TYPE_REQUEST, 0, b"{".to_vec()).decode::<Request>().is_err());
 }
 
-// Go peers write what encoding/json writes: omitempty fields absent, nil
-// slices as null, []byte as base64. These are byte-exact so the Go and Rust
-// ends agree on every message.
+// v0 JSON: unset optional fields absent, unset lists as null, bytes as
+// base64. These are byte-exact so every v0 peer agrees on every message.
 #[test]
-fn go_compatible_json() {
+fn v0_json_bytes() {
     let r: Request = serde_json::from_str(r#"{"id":3,"method":"session.create","argv":null,"env":null,"extra":1}"#).unwrap();
     assert_eq!((r.id, r.argv.len()), (3, 0));
     let w: Welcome = serde_json::from_str(r#"{"version":0,"server":"h","snapshot_version":1,"ghostty":"c","carriers":null}"#).unwrap();
@@ -143,9 +142,9 @@ fn errors_display() {
     assert_eq!(e.kind(), io::ErrorKind::InvalidData);
 }
 
-// What Go's encoding/json accepts and writes, beyond the field shapes.
+// What v0 JSON accepts and writes, beyond the field shapes.
 #[test]
-fn go_lenient_decoding_and_html_escaping() {
+fn lenient_decoding_and_html_escaping() {
     let f = Frame::new(TYPE_INPUT, 1, br#"{"seq":5,"Type":"key","key":"KeyA","text":null,"focused":null,"seq":6}"#.to_vec());
     let i: Input = f.decode().unwrap();
     assert_eq!((i.seq, i.ty.as_str(), i.text.as_str(), i.focused), (6, "key", "", false));
@@ -157,7 +156,7 @@ fn go_lenient_decoding_and_html_escaping() {
 }
 
 #[test]
-fn go_quoting() {
+fn quoting() {
     assert_eq!(go_quote("nope"), "\"nope\"");
     assert_eq!(go_quote("a\x1b\"\\\n\u{85}é"), r#""a\x1b\"\\\n\u0085é""#);
 }

@@ -1,4 +1,4 @@
-//! The mirror terminal (Go's client/mirror/mirror.go).
+//! The mirror terminal: the session's screen kept client side.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 

@@ -1,5 +1,5 @@
-//! Ported from round3_test.go. Its generators (floodMain, w2Loop,
-//! echoFloodMain) and links live in main.rs and helpers.rs.
+//! Under load: floods, W2 screens, echo floods. The generators and links
+//! live in main.rs and helpers.rs.
 
 use std::cell::Cell;
 use std::os::unix::net::UnixStream;
@@ -139,7 +139,7 @@ fn parse_flags() {
     assert!(c.idle.is_zero(), "{c:?}");
     assert!(crate::parse_flags(&args(&["--idle-timeout", "soon"])).is_err(), "bad duration accepted");
 
-    // Not in the Go test: every flag lands in its field.
+    // Every flag lands in its field.
     let c = crate::parse_flags(&args(&[
         "--run", "/r", "--id", "x", "--cols", "100", "--rows", "30", "--cwd", "/w", "--scrollback-bytes", "5", "--", "sh", "-l",
     ]))

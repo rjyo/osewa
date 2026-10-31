@@ -1,4 +1,4 @@
-//! `osewa server [--daemon]` (Go's daemon.go). One server per user: it
+//! `osewa server [--daemon]`. One server per user: it
 //! holds an exclusive lock on <run dir>/server.pid for its life, however it
 //! was started (by hand, --daemon, systemd, launchd), so "is one running?"
 //! has one answer.
@@ -115,7 +115,8 @@ pub(crate) fn listen_addr(args: &[String]) -> String {
     crate::channels::join_host_port(host, port)
 }
 
-/// Go's net.SplitHostPort, for the forms a listen address takes.
+/// Splits host:port, [v6]:port included, for the forms a listen address
+/// takes.
 fn split_host_port(addr: &str) -> Option<(&str, &str)> {
     if let Some(r) = addr.strip_prefix('[') {
         let (h, p) = r.split_once("]:")?;

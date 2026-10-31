@@ -1,4 +1,4 @@
-//! Dialing (Go's client/dial.go and the carrier choice in client.go): TCP
+//! Dialing and the carrier choice: TCP
 //! with a raced second attempt, pinned TLS, the WebSocket upgrade, and the
 //! seam where QUIC races the WebSocket.
 

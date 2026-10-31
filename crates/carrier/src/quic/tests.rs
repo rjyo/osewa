@@ -1,5 +1,4 @@
-//! A Rust client and server over loopback QUIC; the Go peers are in
-//! crates/osewa/tests/go_quic.rs.
+//! A client and server over loopback QUIC.
 
 use std::os::fd::AsRawFd;
 use std::sync::atomic::AtomicBool;
@@ -533,7 +532,7 @@ async fn abandoned_dial_stops() {
 }
 
 #[test]
-fn address_as_go_picks_it() {
+fn address_as_v0_clients_pick_it() {
     let (v4, v6): (SocketAddr, SocketAddr) = ("192.0.2.1:7322".parse().unwrap(), "[2001:db8::1]:7322".parse().unwrap());
     assert_eq!(pick("host.example", &[v6, v4]), Some(v4), "a name's IPv4 address first");
     assert_eq!(pick("host.example", &[v6]), Some(v6), "else its first");

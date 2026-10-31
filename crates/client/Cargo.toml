@@ -20,8 +20,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 ring = "0.17"
 
 [dev-dependencies]
-# Tests render with libghostty, as the Go client tests do through
-# client/mirror; the library itself never links it.
+# Tests render with libghostty, to check snapshots and output as a real
+# terminal shows them; the library itself never links it.
 osewa-ghostty.workspace = true
 # A dev-dependency cycle: tests drive the mirror through an adapter, since
 # its Renderer impl is for the non-test build of this crate.

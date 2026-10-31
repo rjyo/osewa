@@ -1,6 +1,6 @@
-//! osewa's fixed benchmark workloads (Go's bench/workload.go). Every
-//! workload is a pure function of its size, byte-for-byte the Go one's, so
-//! runs on either build, machine or day feed the terminal the same bytes:
+//! osewa's fixed benchmark workloads. Every workload is a pure function
+//! of its size, with fixed bytes, so runs on any build, machine or day feed
+//! the terminal the same bytes:
 //!
 //! - W1, plain ASCII logs: timestamped log lines, printable ASCII and CRLF
 //!   only.

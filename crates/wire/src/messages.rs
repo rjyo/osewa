@@ -10,8 +10,8 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
-// Go's encoding/json writes a nil slice as null; serde rejects null for a
-// Vec, so every list a Go peer may send accepts it.
+// v0 peers may send an empty list as null; serde rejects null for a Vec,
+// so every list a peer may send accepts it.
 fn null_vec<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -329,7 +329,8 @@ pub fn marshal_event(e: &EventMsg) -> Vec<u8> {
     crate::marshal(e)
 }
 
-/// Go's []byte in JSON: standard base64 with padding, null for nil.
+/// Bytes in JSON as v0 has them: standard base64 with padding, null for
+/// none.
 mod base64_bytes {
     use base64::Engine;
     use serde::{Deserialize, Deserializer, Serializer};

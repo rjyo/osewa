@@ -1,6 +1,6 @@
 //! Frames as binary WebSocket messages (RFC 6455), with permessage-deflate
 //! (RFC 7692) from server to client, negotiated and framed exactly as
-//! coder/websocket v1.8.15 does in osewa's Go server and client.
+//! docs/PROTOCOL.md has v0 servers and clients do it.
 
 mod conn;
 mod deflate;

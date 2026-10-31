@@ -1,5 +1,5 @@
 //! The single osewa binary: the server, the per-session holder, enrollment,
-//! and the client commands. Same command line as the Go osewa.
+//! and the client commands.
 
 use std::process::ExitCode;
 

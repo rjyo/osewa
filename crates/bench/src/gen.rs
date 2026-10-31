@@ -1,4 +1,4 @@
-//! `osewa-bench gen` (Go's gen.go): workload lines with a stamp line before
+//! `osewa-bench gen`: workload lines with a stamp line before
 //! every block, paced to a rate, optionally with an application echo row.
 
 use std::io::{self, Read, Write};
@@ -52,7 +52,7 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// The offsets of every PLACEHOLDER in u, leftmost and non-overlapping, as
-/// Go's bytes.ReplaceAll finds them.
+/// a replace-all finds them.
 pub(crate) fn placeholders(u: &[u8]) -> Vec<usize> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -162,8 +162,8 @@ pub struct Generator<'a> {
     w: &'a mut dyn Write,
     units: Vec<Vec<u8>>,
     /// Where each unit carries PLACEHOLDER, found once: searching every
-    /// block for it cost a third more CPU per byte than Go's gen, CPU the
-    /// holder needs under a W2 flood (e2e M2 echo under W2 doubled).
+    /// block for it cost a third more CPU per byte, CPU the holder needs
+    /// under a W2 flood (e2e M2 echo under W2 doubled).
     marks: Vec<Vec<usize>>,
     rate: i64,
     dur: Duration,
@@ -174,7 +174,8 @@ pub struct Generator<'a> {
     pub framed: bool,
 }
 
-/// Go's time.Time.Sub for the times gen compares: negative when b is later.
+/// a - b in nanoseconds for the times gen compares: negative when b is
+/// later, which SystemTime's duration_since can't say.
 fn sub(a: SystemTime, b: SystemTime) -> i128 {
     match a.duration_since(b) {
         Ok(d) => d.as_nanos() as i128,

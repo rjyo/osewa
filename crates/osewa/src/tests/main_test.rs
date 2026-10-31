@@ -1,6 +1,6 @@
-//! main_test.go (and daemon_test.go's TestLoginStartsServer). The
-//! escaper, splitUTF8, forwardInput and viewerNotice tests are the attach
-//! UI's.
+//! The command line: flags, dispatch, errors, login starting a server.
+//! The escaper, UTF-8 splitting, input forwarding and viewer notice tests
+//! are the attach UI's.
 
 use std::io::Cursor;
 
@@ -18,7 +18,7 @@ fn parse_args_interspersed() {
     let pos = fs.parse(&args(&["user@box", "--name", "n", "extra", "--addr=h:1"])).unwrap();
     assert!(pos == ["user@box", "extra"] && fs.str("name") == "n" && fs.str("addr") == "h:1", "pos={pos:?}");
     assert!(fs.parse(&args(&["--nope"])).is_err(), "want error for unknown flag");
-    // Go's flag forms: -x, -x=v, bools without a value, -h for usage.
+    // The flag forms: -x, -x=v, bools without a value, -h for usage.
     let mut fs = Flags::new(&[("cwd", Kind::Str), ("v", Kind::Bool), ("env", Kind::Multi)]);
     let pos = fs.parse(&args(&["-cwd=/", "a", "-v", "--env", "A=1", "-env=B=2"])).unwrap();
     assert!(pos == ["a"] && fs.str("cwd") == "/" && fs.bool("v") && fs.all("env") == ["A=1", "B=2"], "pos={pos:?}");
@@ -78,8 +78,8 @@ fn login() {
     let install: InstallFn = Arc::new(move |target, binary_for| {
         inst.lock().unwrap().push(target);
         // A host like this one gets this very binary.
-        let (goos, goarch) = osewa_client::login::local_platform();
-        let b = binary_for(goos, goarch);
+        let (os_name, arch_name) = osewa_client::login::local_platform();
+        let b = binary_for(os_name, arch_name);
         let r = *res.lock().unwrap();
         Box::pin(async move {
             assert!(!b?.is_empty(), "empty binary");
@@ -240,7 +240,7 @@ fn print_sessions_columns() {
         let got: Vec<&str> = lines[i].split_whitespace().collect();
         assert_eq!(got, *want, "row {i}");
     }
-    // Exactly as Go's tabwriter lays it out.
+    // Exactly the v0 layout: columns padded to the widest cell plus 2.
     assert_eq!(
         s,
         "ID  TITLE  SIZE   OWNER   ATTACHED  IDLE  STATUS  STATE\n\

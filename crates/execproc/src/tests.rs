@@ -19,7 +19,7 @@ fn argv(a: &[&str]) -> Options {
     Options { argv: a.iter().map(|s| s.to_string()).collect(), ..Default::default() }
 }
 
-/// Stops the process when the test ends, as the Go tests' cleanup does.
+/// Stops the process when the test ends.
 struct Started(Proc);
 
 impl Drop for Started {
@@ -365,7 +365,7 @@ fn path_falls_back_to_server() {
     });
 }
 
-// Errors read as the Go server's do.
+// Errors read as v0 servers word them.
 #[test]
 fn error_texts() {
     rt().block_on(async {
@@ -376,6 +376,6 @@ fn error_texts() {
         let e = Proc::start(argv(&["osewa-no-such-program"])).err().unwrap();
         assert!(e.to_string().starts_with("execproc: program not found: osewa-no-such-program not in PATH \""), "{e}");
     });
-    assert_eq!(go_error(&io::Error::from_raw_os_error(libc::ECONNREFUSED)), "connection refused");
-    assert_eq!(go_error(&io::Error::other("plain")), "plain");
+    assert_eq!(error_text(&io::Error::from_raw_os_error(libc::ECONNREFUSED)), "connection refused");
+    assert_eq!(error_text(&io::Error::other("plain")), "plain");
 }

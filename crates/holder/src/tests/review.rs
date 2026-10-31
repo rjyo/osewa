@@ -1,4 +1,5 @@
-//! Ported from review_test.go.
+//! Review findings: input backpressure, resume without replay, shutdown
+//! with stuck clients.
 
 use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;

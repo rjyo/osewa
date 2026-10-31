@@ -1,7 +1,8 @@
 //! Frames on QUIC streams: each after its length (u32, big-endian), a
 //! zero length being a ping; on the server's half of the main stream under
-//! ALPN_DEFLATE, one raw deflate stream sync-flushed after each frame, as
-//! Go's flate.Writer.Flush leaves it (the 00 00 ff ff marker kept).
+//! ALPN_DEFLATE, one raw deflate stream sync-flushed after each frame (a
+//! sync flush, the 00 00 ff ff marker kept), so each frame decodes as soon
+//! as it arrives.
 
 use std::io;
 
@@ -117,7 +118,7 @@ impl Inflate {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         self.off += (self.d.total_in() - in0) as usize;
         if st == Status::StreamEnd {
-            // Go's writer never ends the stream; a final block is the end.
+            // v0 writers never end the stream; a final block is the end.
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
         Ok(self.d.total_in() != in0 || out.len() != out0)
@@ -150,8 +151,7 @@ pub(crate) fn conn_err(c: quinn::ConnectionError) -> io::Error {
 
 /// What quinn may hold written but not yet sent, connection-wide, past
 /// what the congestion window lets go at once: TCP_NOTSENT_LOWAT's 16 KiB,
-/// as the WebSocket's socket has. quic-go's writes return with about a
-/// packet unsent; quinn's would return with up to its whole send window
+/// as the WebSocket's socket has. Unbounded, quinn's writes would return with up to its whole send window
 /// (all of it unacknowledged data) buffered, where neither the server's
 /// send queue nor its priorities can reach it.
 pub(crate) const LOWAT: u64 = 16 << 10;

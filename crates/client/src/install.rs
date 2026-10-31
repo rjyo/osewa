@@ -24,8 +24,8 @@ pub const PATH: &str = ".local/bin/osewa";
 /// prints) can't be mistaken for them.
 const PREFIX: &str = "osewa-install";
 
-/// The osewa build for a host platform, named as Go names them ("linux",
-/// "darwin"; "amd64", "arm64"): binaries are osewa-<goos>-<goarch>.
+/// The osewa build for a host platform, named as the release binaries are
+/// ("linux", "darwin"; "amd64", "arm64"): osewa-<os>-<arch>.
 pub type BinaryFor = Arc<dyn Fn(&str, &str) -> Result<Vec<u8>, Error> + Send + Sync>;
 
 /// The script that runs under sh -c on the host. It reports what is there,
@@ -144,7 +144,8 @@ pub(crate) async fn remote_with(ssh: Vec<String>, ssh_target: &str, binary_for: 
     .await
 }
 
-/// Words a failed exit as Go's *exec.ExitError does.
+/// Words a failed exit as users see it from every osewa: "exit status N"
+/// or "signal: N".
 pub(crate) fn exit_status(s: std::process::ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
     match (s.code(), s.signal()) {
@@ -210,10 +211,10 @@ async fn probe<R: AsyncBufRead + Unpin>(out: &mut R) -> Result<(Vec<String>, Str
 
 /// The whole binary for the host's platform.
 fn binary_from(sysname: &str, machine: &str, binary_for: &BinaryFor) -> Result<Vec<u8>, Error> {
-    let (goos, goarch) = platform(sysname, machine)?;
-    let bin = binary_for(goos, goarch)?;
+    let (os_name, arch_name) = platform(sysname, machine)?;
+    let bin = binary_for(os_name, arch_name)?;
     if bin.is_empty() {
-        return Err(Error::Other(format!("empty binary for {goos}/{goarch}")));
+        return Err(Error::Other(format!("empty binary for {os_name}/{arch_name}")));
     }
     Ok(bin)
 }
@@ -236,19 +237,19 @@ async fn script_line<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Vec<String>, 
     }
 }
 
-/// Maps `uname -s` and `uname -m` to Go's GOOS and GOARCH.
+/// Maps `uname -s` and `uname -m` to the release binaries' os and arch.
 pub fn platform(sysname: &str, machine: &str) -> Result<(&'static str, &'static str), Error> {
-    let goos = match sysname {
+    let os_name = match sysname {
         "Linux" => "linux",
         "Darwin" => "darwin",
         _ => return Err(Error::Other(format!("unsupported OS {sysname}"))),
     };
-    let goarch = match machine {
+    let arch_name = match machine {
         "x86_64" | "amd64" => "amd64",
         "aarch64" | "arm64" => "arm64",
         _ => return Err(Error::Other(format!("unsupported architecture {machine}"))),
     };
-    Ok((goos, goarch))
+    Ok((os_name, arch_name))
 }
 
 #[cfg(test)]
@@ -340,11 +341,11 @@ HOME={} PATH={}:/usr/bin:/bin exec {shell} -c "$*"
     impl Binaries {
         fn get(&self) -> BinaryFor {
             let (asked, err) = (self.asked.clone(), self.err.clone());
-            Arc::new(move |goos: &str, goarch: &str| {
-                asked.lock().unwrap().push(format!("{goos}/{goarch}"));
+            Arc::new(move |os_name: &str, arch_name: &str| {
+                asked.lock().unwrap().push(format!("{os_name}/{arch_name}"));
                 match &err {
                     Some(e) => Err(Error::Other(e.clone())),
-                    None => Ok(content(goos, goarch).into_bytes()),
+                    None => Ok(content(os_name, arch_name).into_bytes()),
                 }
             })
         }
@@ -354,9 +355,9 @@ HOME={} PATH={}:/usr/bin:/bin exec {shell} -c "$*"
         }
     }
 
-    fn content(goos: &str, goarch: &str) -> String {
+    fn content(os_name: &str, arch_name: &str) -> String {
         // Big enough that a pipe can't hold it all.
-        format!("#!/bin/sh\necho osewa {goos}/{goarch}\n#{}\n", "x".repeat(300 << 10))
+        format!("#!/bin/sh\necho osewa {os_name}/{arch_name}\n#{}\n", "x".repeat(300 << 10))
     }
 
     fn read(p: &Path) -> String {

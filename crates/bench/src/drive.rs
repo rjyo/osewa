@@ -1,4 +1,4 @@
-//! `osewa-bench drive` (Go's drive.go): runs a terminal client (mosh-client,
+//! `osewa-bench drive`: runs a terminal client (mosh-client,
 //! osewa attach) in a PTY, renders its output with libghostty like a real
 //! terminal, and measures what a user sees: keystroke-to-glyph latency, or
 //! screen age.

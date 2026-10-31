@@ -1,5 +1,4 @@
-//! Sessions: attach, snapshots, output, acks, input and resume (Go's
-//! client/session.go).
+//! Sessions: attach, snapshots, output, acks, input and resume.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;

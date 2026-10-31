@@ -1,4 +1,4 @@
-//! channels_test.go
+//! exec and forward: spec parsing, and live against a real server.
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::{TcpListener, TcpStream};

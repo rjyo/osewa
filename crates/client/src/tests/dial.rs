@@ -1,4 +1,4 @@
-//! dial_test.go
+//! Dialing: the raced TCP attempts, TLS and the carrier choice.
 
 use std::io;
 use std::pin::Pin;

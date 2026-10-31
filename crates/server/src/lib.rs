@@ -78,7 +78,7 @@ pub struct Tunables {
     /// Create, list and kill requests in flight per client.
     pub max_busy: usize,
     /// Bounds the TLS handshake and the WebSocket upgrade together, as
-    /// Go's http.Server's ReadHeaderTimeout covers both.
+    /// a slow client could otherwise hold a connection between the two.
     pub handshake_timeout: Duration,
 }
 
@@ -303,14 +303,14 @@ impl Server {
             let (tcp, peer) = match accepted {
                 Ok(a) => a,
                 Err(e) => {
-                    // Out of descriptors and the like: back off, as Go's
-                    // http.Server does, rather than spin.
+                    // Out of descriptors and the like: back off rather than
+                    // spin.
                     self.log.borrow_mut().line(&format!("osewa server: accept: {e}"));
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
             };
-            // Go sets TCP_NODELAY on every TCP connection; without it a
+            // TCP_NODELAY on every TCP connection: without it a
             // keystroke's echo waits on Nagle behind delayed ACKs (~40 ms).
             let _ = tcp.set_nodelay(true);
             lowat::tune(tcp.as_raw_fd());
@@ -441,11 +441,11 @@ impl Server {
     async fn dial_holder(&self, id: &str, client_id: &str) -> io::Result<UnixStream> {
         let t = &self.cfg.tune;
         let path = self.socket_path(id);
-        // Worded as Go's net.Dial, which clients show.
+        // Worded as v0 servers word it ("dial unix ..."), which clients show.
         let mut conn = match tokio::time::timeout(t.dial_timeout, UnixStream::connect(&path)).await {
             Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, format!("dial unix {}: i/o timeout", path.display()))),
             Ok(Err(e)) => {
-                let msg = format!("dial unix {}: connect: {}", path.display(), osewa_execproc::go_error(&e));
+                let msg = format!("dial unix {}: connect: {}", path.display(), osewa_execproc::error_text(&e));
                 return Err(io::Error::new(e.kind(), msg));
             }
             Ok(Ok(c)) => c,
@@ -602,7 +602,7 @@ async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Res
     let r = match tokio::time::timeout(timeout, br.read_line(&mut line)).await {
         Err(_) => Err("server: holder did not become ready".to_string()),
         Ok(_) if line.trim() == "ready" => Ok(()),
-        // EOF before a whole line, as Go's ReadString reports it.
+        // EOF before a whole line: the holder died before saying ready.
         Ok(Ok(_)) if !line.ends_with('\n') => Err("server: holder exited before ready: EOF".into()),
         Ok(Err(e)) => Err(format!("server: holder exited before ready: {e}")),
         Ok(Ok(_)) => Err(format!("server: holder said {}", wire::go_quote(&line))),

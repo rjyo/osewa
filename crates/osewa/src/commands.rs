@@ -1,5 +1,4 @@
-//! login, ls, new and kill, and connecting to a known host (Go's
-//! commands.go).
+//! login, ls, new and kill, and connecting to a known host.
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -205,8 +204,8 @@ pub(crate) fn print_sessions(w: &mut impl Write, list: &[wire::SessionInfo]) -> 
     w.write_all(tabulate(&rows).as_bytes())
 }
 
-/// Aligns rows of cells in columns as Go's text/tabwriter does with
-/// minwidth 0, padding 2 and spaces: every cell but a row's last is padded
+/// Aligns rows of cells in columns, as `ls` output has always been laid
+/// out (scripts parse it): every cell but a row's last is padded
 /// to its column's widest, plus 2, counting characters.
 fn tabulate(rows: &[Vec<String>]) -> String {
     let cols = rows.iter().map(Vec::len).max().unwrap_or(0);

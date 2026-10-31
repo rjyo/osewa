@@ -19,8 +19,7 @@
 //! credit and ack timers and [`Link`]'s reconnect loop. Each connection
 //! also has an applier thread that applies received frames in order and
 //! runs the [`Renderer`] and [`AttachOptions`] callbacks, so a slow render
-//! never delays reading, pongs or credit, as the Go client's applier
-//! goroutine does. A process that never connects starts no thread; an idle
+//! never delays reading, pongs or credit. A process that never connects starts no thread; an idle
 //! connection wakes only for its keepalive ping.
 //!
 //! Why not the server's shape (a LocalSet the caller drives): this library
@@ -109,7 +108,7 @@ impl fmt::Debug for Config {
     }
 }
 
-/// What tests change: Go's package variables.
+/// What tests change: timings and hooks.
 #[derive(Clone, Default)]
 pub(crate) struct Knobs {
     /// The keepalive interval (default 5 s).
@@ -144,7 +143,7 @@ pub enum Error {
     /// The Link was closed.
     LinkClosed,
     Io(Arc<io::Error>),
-    /// Several errors, each attempt's (Go's errors.Join).
+    /// Several errors, each attempt's, shown one per line.
     Join(Vec<Error>),
     Other(String),
 }

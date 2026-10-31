@@ -1,4 +1,4 @@
-//! link_test.go
+//! Link: attach, resume after a drop, a suspect connection replaced.
 
 use super::*;
 

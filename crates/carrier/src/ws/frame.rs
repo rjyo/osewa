@@ -20,7 +20,8 @@ pub(crate) struct Header {
     pub mask: Option<[u8; 4]>,
 }
 
-/// The length's top bit set, which coder/websocket reads as negative.
+/// The length's top bit set, which RFC 6455 forbids and v0 peers read as
+/// negative.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct NegativeLength(pub u64);
 
@@ -75,7 +76,7 @@ pub(crate) fn parse_header(b: &[u8]) -> Result<Option<(Header, usize)>, Negative
 }
 
 /// Appends a final frame's header to out, in the shortest length encoding
-/// (as coder/websocket writes it).
+/// (as v0 peers write it, and RFC 6455 requires).
 pub(crate) fn put_header(out: &mut Vec<u8>, rsv1: bool, opcode: u8, len: usize, mask: Option<[u8; 4]>) {
     let mut b0 = 0x80 | opcode;
     if rsv1 {

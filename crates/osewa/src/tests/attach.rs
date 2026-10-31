@@ -1,6 +1,5 @@
-//! main_test.go's attach tests (TestEscaper, TestSplitUTF8,
-//! TestForwardInput, TestViewerNotice), predict_ui_test.go's
-//! TestForwardInputWaitsForTake, and live_test.go's attach tests.
+//! The attach UI: the escaper, UTF-8 splitting, input forwarding (and its
+//! wait for ownership), viewer notices, and attach against a live server.
 
 use std::io::Read;
 use std::sync::mpsc;
@@ -524,7 +523,7 @@ fn live_end_and_detach_messages() {
     assert_eq!(c.code(), 3, "closing window exit code");
 }
 
-/// live_test.go's TestLiveQUIC, its attach half: echo over QUIC.
+/// Attach over QUIC against a live server: echo.
 #[test]
 fn live_quic_attach() {
     let h = LiveHost::new();
@@ -544,7 +543,7 @@ fn live_quic_attach() {
     done.recv_timeout(Duration::from_secs(10)).expect("attach did not return");
 }
 
-/// proxy_test.go: forwards TCP to target and can black-hole the
+/// A proxy: forwards TCP to target and can black-hole the
 /// connections it has: they stay open but carry nothing, like a half-open
 /// connection after a network change. New connections work.
 struct Proxy {

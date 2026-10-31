@@ -128,7 +128,7 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
     }
 }
 
-/// A flag that is set once and can be waited for: Go's closed channel.
+/// A flag that is set once and can be waited for.
 pub(crate) struct Latch(watch::Sender<bool>);
 
 impl Default for Latch {
@@ -155,7 +155,7 @@ impl Latch {
     }
 }
 
-/// Wakes waiters on every change: Go's close-and-replace channel. Take a
+/// Wakes waiters on every change, however many there are. Take a
 /// Watcher before checking state, under the same lock as the change.
 pub(crate) struct Changed(watch::Sender<u64>);
 

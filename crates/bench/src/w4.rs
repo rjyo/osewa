@@ -1,11 +1,11 @@
-//! W4 (Go's bench/w4.go): what real full-screen programs send. Whole
+//! W4: what real full-screen programs send. Whole
 //! frames on the alternate screen, each inside a synchronized-output
 //! bracket, with few styles. It alternates every W4_SWITCH frames between
 //!
 //! - a process table like htop: a header with two colored meters, a
 //!   reverse-video column header, rows of numbers that change every frame,
 //!   one highlighted row, and a function-key bar;
-//! - a code view like an editor: line numbers in dim, Go source with
+//! - a code view like an editor: line numbers in dim, source code with
 //!   keywords, strings and comments in three colors, scrolling one line per
 //!   frame, and a reverse-video status line.
 //!
@@ -62,7 +62,8 @@ pub(crate) fn fit(s: &str, w: usize) -> String {
     format!("{s}{}", " ".repeat(w - s.len()))
 }
 
-/// Go's strings.Repeat, which panics on a negative count.
+/// str::repeat that panics on a negative count, as a bad workload size
+/// should.
 fn repeat(s: &str, n: i64) -> String {
     assert!(n >= 0, "strings: negative Repeat count");
     s.repeat(n as usize)

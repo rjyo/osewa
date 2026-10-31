@@ -1,4 +1,4 @@
-//! manual_test.go
+//! Manual credit and key validation.
 
 use super::*;
 

@@ -1,4 +1,4 @@
-//! Stamped output (Go's bench/stamp.go) carries lines "@T<unix ms>@" so
+//! Stamped output carries lines "@T<unix ms>@" so
 //! whoever renders the screen can tell how old it is. Containers on one host
 //! share the kernel clock, so a stamp written in one compares with the clock
 //! in another.
@@ -27,7 +27,7 @@ pub fn stamp(t: SystemTime) -> Vec<u8> {
     format!("@T{}@\r\n", unix_ms(t)).into_bytes()
 }
 
-/// The byte offsets [start, end) of every stamp in s: Go's
+/// The byte offsets [start, end) of every stamp in s: the regexp
 /// `@T(\d{13})@`, leftmost and non-overlapping.
 pub fn stamp_indexes(s: &str) -> Vec<[usize; 2]> {
     let b = s.as_bytes();
