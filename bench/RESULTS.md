@@ -26,7 +26,7 @@ on cellular (73 ms) and the 1 Mbit/s link (125 ms). One caveat: in this test
 rig QUIC reaches the container through Docker's UDP port forwarding, which
 caps a 50 Mbit/s download near 1.4 MB/s.
 
-## Real world: Thailand to Tokyo
+## Real world: Thailand to Tokyo, over Tailscale
 
 From one Mac mini Pro in Thailand to another in Tokyo, over Tailscale (about
 125 ms round trip), osewa connects four times faster than ssh and six times
@@ -47,7 +47,29 @@ connection on the same path, as a mosh user's would. The path swings from
 run to run (ssh's echo during a download ranged 176–301 ms across the five
 runs), so read differences under about 20 ms as noise. Runs of 2026-10-31
 with `osewa-bench vs` (raw output in
-[real-world-2026-10-31.txt](real-world-2026-10-31.txt)).
+[real-world-2026-10-31.txt](real-world-2026-10-31.txt)), on a build
+before the WebSocket compression and window fixes the VPS runs below
+include.
+
+## Real world: Thailand to a Tokyo VPS
+
+From the same Mac in Thailand to a 1-vCPU, 1 GB Linode in Tokyo, over the
+public internet (about 100 ms round trip). With a faster path, osewa over
+QUIC downloads at three times ssh's speed, and during the download keys
+echo in 102 ms, as fast as idle; ssh's take 145.
+
+| Median of 5 runs | osewa QUIC | osewa WebSocket | ssh | mosh |
+| --- | ---: | ---: | ---: | ---: |
+| Connect + run a command | **311 ms** | 511 ms | 1,337 ms | 1,993 ms |
+| Echo p50, idle | **99 ms** | 101 ms | 110 ms | 114 ms |
+| Echo p50 / p95 during a download | **102 / 105 ms** | 104 / 143 ms | 145 / 150 ms | 113 / 119 ms |
+| Download alone | **39.67 MB/s** | 27.26 MB/s | 11.96 MB/s | — |
+| Download while typing | **30.55 MB/s** | 27.28 MB/s | 11.55 MB/s | 15.45 MB/s |
+
+QUIC's download while typing ranged 15.8–39.9 MB/s across the five runs;
+the WebSocket's held at 27 in every one. Runs of 2026-10-31 with
+`osewa-bench vs` (raw output in
+[real-world-vps-2026-10-31.txt](real-world-vps-2026-10-31.txt)).
 
 ## Resource use
 

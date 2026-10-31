@@ -75,7 +75,7 @@ on cellular (73 ms) and the 1 Mbit/s link (125 ms). One caveat: in this test
 rig QUIC reaches the container through Docker's UDP port forwarding, which
 caps a 50 Mbit/s download near 1.4 MB/s.
 
-### Real world: Thailand to Tokyo
+### Real world: Thailand to Tokyo, over Tailscale
 
 From one Mac mini Pro in Thailand to another in Tokyo, over Tailscale (about
 125 ms round trip), osewa connects four times faster than ssh and six times
@@ -96,7 +96,29 @@ connection on the same path, as a mosh user's would. The path swings from
 run to run (ssh's echo during a download ranged 176–301 ms across the five
 runs), so read differences under about 20 ms as noise. Runs of 2026-10-31
 with `osewa-bench vs` (raw output in
-[bench/real-world-2026-10-31.txt](bench/real-world-2026-10-31.txt)).
+[bench/real-world-2026-10-31.txt](bench/real-world-2026-10-31.txt)), on a build
+before the WebSocket compression and window fixes the VPS runs below
+include.
+
+### Real world: Thailand to a Tokyo VPS
+
+From the same Mac in Thailand to a 1-vCPU, 1 GB Linode in Tokyo, over the
+public internet (about 100 ms round trip). With a faster path, osewa over
+QUIC downloads at three times ssh's speed, and during the download keys
+echo in 102 ms, as fast as idle; ssh's take 145.
+
+| Median of 5 runs | osewa QUIC | osewa WebSocket | ssh | mosh |
+| --- | ---: | ---: | ---: | ---: |
+| Connect + run a command | **311 ms** | 511 ms | 1,337 ms | 1,993 ms |
+| Echo p50, idle | **99 ms** | 101 ms | 110 ms | 114 ms |
+| Echo p50 / p95 during a download | **102 / 105 ms** | 104 / 143 ms | 145 / 150 ms | 113 / 119 ms |
+| Download alone | **39.67 MB/s** | 27.26 MB/s | 11.96 MB/s | — |
+| Download while typing | **30.55 MB/s** | 27.28 MB/s | 11.55 MB/s | 15.45 MB/s |
+
+QUIC's download while typing ranged 15.8–39.9 MB/s across the five runs;
+the WebSocket's held at 27 in every one. Runs of 2026-10-31 with
+`osewa-bench vs` (raw output in
+[bench/real-world-vps-2026-10-31.txt](bench/real-world-vps-2026-10-31.txt)).
 
 ### Resource use
 
@@ -229,8 +251,9 @@ published ports, over netem-shaped links with realistic buffers: far fiber
 with 1% loss (20 ms, 20 Mbit/s) and a slow link (100 ms, 1 Mbit/s, 1%
 loss). Echo is the time from sending a key to seeing it, during a download
 on the same connection. Recovery is measured by moving the client to a new
-IP address after 5 s offline. Real-path checks ran against a host in Tokyo
-over Tailscale. The rig is an e2e suite in Docker, run against an image of
+IP address after 5 s offline. Real-path checks ran from Thailand against a
+Mac mini in Tokyo over Tailscale and a Linode VPS in Tokyo over the public
+internet. The rig is an e2e suite in Docker, run against an image of
 this build (`docker build --target binary`); the results are in
 [bench/RESULTS.md](bench/RESULTS.md).
 
@@ -249,8 +272,8 @@ fallback, port forwarding and exec, and keeps keystrokes ahead of bulk data
 on the same connection.
 
 **Does it work behind a VPN or tailnet?** Yes. QUIC starts with 1200-byte
-packets to fit a WireGuard MTU, and all the numbers to a Tokyo host were
-taken over Tailscale.
+packets to fit a WireGuard MTU, and the Mac mini numbers above were taken
+over Tailscale.
 
 ## License
 

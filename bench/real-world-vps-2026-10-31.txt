@@ -1,0 +1,23 @@
+| median of 5 run(s) | osewa QUIC | osewa WebSocket | ssh | mosh |
+|---|---:|---:|---:|---:|
+| connect + run p50 ms | 311 | 511 | 1337 | 1993 |
+| echo idle p50 / p95 ms | 99 / 100 | 101 / 102 | 110 / 121 | 114 / 121 |
+| echo during a download p50 / p95 ms | 102 / 105 | 104 / 143 | 145 / 150 | 113 / 119 |
+| download alone MB/s | 39.67 | 27.26 | 11.96 | — |
+| download during the echo MB/s | 30.55 | 27.28 | 11.55 | 15.45 |
+
+per run, echo during a download p50 ms:
+- osewa QUIC: 102 102 102 100 102
+- osewa WebSocket: 103 115 104 104 144
+- ssh: 143 145 142 146 242
+- mosh: 115 113 114 112 109
+
+per run, download MB/s (alone / while typing):
+- osewa QUIC: 34.40 41.13 39.68 25.07 39.67 / 30.55 28.07 15.80 39.88 33.26
+- osewa WebSocket: 26.83 27.26 27.06 27.27 27.30 / 27.25 27.30 27.28 27.27 27.37
+- ssh: 11.96 13.72 9.88 11.43 12.29 / 12.38 11.28 12.45 11.55 8.44
+- mosh: — / 16.75 10.27 0.33 18.99 15.45
+
+Client: Mac in Thailand. Host: Linode Nanode (1 vCPU, 1 GB), Tokyo 3, Ubuntu 24.04,
+over the public internet. Server build 377ebff. ssh and mosh connected to sshd on
+port 2222: on this path some fresh TCP connections to port 22 got no answer.
