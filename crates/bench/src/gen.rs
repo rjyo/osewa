@@ -94,7 +94,7 @@ pub fn workload(kind: &str, cols: usize, rows: usize) -> Result<Vec<Vec<u8>>, Er
         // enters the alternate screen once (FRAMED_PREFIX): repeating it as
         // the frames cycle would clear the echo row.
         "w4" => w4_frames(2 * W4_SWITCH, cols, rows),
-        _ => return Err(Error(format!("unknown workload {}", osewa_wire::go_quote(kind)))),
+        _ => return Err(Error(format!("unknown workload {}", osewa_wire::quote(kind)))),
     })
 }
 

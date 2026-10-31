@@ -133,7 +133,7 @@ pub(crate) struct Target {
 }
 
 pub(crate) fn parse_url(url: &str) -> Result<Target> {
-    let bad = || Error::Other(format!("osewa: bad URL {}: want wss://host:port{}", wire::go_quote(url), wire::PATH));
+    let bad = || Error::Other(format!("osewa: bad URL {}: want wss://host:port{}", wire::quote(url), wire::PATH));
     let rest = url.strip_prefix("wss://").ok_or_else(bad)?;
     let authority = rest.split('/').next().unwrap_or("");
     let (host, port) = if let Some(r) = authority.strip_prefix('[') {

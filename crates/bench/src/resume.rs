@@ -37,7 +37,7 @@ pub fn resume_main(args: &[String], w: &mut dyn Write) -> Result<(), Error> {
     let id = osewa_auth::Identity::load_or_create(Path::new(&key_path)).map_err(|e| Error(e.to_string()))?;
     let want = match p.str("want") {
         w if w.is_empty() => String::new(),
-        w => std::fs::read_to_string(&w).map_err(|e| Error(format!("open {w}: {}", crate::go_io_error(&e))))?,
+        w => std::fs::read_to_string(&w).map_err(|e| Error(format!("open {w}: {}", crate::io_error_text(&e))))?,
     };
     let tls = Arc::new(osewa_auth::client_config(&id, sk));
     let (mut total, mut dial, mut mismatch) = (Vec::new(), Vec::new(), 0);

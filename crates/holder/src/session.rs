@@ -642,7 +642,7 @@ impl Session {
             wire::METHOD_OWN => self.own(cid, &req, &mut resp),
             wire::METHOD_RESIZE => self.resize_req(cid, &req),
             wire::METHOD_KILL => self.kill(&req),
-            m => Err((wire::ERR_BAD_REQUEST, format!("unknown method {}", wire::go_quote(m)))),
+            m => Err((wire::ERR_BAD_REQUEST, format!("unknown method {}", wire::quote(m)))),
         };
         if let Err((code, msg)) = res {
             resp = wire::Response::error(req.id, code, msg);

@@ -62,7 +62,7 @@ fn bench(a: &[&str], stdin: &[u8]) -> std::process::Output {
 fn binary_exit_codes_and_pipes() {
     let o = bench(&[], b"");
     assert_eq!(o.status.code(), Some(2));
-    assert_eq!(String::from_utf8_lossy(&o.stderr), "usage: osewa-bench gen|drive|clock|resume|serve|bytes [flags]\n");
+    assert_eq!(String::from_utf8_lossy(&o.stderr), "usage: osewa-bench gen|drive|clock|resume|serve|bytes|vs [flags]\n");
     let o = bench(&["bogus"], b"");
     assert_eq!(o.status.code(), Some(1));
     assert_eq!(String::from_utf8_lossy(&o.stderr), "osewa-bench: unknown command \"bogus\"\n");

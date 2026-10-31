@@ -125,7 +125,7 @@ fn w4_table(b: &mut String, r: &mut Rng, frame: usize, cols: usize, rows: usize)
     let _ = write!(b, "\x1b[7m{}\x1b[0m", fit(&format!("{keys}  {STAMP_PLACEHOLDER}"), cols));
 }
 
-const GO_SOURCE: &str = r#"// Package holder keeps one terminal session alive.
+const CODE_SOURCE: &str = r#"// Package holder keeps one terminal session alive.
 package holder
 
 import (
@@ -155,11 +155,11 @@ func (s *Session) loop(ctx context.Context) error {
 	}
 }"#;
 
-fn go_source() -> Vec<&'static str> {
-    GO_SOURCE.split('\n').collect()
+fn code_source() -> Vec<&'static str> {
+    CODE_SOURCE.split('\n').collect()
 }
 
-fn go_keyword(w: &str) -> bool {
+fn keyword(w: &str) -> bool {
     matches!(w, "package" | "import" | "type" | "struct" | "func" | "for" | "if" | "return" | "nil")
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn highlight(line: &str) -> String {
             if j > 0 {
                 b.push(' ');
             }
-            if go_keyword(w.trim_start_matches('\t')) {
+            if keyword(w.trim_start_matches('\t')) {
                 let _ = write!(b, "\x1b[34m{w}\x1b[0m");
             } else {
                 b.push_str(w);
@@ -189,7 +189,7 @@ pub(crate) fn highlight(line: &str) -> String {
 }
 
 fn w4_code(b: &mut String, frame: usize, cols: usize, rows: usize) {
-    let src = go_source();
+    let src = code_source();
     for y in 1..rows {
         let n = (frame + y - 1) % src.len();
         row(b, y);

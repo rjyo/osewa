@@ -201,7 +201,7 @@ pub(crate) fn join_host_port(host: &str, port: impl std::fmt::Display) -> String
 /// target to the server's localhost at the same port. IPv6 addresses go in
 /// brackets.
 pub(crate) fn parse_forward(s: &str) -> Result<ForwardSpec> {
-    let bad = || Error::Msg(format!("bad forward {}: want [bind:]port[:host:hostport]", wire::go_quote(s)));
+    let bad = || Error::Msg(format!("bad forward {}: want [bind:]port[:host:hostport]", wire::quote(s)));
     let parts = split_colons(s);
     let (mut bind, mut host, mut hport) = ("127.0.0.1", "localhost", "");
     let lport = match parts.as_slice() {

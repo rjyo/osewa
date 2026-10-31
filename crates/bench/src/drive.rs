@@ -236,7 +236,7 @@ pub fn drive_main(args: &[String], w: &mut dyn Write) -> Result<(), Error> {
     if p.args.is_empty() {
         return Err(Error("drive: no command".into()));
     }
-    let d = Display::start(&p.args, cols as u16, rows as u16).map_err(|e| Error(crate::go_exec_error(&p.args[0], &e)))?;
+    let d = Display::start(&p.args, cols as u16, rows as u16).map_err(|e| Error(crate::exec_error_text(&p.args[0], &e)))?;
     let res = drive(&d, &p, settle, keys, line, interval, timeout, dur, every);
     d.close();
     let out = res?;
@@ -258,7 +258,7 @@ fn drive(
     let ready = p.str("ready");
     if !d.wait_for(Duration::from_secs(30), |r, _| r.join("\n").contains(&ready)) {
         let (rs, _, _) = d.screen();
-        return Err(Error(format!("drive: {} never appeared:\n{}", osewa_wire::go_quote(&ready), rs.join("\n"))));
+        return Err(Error(format!("drive: {} never appeared:\n{}", osewa_wire::quote(&ready), rs.join("\n"))));
     }
     let setup = p.str("setup");
     if !setup.is_empty() {
@@ -268,7 +268,7 @@ fn drive(
     match p.str("mode").as_str() {
         "type" => Ok(type_keys(d, keys.max(0) as usize, line.max(1) as usize, interval, timeout)),
         "watch" => Ok(watch(d, dur, every)),
-        m => Err(Error(format!("drive: unknown mode {}", osewa_wire::go_quote(m)))),
+        m => Err(Error(format!("drive: unknown mode {}", osewa_wire::quote(m)))),
     }
 }
 

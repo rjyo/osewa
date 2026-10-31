@@ -228,7 +228,7 @@ impl Mirror {
                 if st.ended {
                     return Err(format!(
                         "osewa: session ended without {}",
-                        wire::go_quote(substr)
+                        wire::quote(substr)
                     ));
                 }
                 rx

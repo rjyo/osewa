@@ -50,7 +50,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Unknown(name) => write!(f, "unknown host {}; run osewa login first", wire::go_quote(name)),
+            Error::Unknown(name) => write!(f, "unknown host {}; run osewa login first", wire::quote(name)),
             Error::Io(e) => e.fmt(f),
             Error::Invalid(s) => f.write_str(s),
         }
@@ -247,7 +247,7 @@ impl Host {
             e => Error::Invalid(e.to_string()),
         })?;
         let key = osewa_auth::decode_key(&self.server_key)
-            .map_err(|e| Error::Invalid(format!("host {}: {e}", wire::go_quote(&self.name))))?;
+            .map_err(|e| Error::Invalid(format!("host {}: {e}", wire::quote(&self.name))))?;
         let (dir, h) = (dir.to_path_buf(), self.clone());
         Ok(crate::Config {
             url: format!("wss://{}{}", self.addr, wire::PATH),

@@ -201,7 +201,7 @@ pub async fn check_host(dir: &Path, h: &Host, within: Duration) -> Result<(), Er
 /// -oProxyCommand=..., which runs a local command.
 fn check_target(target: &str) -> Result<(), Error> {
     if target.is_empty() || target.starts_with('-') {
-        return Err(Error::Other(format!("bad ssh target {}", wire::go_quote(target))));
+        return Err(Error::Other(format!("bad ssh target {}", wire::quote(target))));
     }
     Ok(())
 }
@@ -336,7 +336,7 @@ pub fn parse_enroll(out: &[u8]) -> Result<EnrollResponse, Error> {
         }
     }
     let Some(r) = found else {
-        return Err(Error::Other(format!("no enroll response in {}", wire::go_quote(&String::from_utf8_lossy(out)))));
+        return Err(Error::Other(format!("no enroll response in {}", wire::quote(&String::from_utf8_lossy(out)))));
     };
     osewa_auth::decode_key(&r.server_key).map_err(|e| Error::Other(e.to_string()))?;
     if r.version != wire::VERSION {

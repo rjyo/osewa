@@ -101,7 +101,7 @@ impl Service {
     }
 
     fn install_systemd(&mut self, argv: &[String]) -> Result<(), String> {
-        let quoted: Vec<String> = argv.iter().map(|a| osewa_wire::go_quote(a)).collect();
+        let quoted: Vec<String> = argv.iter().map(|a| osewa_wire::quote(a)).collect();
         let unit = format!(
             "[Unit]\nDescription=osewa server (persistent terminals)\n\n[Service]\nExecStart={}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
             quoted.join(" ")
@@ -320,5 +320,5 @@ fn xml_escape(s: &str) -> String {
 
 /// Formats args quoted, in brackets: ["a" "b"].
 fn quote_list(args: &[String]) -> String {
-    format!("[{}]", args.iter().map(|a| osewa_wire::go_quote(a)).collect::<Vec<_>>().join(" "))
+    format!("[{}]", args.iter().map(|a| osewa_wire::quote(a)).collect::<Vec<_>>().join(" "))
 }

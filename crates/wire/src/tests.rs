@@ -157,6 +157,6 @@ fn lenient_decoding_and_html_escaping() {
 
 #[test]
 fn quoting() {
-    assert_eq!(go_quote("nope"), "\"nope\"");
-    assert_eq!(go_quote("a\x1b\"\\\n\u{85}é"), r#""a\x1b\"\\\n\u0085é""#);
+    assert_eq!(quote("nope"), "\"nope\"");
+    assert_eq!(quote("a\x1b\"\\\n\u{85}é"), r#""a\x1b\"\\\n\u0085é""#);
 }

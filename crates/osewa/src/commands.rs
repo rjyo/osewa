@@ -99,7 +99,7 @@ impl Env {
         } else if res.installed {
             writeln!(out, "installed osewa on {target}")?;
         }
-        writeln!(out, "enrolled as {} on {} ({})", wire::go_quote(&res.device), res.host.name, res.host.addr)?;
+        writeln!(out, "enrolled as {} on {} ({})", wire::quote(&res.device), res.host.name, res.host.addr)?;
         // What the host said about its server.
         for line in &res.server {
             writeln!(out, "{}", printable_lines(line))?;

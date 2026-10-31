@@ -268,7 +268,7 @@ pub fn marshal<T: serde::Serialize>(v: &T) -> Vec<u8> {
 
 /// Quotes s for error messages ("\x1b", "\u0085" escapes), as v0 peers
 /// word them, so a message reads the same from any peer.
-pub fn go_quote(s: &str) -> String {
+pub fn quote(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
         match c {

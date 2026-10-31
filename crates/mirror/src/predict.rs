@@ -27,7 +27,7 @@ pub fn parse_predict_mode(s: &str) -> Result<PredictMode, String> {
         "never" => Ok(PredictMode::Never),
         _ => Err(format!(
             "osewa: predict mode {}: want auto, always or never",
-            osewa_wire::go_quote(s)
+            osewa_wire::quote(s)
         )),
     }
 }

@@ -86,7 +86,7 @@ impl Env {
         let uname = run_script(ctx, c, Vec::new(), "uname -s; uname -m").await.map_err(|e| format!("update {name}: uname: {e}"))?;
         let f: Vec<&str> = uname.split_whitespace().collect();
         if f.len() != 2 {
-            return Err(Error::Msg(format!("update {name}: uname said {}", osewa_wire::go_quote(&uname))));
+            return Err(Error::Msg(format!("update {name}: uname said {}", osewa_wire::quote(&uname))));
         }
         let (os_name, arch_name) = install::platform(f[0], f[1]).map_err(|e| format!("update {name}: {e}"))?;
         let bin = login::local_binaries(os_name, arch_name)?;

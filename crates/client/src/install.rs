@@ -93,7 +93,7 @@ pub(crate) async fn remote_with(ssh: Vec<String>, ssh_target: &str, binary_for: 
     // A target like -oProxyCommand=... would be an ssh option that runs a
     // local command; "--" ends ssh's options.
     if ssh_target.is_empty() || ssh_target.starts_with('-') {
-        return Err(Error::Other(format!("install: bad ssh target {}", osewa_wire::go_quote(ssh_target))));
+        return Err(Error::Other(format!("install: bad ssh target {}", osewa_wire::quote(ssh_target))));
     }
     let target = ssh_target.to_string();
     crate::rt::run_local(move || async move {
@@ -185,7 +185,7 @@ where
     match f[0].as_str() {
         "done" => Ok(Outcome { installed: true, replaced: !have.is_empty() }),
         "bad" => Err(Error::Other(format!("copy arrived damaged ({})", f[1..].join(" ")))),
-        _ => Err(Error::Other(format!("unexpected {} from host", osewa_wire::go_quote(&f.join(" "))))),
+        _ => Err(Error::Other(format!("unexpected {} from host", osewa_wire::quote(&f.join(" "))))),
     }
 }
 
@@ -204,7 +204,7 @@ async fn probe<R: AsyncBufRead + Unpin>(out: &mut R) -> Result<(Vec<String>, Str
         match f[0].as_str() {
             "have" if f.len() >= 2 => have.push(f[1].clone()),
             "host" if f.len() == 3 => return Ok((have, f[1].clone(), f[2].clone())),
-            _ => return Err(Error::Other(format!("unexpected {} from host", osewa_wire::go_quote(&f.join(" "))))),
+            _ => return Err(Error::Other(format!("unexpected {} from host", osewa_wire::quote(&f.join(" "))))),
         }
     }
 }
@@ -292,8 +292,8 @@ shift 2
 {pre}
 HOME={} PATH={}:/usr/bin:/bin exec {shell} -c "$*"
 "#,
-            osewa_wire::go_quote(h.home.to_str().unwrap()),
-            osewa_wire::go_quote(h.bin.to_str().unwrap()),
+            osewa_wire::quote(h.home.to_str().unwrap()),
+            osewa_wire::quote(h.bin.to_str().unwrap()),
         );
         write_exec(&h.ssh, &body);
         h
@@ -558,8 +558,8 @@ HOME={} PATH={}:/usr/bin:/bin exec {shell} -c "$*"
         let victim = parent.join("my");
         fs::write(&victim, "keep").unwrap();
         let body = read(&h.ssh).replace(
-            &format!("HOME={}", osewa_wire::go_quote(h.home.to_str().unwrap())),
-            &format!("HOME={}", osewa_wire::go_quote(spaced.to_str().unwrap())),
+            &format!("HOME={}", osewa_wire::quote(h.home.to_str().unwrap())),
+            &format!("HOME={}", osewa_wire::quote(spaced.to_str().unwrap())),
         );
         write_exec(&h.ssh, &body);
         h.home = spaced;

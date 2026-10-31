@@ -410,7 +410,7 @@ impl Flags {
                 (Kind::Bool, Some(v)) => match v.as_str() {
                     "1" | "t" | "T" | "true" | "TRUE" | "True" => "true".into(),
                     "0" | "f" | "F" | "false" | "FALSE" | "False" => "false".into(),
-                    _ => return Err(Error::Msg(format!("invalid boolean value {} for -{name}: parse error", osewa_wire::go_quote(&v)))),
+                    _ => return Err(Error::Msg(format!("invalid boolean value {} for -{name}: parse error", osewa_wire::quote(&v)))),
                 },
                 (Kind::Bool, None) => "true".into(),
                 (_, Some(v)) => v,

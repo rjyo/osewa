@@ -53,7 +53,7 @@ impl std::error::Error for Error {}
 
 impl Error {
     pub(crate) fn io(e: io::Error) -> Error {
-        Error(go_io_error(&e))
+        Error(io_error_text(&e))
     }
 }
 
@@ -74,7 +74,7 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
         "serve" => serve::serve_main(rest),
         "bytes" => serve::bytes_main(rest, io::stdin().lock(), stdout),
         "vs" => vs::vs_main(rest, stdout),
-        c => Err(Error(format!("unknown command {}", osewa_wire::go_quote(c)))),
+        c => Err(Error(format!("unknown command {}", osewa_wire::quote(c)))),
     };
     match r {
         Ok(()) => 0,
@@ -123,7 +123,7 @@ pub(crate) fn int(p: &osewa_flag::Parsed, name: &str) -> Result<i64, Error> {
 /// A duration flag, as int.
 pub(crate) fn duration(p: &osewa_flag::Parsed, name: &str) -> Result<std::time::Duration, Error> {
     p.duration(name).map_err(|_| {
-        let e = format!("invalid value {} for flag -{name}: parse error", osewa_wire::go_quote(&p.str(name)));
+        let e = format!("invalid value {} for flag -{name}: parse error", osewa_wire::quote(&p.str(name)));
         eprintln!("{e}");
         Error(e)
     })
@@ -142,7 +142,7 @@ pub(crate) fn json_f64s(v: &[f64]) -> String {
 /// An I/O error as the C library words it ("no such file or
 /// directory"), without Rust's " (os error N)": the harness matches the
 /// text.
-pub(crate) fn go_io_error(e: &io::Error) -> String {
+pub(crate) fn io_error_text(e: &io::Error) -> String {
     let s = e.to_string();
     match s.find(" (os error ") {
         Some(i) => {
@@ -158,9 +158,9 @@ pub(crate) fn go_io_error(e: &io::Error) -> String {
 
 /// A failed start, worded as the harness expects ("exec: ...: executable
 /// file not found in $PATH").
-pub(crate) fn go_exec_error(name: &str, e: &io::Error) -> String {
+pub(crate) fn exec_error_text(name: &str, e: &io::Error) -> String {
     if e.kind() == io::ErrorKind::NotFound && !name.contains('/') {
-        return format!("exec: {}: executable file not found in $PATH", osewa_wire::go_quote(name));
+        return format!("exec: {}: executable file not found in $PATH", osewa_wire::quote(name));
     }
-    format!("fork/exec {name}: {}", go_io_error(e))
+    format!("fork/exec {name}: {}", io_error_text(e))
 }

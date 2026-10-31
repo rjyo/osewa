@@ -927,13 +927,13 @@ impl Session {
     pub fn key(&self, code: &str, mods: &[&str], text: &str, action: &str) -> Result<()> {
         for m in mods {
             if !matches!(*m, "shift" | "ctrl" | "alt" | "super") {
-                return Err(Error::Other(format!("osewa: key modifier {}", wire::go_quote(m))));
+                return Err(Error::Other(format!("osewa: key modifier {}", wire::quote(m))));
             }
         }
         let action = match action {
             "" | "press" => "",
             "repeat" | "release" => action,
-            _ => return Err(Error::Other(format!("osewa: key action {}", wire::go_quote(action)))),
+            _ => return Err(Error::Other(format!("osewa: key action {}", wire::quote(action)))),
         };
         if code.is_empty() {
             return Err(Error::Other("osewa: key without a code".into()));
