@@ -76,6 +76,15 @@ impl Tracer {
         self.event("frame_recv", &fields);
     }
 
+    /// Traces a CREDIT once its write returned: against the server's
+    /// trace of its arrival, it shows where a late credit waited.
+    pub fn credit_sent(&self, b: &[u8]) {
+        let Ok(f) = wire::Frame::unmarshal(b) else { return };
+        if let Ok(n) = wire::parse_credit(&f.payload) {
+            self.event("credit_sent", &[("stream", json!(f.stream)), ("n", json!(n))]);
+        }
+    }
+
     /// Traces an INPUT frame once its write returned.
     pub fn input_sent(&self, b: &[u8]) {
         #[derive(serde::Deserialize)]

@@ -717,8 +717,10 @@ impl Conn {
             }
             if let Some(tr) = &self.0.tr {
                 for b in &batch {
-                    if b.first() == Some(&wire::TYPE_INPUT) {
-                        tr.input_sent(b);
+                    match b.first() {
+                        Some(&wire::TYPE_INPUT) => tr.input_sent(b),
+                        Some(&wire::TYPE_CREDIT) => tr.credit_sent(b),
+                        _ => {}
                     }
                 }
             }

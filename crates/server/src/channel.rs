@@ -324,6 +324,10 @@ impl Channel {
                     let typing = self.c.typing(now);
                     s.fl.credit(n, now, typing);
                     self.c.flight.borrow_mut().credit(n, now, typing);
+                    if let Some(tr) = &self.c.srv.trace {
+                        let ev = [("stream", self.id.into()), ("n", n.into()), ("window", s.fl.window.into()), ("in_flight", s.fl.in_flight().into())];
+                        tr.event("credit", &ev);
+                    }
                     (0, Ok(()))
                 }
                 wire::TYPE_DATA => {

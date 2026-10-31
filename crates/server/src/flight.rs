@@ -30,7 +30,9 @@ pub(crate) struct Flight {
     pub window: usize,
     pub sent: u64,
     pub credited: u64,
-    marks: VecDeque<(u64, Instant)>,
+    marks: VecDeque<Mark>,
+    /// When credit last came.
+    credited_at: Option<Instant>,
     /// The shortest credit round trip in the last FLIGHT_RTT_SPAN. Sizing
     /// from it keeps the queue this stream builds from inflating the window
     /// that builds it.
@@ -47,8 +49,28 @@ pub(crate) struct Flight {
     rates: VecDeque<(f64, Instant)>,
     /// Sized for someone typing, not left open.
     pub capped: bool,
+    /// When the round the window is next resized after began.
     rate_from: Option<Instant>,
-    pub rate_base: u64,
+    /// The round's highest delivery rate (Mark).
+    round_rate: f64,
+    /// The round's shortest credit round trip: a queue raises them all,
+    /// while the client's batching delays only the last credit of a burst.
+    round_min: Option<Duration>,
+}
+
+/// A send: where it ends, when it went, and how much had been credited by
+/// then and when, as BBR's delivery rate samples. Its credit gives the rate
+/// as the bytes credited since over the time since. Averaged over a round
+/// instead, a stream held to its window measures the window's tail: it
+/// sends the window, idles until credit comes, and the round ends a credit
+/// step into the next burst, so it sizes the window down from a rate it
+/// never had.
+#[derive(Debug, Clone, Copy)]
+struct Mark {
+    end: u64,
+    at: Instant,
+    credited: u64,
+    credited_at: Instant,
 }
 
 impl Default for Flight {
@@ -58,6 +80,7 @@ impl Default for Flight {
             sent: 0,
             credited: 0,
             marks: VecDeque::new(),
+            credited_at: None,
             min_rtt: Duration::ZERO,
             min_rtt_at: None,
             rtts: VecDeque::new(),
@@ -66,7 +89,8 @@ impl Default for Flight {
             rates: VecDeque::new(),
             capped: false,
             rate_from: None,
-            rate_base: 0,
+            round_rate: 0.0,
+            round_min: None,
         }
     }
 }
@@ -93,13 +117,17 @@ impl Flight {
 
     pub fn send(&mut self, n: usize, now: Instant) {
         // With nothing in flight the link was idle, not slow: measure from
-        // now, or the first credit after a pause would average over it.
-        if self.rate_from.is_none() || self.sent == self.credited {
+        // now, or the first credit after a pause would count the pause.
+        let idle = self.sent == self.credited;
+        if self.rate_from.is_none() {
             self.rate_from = Some(now);
-            self.rate_base = self.credited;
         }
+        let credited_at = match self.credited_at {
+            Some(t) if !idle => t,
+            _ => now,
+        };
         self.sent += n as u64;
-        self.marks.push_back((self.sent, now));
+        self.marks.push_back(Mark { end: self.sent, at: now, credited: self.credited, credited_at });
     }
 
     /// Applies a CREDIT and resizes the window once per round trip: to what
@@ -111,13 +139,21 @@ impl Flight {
     /// spell shrinks it at once (tighten).
     pub fn credit(&mut self, n: u32, now: Instant, typing: bool) {
         self.credited = (self.credited + n as u64).min(self.sent);
-        let mut sample = None;
-        while let Some(&(off, at)) = self.marks.front() {
-            if off > self.credited {
+        self.credited_at = Some(now);
+        let mut acked = None;
+        while let Some(&m) = self.marks.front() {
+            if m.end > self.credited {
                 break;
             }
-            sample = Some(now.saturating_duration_since(at));
+            acked = Some(m);
             self.marks.pop_front();
+        }
+        let sample = acked.map(|m| now.saturating_duration_since(m.at));
+        if let Some(m) = acked {
+            let d = now.saturating_duration_since(m.credited_at);
+            if !d.is_zero() {
+                self.round_rate = self.round_rate.max((self.credited - m.credited) as f64 / d.as_secs_f64());
+            }
         }
         if let Some(s) = sample {
             let expired = self.min_rtt_at.is_some_and(|at| now.saturating_duration_since(at) > FLIGHT_RTT_SPAN);
@@ -126,11 +162,12 @@ impl Flight {
                 self.min_rtt_at = Some(now);
             }
             self.add_rtt(s, now);
+            self.round_min = Some(self.round_min.map_or(s, |m| m.min(s)));
         }
         let Some(from) = self.rate_from else { return };
         let elapsed = now.saturating_duration_since(from);
-        if !self.min_rtt.is_zero() && elapsed >= self.min_rtt {
-            let rate = (self.credited - self.rate_base) as f64 / elapsed.as_secs_f64();
+        if !self.min_rtt.is_zero() && elapsed >= self.min_rtt && self.round_rate > 0.0 {
+            let rate = self.round_rate;
             self.rate = rate;
             while self.rates.front().is_some_and(|&(_, at)| now.saturating_duration_since(at) > FLIGHT_RTT_SPAN) {
                 self.rates.pop_front();
@@ -142,14 +179,14 @@ impl Flight {
             let queue = if typing { QUEUE_TARGET } else { QUEUE_IDLE };
             let mut est = clamp_window(rate, self.base() + queue);
             // The rate was measured under this window, so a window that
-            // held data back can't measure its way past itself: while it is
-            // full and the last round trip shows no more queue than
-            // allowed, it doubles,
-            // as slow start does, and the rate bounds it again once a queue
-            // shows. Without this a stream that starts while someone types
-            // stays a fraction of the link for as long as they do.
+            // held data back can't measure its way past itself: while it
+            // carried a full window per round trip and the round's round
+            // trips show no more queue than allowed, it doubles, as slow
+            // start does, and the rate bounds it again once a queue shows.
+            // Without this a stream that starts while someone types stays a
+            // fraction of the link for as long as they do.
             let filled = rate * self.base().as_secs_f64() >= 0.9 * self.window as f64;
-            if self.blocked && filled && sample.is_some_and(|s| s <= self.base() + queue) {
+            if self.blocked && filled && self.round_min.is_some_and(|s| s <= self.base() + queue) {
                 est = est.max((self.window * 2).min(FLIGHT_MAX));
             }
             if self.blocked || est > self.window || (typing && !self.capped) {
@@ -158,7 +195,8 @@ impl Flight {
             self.capped = typing;
             self.blocked = false;
             self.rate_from = Some(now);
-            self.rate_base = self.credited;
+            self.round_rate = 0.0;
+            self.round_min = None;
         }
     }
 
@@ -192,9 +230,9 @@ impl Flight {
     pub fn release(&mut self, n: u64) {
         let d = (self.credited + n).min(self.sent) - self.credited;
         self.credited += d;
-        self.rate_base += d;
-        while self.marks.front().is_some_and(|&(off, _)| off <= self.credited) {
-            self.marks.pop_front();
+        self.marks.retain(|m| m.end > self.credited);
+        for m in &mut self.marks {
+            m.credited += d;
         }
     }
 
@@ -255,14 +293,34 @@ mod tests {
     // it held itself to. Once the round trip grows, it stops.
     #[test]
     fn grows_while_typing_without_a_queue() {
+        grows_while_typing(false);
+        grows_while_typing(true);
+    }
+
+    // credit_steps: the client's way, 8 KiB at once and the rest after
+    // its batching delay, not the whole window in one credit.
+    fn grows_while_typing(credit_steps: bool) {
         let mut f = Flight::default();
         let mut now = Instant::now();
         let round = |f: &mut Flight, now: &mut Instant, rtt: Duration| {
             let n = f.window;
             f.send(n, *now);
             f.blocked = true;
+            let start = *now;
             *now += rtt;
-            f.credit(n as u32, *now, true);
+            if !credit_steps {
+                f.credit(n as u32, *now, true);
+                return;
+            }
+            let step = 8 << 10;
+            for _ in 0..n / step {
+                f.credit(step as u32, *now, true);
+            }
+            if !n.is_multiple_of(step) {
+                *now += ms(50);
+                f.credit((n % step) as u32, *now, true);
+            }
+            *now = (*now).max(start + rtt);
         };
         for _ in 0..6 {
             round(&mut f, &mut now, ms(100));
@@ -273,6 +331,70 @@ mod tests {
             round(&mut f, &mut now, ms(100 + 100 * i));
         }
         assert!(f.window <= w, "window {} grew from {w} with a growing queue", f.window);
+    }
+
+    // The same on the wire's terms: the server sends frames of up to 32 KiB
+    // whenever credit leaves room, the client credits each frame it reads
+    // at once if 8 KiB are owed and after its batching delay if not, and
+    // nothing queues. Each burst's tail
+    // is still out when a round ends, which a rate averaged per round
+    // counted as all the round carried. Where a burst's last frame is short
+    // of 8 KiB depends on the window it starts from, so it starts from many.
+    #[test]
+    fn grows_while_typing_as_credit_comes() {
+        for w in (16..128).map(|k| (k << 10) + 333) {
+            let got = ramp(w);
+            assert!(got >= 1 << 20, "window {got} after 3 s with no queue, from {w}");
+        }
+    }
+
+    fn ramp(start: usize) -> usize {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        const RTT: Duration = Duration::from_millis(100);
+        const DELAY: Duration = Duration::from_millis(50);
+        const FRAME: i64 = 32 << 10;
+        const STEP: u64 = 8 << 10;
+        let t0 = Instant::now();
+        let mut f = Flight { window: start, ..Flight::default() };
+        // (when, arrived bytes, or a credit timer when 0)
+        let mut ev: BinaryHeap<Reverse<(Duration, u64)>> = BinaryHeap::new();
+        let (mut owed, mut timer) = (0u64, None::<Duration>);
+        let fill = |f: &mut Flight, now: Duration, ev: &mut BinaryHeap<Reverse<(Duration, u64)>>| {
+            while f.room() > 0 {
+                let n = f.room().min(FRAME);
+                f.send(n as usize, t0 + now);
+                ev.push(Reverse((now + RTT, n as u64)));
+            }
+            f.blocked = true;
+        };
+        fill(&mut f, Duration::ZERO, &mut ev);
+        while let Some(Reverse((now, n))) = ev.pop() {
+            if now > Duration::from_secs(3) {
+                break;
+            }
+            if n > 0 {
+                owed += n;
+                if owed >= STEP {
+                    f.credit(owed as u32, t0 + now, true);
+                    owed = 0;
+                    timer = None;
+                    fill(&mut f, now, &mut ev);
+                }
+                if owed > 0 && timer.is_none() {
+                    timer = Some(now + DELAY);
+                    ev.push(Reverse((now + DELAY, 0)));
+                }
+            } else if timer == Some(now) {
+                timer = None;
+                if owed > 0 {
+                    f.credit(owed as u32, t0 + now, true);
+                    owed = 0;
+                    fill(&mut f, now, &mut ev);
+                }
+            }
+        }
+        f.window
     }
 
     // rate_max keeps the highest rate of the last FLIGHT_RTT_SPAN, so a
@@ -438,7 +560,7 @@ mod tests {
         let mut f = Flight::default();
         f.send(40 << 10, Instant::now());
         f.release(40 << 10);
-        assert!(f.room() == f.window as i64 && f.marks() == 0 && f.rate_base == f.credited);
+        assert!(f.room() == f.window as i64 && f.marks() == 0);
         f.release(1 << 20); // never past what was sent
         assert_eq!(f.credited, f.sent);
     }
