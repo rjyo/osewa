@@ -64,6 +64,22 @@ static void on_program_status(GhosttyTerminal t, void *ud,
                   r->title.len, r->message.ptr, r->message.len);
 }
 
+uint16_t osewa_term_cols(GhosttyTerminal t);
+uint16_t osewa_term_rows(GhosttyTerminal t);
+uint32_t osewa_term_width_px(GhosttyTerminal t);
+uint32_t osewa_term_height_px(GhosttyTerminal t);
+
+// Size reports (CSI 14/16/18/19 t) come from the terminal's own size, the
+// owner's, so programs see the size the holder draws for.
+static bool on_size(GhosttyTerminal t, void *ud, GhosttySizeReportSize *out) {
+  (void)ud;
+  out->columns = osewa_term_cols(t);
+  out->rows = osewa_term_rows(t);
+  out->cell_width = osewa_term_width_px(t) / (out->columns ? out->columns : 1);
+  out->cell_height = osewa_term_height_px(t) / (out->rows ? out->rows : 1);
+  return true;
+}
+
 int osewa_term_new(uint16_t cols, uint16_t rows, GhosttyTerminal *out) {
   return ghostty_terminal_new(NULL, out, cols, rows);
 }
@@ -78,9 +94,11 @@ void osewa_term_set_userdata(GhosttyTerminal t, void *ud) {
 // never replies to queries.
 void osewa_term_install(GhosttyTerminal t, void *ud, bool write_pty) {
   ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_USERDATA, ud);
-  if (write_pty)
+  if (write_pty) {
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                          (const void *)on_write_pty);
+    ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_SIZE, (const void *)on_size);
+  }
   ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_BELL, (const void *)on_bell);
   ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
                        (const void *)on_title_changed);
@@ -104,8 +122,136 @@ void osewa_term_write(GhosttyTerminal t, const uint8_t *data, size_t len) {
   ghostty_terminal_vt_write(t, data, len);
 }
 
-int osewa_term_resize(GhosttyTerminal t, uint16_t cols, uint16_t rows) {
-  return ghostty_terminal_resize(t, cols, rows, 0, 0);
+int osewa_term_resize(GhosttyTerminal t, uint16_t cols, uint16_t rows,
+                      uint32_t cell_w, uint32_t cell_h) {
+  return ghostty_terminal_resize(t, cols, rows, cell_w, cell_h);
+}
+
+int osewa_term_set_image_limit(GhosttyTerminal t, uint64_t limit) {
+  return ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+                              &limit);
+}
+
+uint32_t osewa_term_width_px(GhosttyTerminal t) {
+  uint32_t v = 0;
+  ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_WIDTH_PX, &v);
+  return v;
+}
+
+uint32_t osewa_term_height_px(GhosttyTerminal t) {
+  uint32_t v = 0;
+  ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_HEIGHT_PX, &v);
+  return v;
+}
+
+// Implemented in Rust: decodes PNG data into RGBA pixels it allocates with
+// osewa_png_alloc(alloc, len).
+extern bool osewa_rs_decode_png(const void *alloc, const uint8_t *data,
+                                size_t len, uint32_t *w, uint32_t *h,
+                                uint8_t **px, size_t *px_len);
+
+uint8_t *osewa_png_alloc(const void *alloc, size_t len) {
+  return ghostty_alloc((const GhosttyAllocator *)alloc, len);
+}
+
+static bool decode_png(void *ud, const GhosttyAllocator *alloc,
+                       const uint8_t *data, size_t len, GhosttySysImage *out) {
+  (void)ud;
+  return osewa_rs_decode_png(alloc, data, len, &out->width, &out->height,
+                             &out->data, &out->data_len);
+}
+
+void osewa_png_install(void) {
+  ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, (const void *)decode_png);
+}
+
+// Implemented in Rust: one placement of the active screen's storage, as
+// osewa_placements reports it.
+extern void osewa_rs_placement(void *ud, const uint32_t *v, int32_t z,
+                               int32_t col, int32_t row, bool visible,
+                               bool is_virtual);
+
+// Reports every placement of the active screen: image and placement ids,
+// the placement's own values as the program sent them, and where it sits in
+// the viewport. v holds image, placement, x offset, y offset, source x, y,
+// width, height, columns, rows, then the grid columns and rows it covers.
+int osewa_placements(GhosttyTerminal t, void *ud) {
+  GhosttyKittyGraphics g = NULL;
+  int r = ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &g);
+  if (r != GHOSTTY_SUCCESS) return r;
+  GhosttyKittyGraphicsPlacementIterator it = NULL;
+  r = ghostty_kitty_graphics_placement_iterator_new(NULL, &it);
+  if (r != GHOSTTY_SUCCESS) return r;
+  r = ghostty_kitty_graphics_get(g, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+                                 &it);
+  if (r != GHOSTTY_SUCCESS) {
+    ghostty_kitty_graphics_placement_iterator_free(it);
+    return r;
+  }
+  static const GhosttyKittyGraphicsPlacementData keys[10] = {
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS,
+      GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS,
+  };
+  while (ghostty_kitty_graphics_placement_next(it)) {
+    uint32_t v[12] = {0};
+    for (int i = 0; i < 10; i++)
+      ghostty_kitty_graphics_placement_get(it, keys[i], &v[i]);
+    int32_t z = 0;
+    ghostty_kitty_graphics_placement_get(it, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z);
+    bool is_virtual = false;
+    ghostty_kitty_graphics_placement_get(
+        it, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL, &is_virtual);
+    GhosttyKittyGraphicsPlacementRenderInfo info =
+        GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo);
+    GhosttyKittyGraphicsImage img = ghostty_kitty_graphics_image(g, v[0]);
+    if (img && ghostty_kitty_graphics_placement_render_info(it, img, t, &info) ==
+                   GHOSTTY_SUCCESS) {
+      v[10] = info.grid_cols;
+      v[11] = info.grid_rows;
+    } else {
+      info.viewport_visible = false;
+    }
+    osewa_rs_placement(ud, v, z, info.viewport_col, info.viewport_row,
+                       info.viewport_visible, is_virtual);
+  }
+  ghostty_kitty_graphics_placement_iterator_free(it);
+  return GHOSTTY_SUCCESS;
+}
+
+// An image of the active screen's storage. Returns GHOSTTY_NO_VALUE for an
+// unknown id; *px is NULL while its pixels are still pending (restored from
+// a snapshot before they arrived). The pixels stay owned by the terminal
+// until its next change.
+int osewa_image(GhosttyTerminal t, uint32_t id, uint32_t *w, uint32_t *h,
+                int *format, const uint8_t **px, size_t *len, uint64_t *gen) {
+  GhosttyKittyGraphics g = NULL;
+  int r = ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &g);
+  if (r != GHOSTTY_SUCCESS) return r;
+  GhosttyKittyGraphicsImage img = ghostty_kitty_graphics_image(g, id);
+  if (!img) return GHOSTTY_NO_VALUE;
+  GhosttyKittyImageFormat f = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
+  ghostty_kitty_graphics_image_get(img, GHOSTTY_KITTY_IMAGE_DATA_WIDTH, w);
+  ghostty_kitty_graphics_image_get(img, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, h);
+  ghostty_kitty_graphics_image_get(img, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &f);
+  ghostty_kitty_graphics_image_get(img, GHOSTTY_KITTY_IMAGE_DATA_GENERATION, gen);
+  *format = (int)f;
+  *px = NULL;
+  *len = 0;
+  if (ghostty_kitty_graphics_image_get(img, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
+                                       px) != GHOSTTY_SUCCESS) {
+    *px = NULL;
+    return GHOSTTY_SUCCESS;
+  }
+  ghostty_kitty_graphics_image_get(img, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, len);
+  return GHOSTTY_SUCCESS;
 }
 
 static uint16_t get_u16(GhosttyTerminal t, GhosttyTerminalData key) {
@@ -232,9 +378,14 @@ static bool reader_read(void *ud, uint8_t *buf, size_t cap, size_t *out) {
   return true;
 }
 
-int osewa_decoder_new(GhosttySnapshotDecoder *out, void *ud) {
+int osewa_decoder_new(GhosttySnapshotDecoder *out, void *ud,
+                      uint64_t image_limit) {
   GhosttyReader r = {.read = reader_read, .userdata = ud};
-  return ghostty_snapshot_decoder_new(NULL, out, r);
+  int rc = ghostty_snapshot_decoder_new(NULL, out, r);
+  if (rc != GHOSTTY_SUCCESS) return rc;
+  return ghostty_snapshot_decoder_set(
+      *out, GHOSTTY_SNAPSHOT_DECODER_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+      &image_limit);
 }
 
 int osewa_decoder_ready(GhosttySnapshotDecoder d, GhosttyTerminal *out) {

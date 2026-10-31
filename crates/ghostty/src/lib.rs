@@ -10,7 +10,9 @@ use std::ffi::c_void;
 use std::fmt;
 
 mod ffi;
+mod images;
 mod input;
+pub use images::*;
 pub use input::*;
 
 /// The pinned libghostty commit, kept in step with scripts/libghostty.sh.
@@ -93,6 +95,8 @@ pub struct Options {
     /// Continuation tracking, which a terminal needs before its first write
     /// if it will ever be snapshotted mid-sequence.
     pub continuation: bool,
+    /// Keeps Kitty graphics images, up to IMAGE_BYTES per screen.
+    pub images: bool,
     pub callbacks: Callbacks,
 }
 
@@ -124,6 +128,7 @@ impl Terminal {
         if !valid_size(cols, rows) {
             return Err(Error { what: "bad size", code: -2 });
         }
+        images::install_png();
         let mut t: ffi::Term = std::ptr::null_mut();
         check(unsafe { ffi::osewa_term_new(cols as u16, rows as u16, &mut t) }, "terminal_new")?;
         let term = Terminal::wrap(t, opts.callbacks);
@@ -133,6 +138,9 @@ impl Terminal {
         if opts.scrollback_bytes > 0 {
             check(unsafe { ffi::osewa_term_set_scrollback(t, opts.scrollback_bytes) }, "scrollback")?;
         }
+        // libghostty keeps images by default; only a terminal that asks does.
+        let limit = if opts.images { IMAGE_BYTES } else { 0 };
+        check(unsafe { ffi::osewa_term_set_image_limit(t, limit) }, "image_limit")?;
         Ok(term)
     }
 
@@ -160,17 +168,31 @@ impl Terminal {
         }
     }
 
-    /// Changes the terminal size.
+    /// Changes the terminal size, keeping the cell size.
     pub fn resize(&mut self, cols: usize, rows: usize) -> Result<()> {
+        let (w, h) = self.cell_size();
+        self.resize_cells(cols, rows, w, h)
+    }
+
+    /// Changes the terminal size and the cell size in pixels, which places
+    /// images and answers size reports (CSI 14 t, 16 t). Zero means unknown.
+    pub fn resize_cells(&mut self, cols: usize, rows: usize, cell_w: u32, cell_h: u32) -> Result<()> {
         if !valid_size(cols, rows) {
             return Err(Error { what: "bad size", code: -2 });
         }
-        check(unsafe { ffi::osewa_term_resize(self.t, cols as u16, rows as u16) }, "resize")
+        check(unsafe { ffi::osewa_term_resize(self.t, cols as u16, rows as u16, cell_w, cell_h) }, "resize")
     }
 
     /// The terminal size in cells.
     pub fn size(&self) -> (usize, usize) {
         unsafe { (ffi::osewa_term_cols(self.t) as usize, ffi::osewa_term_rows(self.t) as usize) }
+    }
+
+    /// One cell's size in pixels, or zeros when unknown.
+    pub fn cell_size(&self) -> (u32, u32) {
+        let (cols, rows) = self.size();
+        let (w, h) = unsafe { (ffi::osewa_term_width_px(self.t), ffi::osewa_term_height_px(self.t)) };
+        (w / cols.max(1) as u32, h / rows.max(1) as u32)
     }
 
     /// The cursor position in the active area, zero-based.
@@ -463,10 +485,12 @@ pub struct Decoder {
 }
 
 impl Decoder {
+    /// A decoder whose terminal keeps images as the holder's does.
     pub fn new() -> Result<Decoder> {
+        images::install_png();
         let buf = Box::into_raw(Box::new(DecBuf { buf: Vec::new(), off: 0 }));
         let mut d: ffi::Decoder = std::ptr::null_mut();
-        let r = unsafe { ffi::osewa_decoder_new(&mut d, buf.cast()) };
+        let r = unsafe { ffi::osewa_decoder_new(&mut d, buf.cast(), IMAGE_BYTES) };
         let dec = Decoder { d, buf };
         check(r, "decoder_new")?;
         Ok(dec)

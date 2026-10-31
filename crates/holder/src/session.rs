@@ -249,7 +249,7 @@ impl Session {
         let term = ghostty::Terminal::new(
             cfg.cols as usize,
             cfg.rows as usize,
-            ghostty::Options { scrollback_bytes: cfg.scrollback_bytes, continuation: true, callbacks },
+            ghostty::Options { scrollback_bytes: cfg.scrollback_bytes, continuation: true, images: true, callbacks },
         )
         .map_err(|e| e.to_string())?;
         let mut e = [0u8; 16];

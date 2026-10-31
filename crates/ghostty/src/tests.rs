@@ -370,3 +370,141 @@ fn active_text_is_the_active_rows() {
     }
     assert!(t.scrollback_rows() > 0, "no scrollback to leave out");
 }
+
+fn image_term(cols: usize, rows: usize, cb: Callbacks) -> Terminal {
+    let mut t = Terminal::new(cols, rows, Options { continuation: true, images: true, callbacks: cb, ..Default::default() }).unwrap();
+    t.resize_cells(cols, rows, 10, 20).unwrap();
+    t
+}
+
+// A 2x2 RGB image, transmitted and placed at the cursor as image 7.
+const RGB_2X2: &[u8] = b"\x1b_Ga=T,f=24,s=2,v=2,i=7,q=2;AAAA////AAAA////\x1b\\";
+
+fn png_2x1() -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, 2, 1);
+    e.set_color(png::ColorType::Rgb);
+    e.set_depth(png::BitDepth::Eight);
+    let mut w = e.write_header().unwrap();
+    w.write_image_data(&[255, 0, 0, 0, 255, 0]).unwrap();
+    drop(w);
+    out
+}
+
+#[test]
+fn images_off_by_default() {
+    let mut t = new_term(20, 5, Callbacks::default());
+    t.write(RGB_2X2);
+    assert!(t.placements().is_empty() && t.image(7).is_none(), "an image was kept without images on");
+}
+
+#[test]
+fn images_kept_and_placed() {
+    let mut t = image_term(20, 5, Callbacks::default());
+    assert_eq!(t.cell_size(), (10, 20));
+    t.write(b"ab");
+    t.write(RGB_2X2);
+    let img = t.image(7).expect("image 7");
+    assert_eq!((img.width, img.height, img.format), (2, 2, PixelFormat::Rgb));
+    assert_eq!(img.pixels.map(|p| p.len()), Some(12));
+    let p = t.placements();
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert_eq!((p[0].image, p[0].col, p[0].row, p[0].grid, p[0].visible), (7, 2, 0, (1, 1), true));
+    // A placement moves the cursor past the image unless C=1.
+    assert_eq!(t.cursor(), (3, 0));
+    // Deleting placements alone keeps the image; clearing the screen
+    // deletes both.
+    t.write(b"\x1b_Ga=d,d=a,q=2\x1b\\");
+    assert!(t.placements().is_empty());
+    assert!(t.image(7).is_some(), "d=a deleted the image");
+    t.write(b"\x1b_Ga=p,i=7,q=2\x1b\\");
+    assert_eq!(t.placements().len(), 1);
+    t.write(b"\x1b[2J");
+    assert!(t.placements().is_empty() && t.image(7).is_none());
+}
+
+#[test]
+fn images_decode_png() {
+    let mut t = image_term(20, 5, Callbacks::default());
+    t.write(format!("\x1b_Ga=T,f=100,i=9,q=2;{}\x1b\\", b64(&png_2x1())).as_bytes());
+    let img = t.image(9).expect("png image");
+    assert_eq!((img.width, img.height, img.format), (2, 1, PixelFormat::Rgba));
+    assert_eq!(img.pixels, Some(&[255, 0, 0, 255, 0, 255, 0, 255][..]));
+    t.write(b"\x1b_Ga=T,f=100,i=10,q=2;bm90IGEgcG5n\x1b\\");
+    assert!(t.image(10).is_none(), "garbage decoded as a PNG");
+}
+
+/// A few bytes claiming 30000x30000 pixels are refused before 3.6 GB is
+/// allocated for them.
+#[test]
+fn images_refuse_huge_png() {
+    fn crc(data: &[u8]) -> u32 {
+        let mut c = !0u32;
+        for &b in data {
+            c ^= b as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+        }
+        !c
+    }
+    let mut png = png_2x1();
+    // IHDR's width and height follow the signature, length and type.
+    png[16..24].copy_from_slice(&[0, 0, 0x75, 0x30, 0, 0, 0x75, 0x30]);
+    let sum = crc(&png[12..29]);
+    png[29..33].copy_from_slice(&sum.to_be_bytes());
+    let mut t = image_term(20, 5, Callbacks::default());
+    t.write(format!("\x1b_Ga=T,f=100,i=12,q=2;{}\x1b\\", b64(&png)).as_bytes());
+    assert!(t.image(12).is_none(), "a huge PNG was decoded");
+}
+
+/// A program can't make the terminal read a file: images come in the data.
+#[test]
+fn images_never_read_files() {
+    let path = std::env::temp_dir().join(format!("osewa-image-{}.png", std::process::id()));
+    std::fs::write(&path, png_2x1()).unwrap();
+    let mut t = image_term(20, 5, Callbacks::default());
+    for medium in ["f", "t"] {
+        t.write(format!("\x1b_Ga=T,f=100,t={medium},i=11,q=2;{}\x1b\\", b64(path.to_str().unwrap().as_bytes())).as_bytes());
+        assert!(t.image(11).is_none(), "read an image from a file (t={medium})");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn images_answer_queries() {
+    let replies = Rc::new(RefCell::new(Vec::new()));
+    let r = replies.clone();
+    let mut t = image_term(20, 5, Callbacks { write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))), ..Default::default() });
+    t.write(b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b_Gi=31;OK\x1b\\");
+}
+
+#[test]
+fn images_in_snapshots() {
+    let mut t = image_term(20, 5, Callbacks::default());
+    t.write(RGB_2X2);
+    let snap = t.snapshot().unwrap();
+    let full = restore(&snap, Callbacks::default()).unwrap();
+    assert_eq!(full.cell_size(), (10, 20), "the cell size didn't survive a snapshot");
+    assert_eq!(full.image(7).and_then(|i| i.pixels).map(|p| p.len()), Some(12));
+    assert_eq!(full.placements(), t.placements());
+    // Generations are the terminal's own, never another's.
+    assert_ne!(full.image(7).unwrap().generation, t.image(7).unwrap().generation);
+    // Through READY only, the image and its placement come without pixels.
+    let screen = restore_screen(&t.snapshot_screen().unwrap());
+    assert!(screen.image(7).expect("image in a screen snapshot").pixels.is_none());
+    assert_eq!(screen.placements(), t.placements());
+}
+
+fn b64(b: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::new();
+    for c in b.chunks(3) {
+        let n = c.iter().enumerate().fold(0u32, |n, (i, &x)| n | (x as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            s.push(if i <= c.len() { A[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    s
+}

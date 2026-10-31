@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 links = "ghostty-vt"
 
+[dependencies]
+png.workspace = true
+
 [build-dependencies]
 cc = "1"
 

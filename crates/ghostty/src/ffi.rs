@@ -11,7 +11,24 @@ extern "C" {
     pub fn osewa_term_set_continuation(t: Term, limit: usize) -> i32;
     pub fn osewa_term_set_scrollback(t: Term, limit: usize) -> i32;
     pub fn osewa_term_write(t: Term, data: *const u8, len: usize);
-    pub fn osewa_term_resize(t: Term, cols: u16, rows: u16) -> i32;
+    pub fn osewa_term_resize(t: Term, cols: u16, rows: u16, cell_w: u32, cell_h: u32) -> i32;
+    pub fn osewa_term_set_image_limit(t: Term, limit: u64) -> i32;
+    pub fn osewa_term_width_px(t: Term) -> u32;
+    pub fn osewa_term_height_px(t: Term) -> u32;
+    pub fn osewa_png_alloc(alloc: *const c_void, len: usize) -> *mut u8;
+    pub fn osewa_png_install();
+    pub fn osewa_placements(t: Term, ud: *mut c_void) -> i32;
+    #[allow(clippy::too_many_arguments)]
+    pub fn osewa_image(
+        t: Term,
+        id: u32,
+        w: *mut u32,
+        h: *mut u32,
+        format: *mut i32,
+        px: *mut *const u8,
+        len: *mut usize,
+        gen: *mut u64,
+    ) -> i32;
     pub fn osewa_term_cols(t: Term) -> u16;
     pub fn osewa_term_rows(t: Term) -> u16;
     pub fn osewa_term_cursor_x(t: Term) -> u16;
@@ -25,7 +42,7 @@ extern "C" {
     pub fn osewa_free(ptr: *mut u8, len: usize);
     pub fn osewa_snapshot_encode(t: Term, ud: *mut c_void) -> i32;
     pub fn osewa_format(t: Term, vt: bool, trim: bool, unwrap: bool, palette: bool, active: bool, ud: *mut c_void) -> i32;
-    pub fn osewa_decoder_new(out: *mut Decoder, ud: *mut c_void) -> i32;
+    pub fn osewa_decoder_new(out: *mut Decoder, ud: *mut c_void, image_limit: u64) -> i32;
     pub fn osewa_decoder_ready(d: Decoder, out: *mut Term) -> i32;
     pub fn osewa_decoder_next(d: Decoder) -> i32;
     pub fn osewa_decoder_free(d: Decoder);
