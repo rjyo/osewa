@@ -326,6 +326,24 @@ fn clipboard_reads() {
     a.wait_text("R:]52;c;aGkh:END");
 }
 
+/// A Kitty clipboard protocol read waits for the owner's answer too, and
+/// gets it in its own protocol, id and all.
+#[test]
+fn kitty_clipboard_reads() {
+    // type=read, id=k, for text/plain.
+    let h = start(cfg(sh(
+        r#"stty raw -echo; printf GO; dd bs=1 count=1 >/dev/null 2>&1; printf '\033]5522;type=read:id=k;dGV4dC9wbGFpbg==\033\\'; s=; while c=$(dd bs=1 count=1 2>/dev/null); do s="$s$c"; case "$s" in *DONE*) break;; esac; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033\\')"; sleep 30"#,
+    )));
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.wait_text("GO");
+    a.text_input(1, "x");
+    a.wait_for("clipboard_read event", |c| c.has_event(|e| e.kind == wire::EVENT_CLIPBOARD_READ && e.selection == "c"));
+    assert!(a.request(wire::Request { stream: 7, data: b"hi!".to_vec(), ..method(wire::METHOD_CLIPBOARD) }).error.is_empty());
+    let want = "R:]5522;type=read:status=OK:id=k]5522;type=read:status=DATA:id=k:mime=dGV4dC9wbGFpbg==;aGkh]5522;type=read:status=DONE:END";
+    a.wait_for("the answer", |c| unwrapped(&c.text()).contains(want));
+}
+
 #[test]
 fn key_paste_focus_input() {
     // The child prints what it reads as one run of hex digits after "H:",

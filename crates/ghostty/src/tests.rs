@@ -213,14 +213,16 @@ fn parse_mods_names() {
 }
 
 #[test]
-fn encode_paste_and_focus() {
-    let mut term = new_term(80, 24, Callbacks::default());
-    assert_eq!(term.encode_paste("a\nb").unwrap(), b"a\rb");
+fn paste_and_focus() {
+    let replies = Rc::new(RefCell::new(Vec::new()));
+    let r = replies.clone();
+    let mut term = new_term(80, 24, Callbacks { write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))), ..Default::default() });
+    assert_eq!(term.paste("a\nb").unwrap(), b"a\rb");
     term.write(b"\x1b[?2004h");
-    assert_eq!(term.encode_paste("x\x1by").unwrap(), b"\x1b[200~x y\x1b[201~");
-    // Longer than the first buffer guess.
-    let long = "z".repeat(5000);
-    assert_eq!(term.encode_paste(&long).unwrap().len(), 5000 + 12);
+    assert_eq!(term.paste("x\x1by").unwrap(), b"\x1b[200~x y\x1b[201~");
+    let long = "z".repeat(50000);
+    assert_eq!(term.paste(&long).unwrap().len(), 50000 + 12);
+    assert!(replies.borrow().is_empty(), "a paste went to write_pty");
     assert!(term.encode_focus(true).unwrap().is_empty());
     term.write(b"\x1b[?1004h");
     assert_eq!(term.encode_focus(true).unwrap(), b"\x1b[I");
@@ -451,30 +453,87 @@ fn colors() {
     assert_eq!(back.colors(), t.colors(), "colors lost in a snapshot");
 }
 
-/// OSC 52 reads are left to the clipboard_read callback, unanswered;
-/// without it they are answered empty.
-#[test]
-fn clipboard_reads() {
-    let replies = Rc::new(RefCell::new(Vec::new()));
-    let reads = Rc::new(RefCell::new(Vec::new()));
+/// A terminal answering clipboard reads, with what it wrote and the reads
+/// it raised.
+type Out = Rc<RefCell<Vec<u8>>>;
+type Reads = Rc<RefCell<Vec<ClipboardRead>>>;
+
+fn clipboard_term() -> (Terminal, Out, Reads) {
+    let (replies, reads): (Out, Reads) = Default::default();
     let (r, rd) = (replies.clone(), reads.clone());
-    let mut t = new_term(
+    let t = new_term(
         20,
         5,
         Callbacks {
             write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))),
-            clipboard_read: Some(Box::new(move |sel, bel| rd.borrow_mut().push((sel, bel)))),
+            clipboard_read: Some(Box::new(move |c| rd.borrow_mut().push(c))),
             ..Default::default()
         },
     );
+    (t, replies, reads)
+}
+
+/// OSC 52 reads are left to the clipboard_read callback, unanswered;
+/// without it they are answered empty.
+#[test]
+fn clipboard_reads() {
+    let (mut t, replies, reads) = clipboard_term();
     t.write(b"\x1b]52;c;?\x1b\\\x1b]52;p;?\x07\x1b]52;s;?\x1b\\\x1b[5n");
-    assert_eq!(*reads.borrow(), [(b'c', false), (b'p', true), (b's', false)]);
+    let got: Vec<_> = reads.borrow().iter().map(|r| (r.selection, r.bel, r.kitty.is_none())).collect();
+    assert_eq!(got, [(b'c', false, true), (b'p', true, true), (b's', false, true)]);
     assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b[0n", "only the DSR is answered");
+    assert_eq!(reads.borrow()[1].answer(b"hi!"), b"\x1b]52;p;aGkh\x07");
     let r = replies.clone();
     let mut t = new_term(20, 5, Callbacks { write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))), ..Default::default() });
     replies.borrow_mut().clear();
     t.write(b"\x1b]52;c;?\x1b\\");
     assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b]52;c;\x1b\\");
+}
+
+/// Kitty clipboard protocol reads are raised like OSC 52 ones, and
+/// answered as libghostty would: OK, the type listing, text in 4096-byte
+/// DATA chunks under the type asked for, DONE.
+#[test]
+fn kitty_clipboard_reads() {
+    let (mut t, replies, reads) = clipboard_term();
+    // type=read, id=r1, asking for the listing and text.
+    t.write(format!("\x1b]5522;type=read:id=r1;{}\x1b\\", b64(b". text/plain;charset=utf-8")).as_bytes());
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "", "answered already");
+    let r = reads.borrow()[0].clone();
+    let k = r.kitty.clone().expect("a kitty read");
+    assert_eq!((k.id.as_str(), k.mimes.clone(), k.list, r.selection), ("r1", vec!["text/plain;charset=utf-8".to_string()], true, b'c'));
+    let text = "x".repeat(5000);
+    let pkt = |status: &str, extra: &str| format!("\x1b]5522;type=read:status={status}{extra}\x1b\\");
+    let mime = b64(b"text/plain;charset=utf-8");
+    let want = [
+        pkt("OK", ":id=r1"),
+        format!("\x1b]5522;type=read:status=DATA:id=r1:mime={};{}\x1b\\", b64(b"."), b64(b"text/plain\n")),
+        format!("\x1b]5522;type=read:status=DATA:id=r1:mime={mime};{}\x1b\\", b64(&text.as_bytes()[..4096])),
+        format!("\x1b]5522;type=read:status=DATA:id=r1:mime={mime};{}\x1b\\", b64(&text.as_bytes()[4096..])),
+        pkt("DONE", ":id=r1"),
+    ]
+    .concat();
+    assert_eq!(String::from_utf8_lossy(&r.answer(text.as_bytes())), want);
+    // Empty: no listing data, no DATA.
+    assert_eq!(String::from_utf8_lossy(&r.answer(b"")), format!("{}\x1b]5522;type=read:status=DATA:id=r1:mime={}\x1b\\{}", pkt("OK", ":id=r1"), b64(b"."), pkt("DONE", ":id=r1")));
+}
+
+/// With paste events on (mode 5522), a paste is an event, and the read
+/// that follows it is answered at once with what was pasted.
+#[test]
+fn paste_events() {
+    let (mut t, replies, reads) = clipboard_term();
+    t.write(b"\x1b[?5522$p");
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b[?5522;2$y", "paste events not offered");
+    replies.borrow_mut().clear();
+    t.write(b"\x1b[?5522h");
+    let event = String::from_utf8(t.paste("pasted").unwrap()).unwrap();
+    assert!(event.starts_with("\x1b]5522;type=read:status=OK:pw="), "not an event: {event:?}");
+    let pw = event.split(":pw=").nth(1).unwrap().split(['\x1b', ':']).next().unwrap().to_string();
+    t.write(format!("\x1b]5522;type=read:name={}:pw={pw};{}\x1b\\", b64(b"app"), b64(b"text/plain")).as_bytes());
+    assert!(reads.borrow().is_empty(), "raised instead of answered");
+    let got = String::from_utf8_lossy(&replies.borrow()).into_owned();
+    assert!(got.contains(&format!(";{}\x1b\\", b64(b"pasted"))) && got.contains("status=DONE"), "{got:?}");
 }
 
 #[test]

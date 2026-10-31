@@ -20,7 +20,11 @@ extern void osewa_rs_status(void *ud, int state, int kind, int progress,
 extern void osewa_rs_notify(void *ud, const uint8_t *title, size_t title_len,
                             const uint8_t *body, size_t body_len);
 extern int osewa_rs_color_scheme(void *ud);
-extern void osewa_rs_clipboard_read(void *ud, int location);
+extern bool osewa_rs_clipboard_read(void *ud, int location,
+                                    const uint8_t *const *mimes,
+                                    const size_t *lens, size_t n, bool list,
+                                    bool granted, const uint8_t **data,
+                                    size_t *len);
 extern bool osewa_rs_sink(void *ud, const uint8_t *data, size_t len);
 extern size_t osewa_rs_read(void *ud, uint8_t *buf, size_t cap);
 
@@ -60,13 +64,46 @@ static void on_clipboard_write(GhosttyTerminal t, void *ud,
   w->reply(w, &reply);
 }
 
-// Clipboard reads go unanswered here: libghostty answers them empty when
-// we don't, and the Rust side holds that answer back so one can come later
-// (osewa_rs_write_pty).
+// Clipboard reads are mostly left unanswered here: libghostty then answers
+// them by default, and the Rust side holds that answer back so one can come
+// later (clipboard.rs). The read following a paste event is answered now,
+// as text, under the first text type it asked for.
+#define CLIPBOARD_MIMES 16
 static void on_clipboard_read(GhosttyTerminal t, void *ud,
                               const GhosttyClipboardRead *r) {
   (void)t;
-  osewa_rs_clipboard_read(ud, (int)r->location);
+  const uint8_t *mimes[CLIPBOARD_MIMES];
+  size_t lens[CLIPBOARD_MIMES];
+  size_t n = r->mimes_len < CLIPBOARD_MIMES ? r->mimes_len : CLIPBOARD_MIMES;
+  for (size_t i = 0; i < n; i++) {
+    mimes[i] = r->mimes[i].ptr;
+    lens[i] = r->mimes[i].len;
+  }
+  const uint8_t *data = NULL;
+  size_t len = 0;
+  if (!osewa_rs_clipboard_read(ud, (int)r->location, mimes, lens, n, r->list,
+                               r->granted, &data, &len)) {
+    return;
+  }
+  GhosttyString text = {(const uint8_t *)"text/plain", 10};
+  GhosttyString mime = text;
+  for (size_t i = 0; i < n; i++) {
+    if (lens[i] >= 5 && memcmp(mimes[i], "text/", 5) == 0) {
+      mime = r->mimes[i];
+      break;
+    }
+  }
+  GhosttyClipboardContent c = {.mime = mime, .data = {data, len}};
+  GhosttyClipboardReadReply reply = {
+      .size = sizeof(reply),
+      .result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS,
+      .contents = &c,
+      .contents_len = 1,
+      .available = &text,
+      .available_len = 1,
+      .remember = false,
+  };
+  r->reply(r, &reply);
 }
 
 static void on_program_status(GhosttyTerminal t, void *ud,
@@ -579,15 +616,26 @@ int osewa_encode_key(GhosttyTerminal t, int key, uint16_t mods, int action,
 }
 
 // The encoder rewrites data in place, so it works on a copy.
-int osewa_encode_paste(const char *text, size_t len, bool bracketed, char *out,
-                       size_t cap, size_t *n) {
-  char *data = malloc(len + 1);
-  if (!data) return GHOSTTY_OUT_OF_MEMORY;
-  memcpy(data, text, len);
-  data[len] = 0;
-  int r = ghostty_paste_encode(data, len, bracketed, out, cap, n);
-  free(data);
-  return r;
+static bool paste_read(void *ud, GhosttyString mime, GhosttyWriter w) {
+  (void)mime;
+  const GhosttyString *text = ud;
+  return w.write(w.userdata, text->ptr, text->len);
+}
+
+// Pastes text from the clipboard; what it writes goes to write_pty.
+int osewa_term_paste(GhosttyTerminal t, const uint8_t *text, size_t len) {
+  GhosttyString data = {text, len};
+  GhosttyString mime = {(const uint8_t *)"text/plain", 10};
+  GhosttyPaste p = {
+      .size = sizeof(p),
+      .location = GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+      .source = GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+      .mimes = &mime,
+      .mimes_len = 1,
+      .reader = {paste_read, &data},
+      .allow_unsafe = true,
+  };
+  return ghostty_terminal_paste(t, &p, NULL);
 }
 
 int osewa_encode_focus(bool focused, char *out, size_t cap, size_t *n) {

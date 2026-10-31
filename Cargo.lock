@@ -584,6 +584,7 @@ version = "0.1.0"
 name = "osewa-ghostty"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "cc",
  "png",
  "regex",
@@ -593,7 +594,6 @@ dependencies = [
 name = "osewa-holder"
 version = "0.1.0"
 dependencies = [
- "base64",
  "hex",
  "libc",
  "osewa-flag",

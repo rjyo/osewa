@@ -402,13 +402,18 @@ and of a snapshot; a client gives its terminal the same shape.
 OSC 52 writes become `clipboard` events, sent only to the owner; a client
 puts them on its own clipboard.
 
-An OSC 52 read becomes a `clipboard_read` event, sent only to the owner,
-and waits. `session.clipboard` answers the oldest one waiting with `data`
-(empty for an empty clipboard), in the read's own selection and
-terminator; with none waiting it does nothing. At most 16 wait; reads past
-that go unanswered. A client answers only reads it received live, and
-answers empty unless its user let programs read the clipboard. Kitty's
-clipboard protocol (OSC 5522) reads are refused.
+A clipboard read, OSC 52 or Kitty's clipboard protocol (OSC 5522), becomes
+a `clipboard_read` event, sent only to the owner, and waits.
+`session.clipboard` answers the oldest one waiting with `data` (empty for
+an empty clipboard), as text, in the read's own protocol, selection,
+terminator and id; with none waiting it does nothing. At most 16 wait;
+reads past that go unanswered. A client answers only reads it received
+live, and answers empty unless its user let programs read the clipboard.
+
+A `paste` input is pasted as the program's modes have it: a Kitty paste
+event when it set mode 5522, its follow-up read answered at once with the
+pasted text. Clients keep mode 5522 off their own terminal, whose paste
+events' reads only the holder could answer.
 
 ## Channel streams
 

@@ -85,18 +85,6 @@ impl Terminal {
         })
     }
 
-    /// Encodes pasted text for the terminal's bracketed paste mode, replacing
-    /// unsafe control bytes.
-    pub fn encode_paste(&self, text: &str) -> Result<Vec<u8>> {
-        if text.is_empty() {
-            return Ok(Vec::new());
-        }
-        let bracketed = self.mode(2004, false);
-        encode(text.len() + 16, "paste_encode", |buf, n| unsafe {
-            ffi::osewa_encode_paste(text.as_ptr(), text.len(), bracketed, buf.as_mut_ptr(), buf.len(), n)
-        })
-    }
-
     /// Encodes a focus change, or nothing when the program hasn't enabled
     /// focus reporting (mode 1004).
     pub fn encode_focus(&self, focused: bool) -> Result<Vec<u8>> {

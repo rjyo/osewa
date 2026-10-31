@@ -564,20 +564,22 @@ fn color_sets(n: i64, body: &[u8], st: &[u8]) -> Vec<u8> {
     }
 }
 
-/// A DEC mode set or reset (CSI ? Pm h/l) without the modes the client
-/// keeps for itself: color scheme reports (2031), which the holder answers
-/// for the program and the client needs on to learn of changes. Empty when
-/// none are left.
+/// A DEC mode set or reset (CSI ? Pm h/l) without the modes that aren't
+/// the local terminal's to follow: color scheme reports (2031), which the
+/// holder answers for the program and the client needs on to learn of
+/// changes, and Kitty paste events (5522), whose reads only the holder can
+/// answer. Empty when none are left.
 fn without_own_modes(seq: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let fin = seq[seq.len() - 1];
     if seq.len() < 4 || seq[2] != b'?' || !matches!(fin, b'h' | b'l') {
         return seq.into();
     }
     let params = &seq[3..seq.len() - 1];
-    if !params.split(|&c| c == b';').any(|p| p == b"2031") {
+    let own = |p: &[u8]| p == b"2031" || p == b"5522";
+    if !params.split(|&c| c == b';').any(own) {
         return seq.into();
     }
-    let kept: Vec<&[u8]> = params.split(|&c| c == b';').filter(|&p| p != b"2031").collect();
+    let kept: Vec<&[u8]> = params.split(|&c| c == b';').filter(|p| !own(p)).collect();
     if kept.is_empty() {
         return Vec::new().into();
     }

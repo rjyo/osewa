@@ -9,9 +9,11 @@
 use std::ffi::c_void;
 use std::fmt;
 
+mod clipboard;
 mod ffi;
 mod images;
 mod input;
+pub use clipboard::{ClipboardRead, KittyRead};
 pub use images::*;
 pub use input::*;
 
@@ -88,11 +90,10 @@ pub struct Callbacks {
     /// Desktop notifications (OSC 9, OSC 777): title, possibly empty, and
     /// body.
     pub notify: Option<Box<dyn FnMut(String, String)>>,
-    /// OSC 52 clipboard reads on a terminal that replies, which are left
-    /// for it to answer: the selection (c, p or s), and whether the read
-    /// ended with BEL, as the answer should. Without it they are answered
-    /// empty.
-    pub clipboard_read: Option<Box<dyn FnMut(u8, bool)>>,
+    /// Clipboard reads (OSC 52, Kitty's OSC 5522) on a terminal that
+    /// replies, left for the embedder to answer with ClipboardRead::answer.
+    /// Without it they are answered empty, or refused.
+    pub clipboard_read: Option<Box<dyn FnMut(ClipboardRead)>>,
     /// Answers DSR 996 on a terminal that replies: Some(true) for dark,
     /// Some(false) for light, None to leave it unanswered.
     pub color_scheme: Option<Box<dyn FnMut() -> Option<bool>>>,
@@ -130,9 +131,7 @@ pub struct Options {
 struct CbState {
     term: ffi::Term,
     cb: Callbacks,
-    /// The selection of a clipboard read whose empty answer libghostty is
-    /// about to write.
-    clipboard_read: Option<u8>,
+    clip: clipboard::ClipboardState,
 }
 
 /// Bounds how many bytes of an unfinished sequence the terminal keeps for a
@@ -173,7 +172,7 @@ impl Terminal {
 
     fn wrap(t: ffi::Term, cb: Callbacks) -> Terminal {
         let write_pty = cb.write_pty.is_some();
-        let state = Box::into_raw(Box::new(CbState { term: t, cb, clipboard_read: None }));
+        let state = Box::into_raw(Box::new(CbState { term: t, cb, clip: Default::default() }));
         unsafe { ffi::osewa_term_install(t, state.cast(), write_pty) };
         Terminal { t, state }
     }
@@ -472,33 +471,12 @@ fn state<'a>(ud: *mut c_void) -> &'a mut CbState {
 
 #[no_mangle]
 extern "C" fn osewa_rs_write_pty(ud: *mut c_void, data: *const u8, len: usize) {
-    let s = state(ud);
     let data = bytes(data, len);
-    // An OSC 52 read's empty answer: the clipboard_read callback answers
-    // instead. Kitty's clipboard protocol (OSC 5522) answers go out.
-    if let Some(sel) = s.clipboard_read.take() {
-        if data.starts_with(b"\x1b]52;") {
-            if let Some(f) = s.cb.clipboard_read.as_mut() {
-                f(sel, data.ends_with(b"\x07"));
-            }
-            return;
-        }
+    if clipboard::intercept(ud, data) || clipboard::capture(ud, data) {
+        return;
     }
-    if let Some(f) = s.cb.write_pty.as_mut() {
+    if let Some(f) = state(ud).cb.write_pty.as_mut() {
         f(data);
-    }
-}
-
-#[no_mangle]
-extern "C" fn osewa_rs_clipboard_read(ud: *mut c_void, location: i32) {
-    let s = state(ud);
-    if s.cb.clipboard_read.is_some() {
-        // GhosttyClipboardLocation: standard, selection, primary.
-        s.clipboard_read = Some(match location {
-            1 => b's',
-            2 => b'p',
-            _ => b'c',
-        });
     }
 }
 

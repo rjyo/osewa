@@ -8,6 +8,7 @@ links = "ghostty-vt"
 
 [dependencies]
 png.workspace = true
+base64.workspace = true
 
 [build-dependencies]
 cc = "1"

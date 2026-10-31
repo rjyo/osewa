@@ -27,8 +27,9 @@ const CHUNK_SIZE: usize = 64 << 10;
 /// What a terminal callback raised inside term.write, in order.
 pub(crate) enum Raised {
     Title(String),
-    /// An OSC 52 read: its selection, and whether it ended with BEL.
-    ClipboardRead(u8, bool),
+    /// A clipboard read (OSC 52 or Kitty's OSC 5522), waiting for its
+    /// answer.
+    ClipboardRead(ghostty::ClipboardRead),
     Status(ghostty::Status),
     Event(wire::EventMsg),
 }
@@ -171,7 +172,7 @@ pub(crate) struct Core {
     /// terminal answers DSR 996 from it.
     color_scheme: Rc<Cell<Option<bool>>>,
     /// OSC 52 reads waiting for the owner's answer, oldest first.
-    clipboard_reads: VecDeque<(u8, bool)>,
+    clipboard_reads: VecDeque<ghostty::ClipboardRead>,
     pub pid: i32,
     pub reaped: Rc<Cell<bool>>,
 
@@ -262,7 +263,7 @@ impl Session {
                     f5.borrow_mut().push(Raised::Event(wire::EventMsg { kind: wire::EVENT_NOTIFY.into(), title, msg, ..Default::default() }))
                 })),
                 color_scheme: Some(Box::new(move || scheme.get())),
-                clipboard_read: Some(Box::new(move |sel, bel| f6.borrow_mut().push(Raised::ClipboardRead(sel, bel)))),
+                clipboard_read: Some(Box::new(move |r| f6.borrow_mut().push(Raised::ClipboardRead(r)))),
             }
         };
         let mut term = ghostty::Terminal::new(
@@ -821,10 +822,9 @@ impl Session {
         Ok(())
     }
 
-    /// Answers the oldest OSC 52 read with the owner's clipboard. With none
-    /// waiting there is nothing to answer.
+    /// Answers the oldest clipboard read with the owner's clipboard, in the
+    /// read's own protocol. With none waiting there is nothing to answer.
     fn clipboard_req(&mut self, cid: u64, req: &wire::Request) -> Result<(), (&'static str, String)> {
-        use base64::Engine as _;
         let owner = self.core.owner.clone();
         let c = self.conns.get_mut(&cid).ok_or((wire::ERR_INTERNAL, String::new()))?;
         let client = c.client.clone();
@@ -835,14 +835,11 @@ impl Session {
             return Err((wire::ERR_NOT_OWNER, "not the owner".into()));
         }
         let core = &mut self.core;
-        let Some((sel, bel)) = core.clipboard_reads.pop_front() else { return Ok(()) };
+        let Some(read) = core.clipboard_reads.pop_front() else { return Ok(()) };
         if core.exited {
             return Ok(());
         }
-        let mut answer = format!("\x1b]52;{};", sel as char).into_bytes();
-        answer.extend_from_slice(base64::engine::general_purpose::STANDARD.encode(&req.data).as_bytes());
-        answer.extend_from_slice(if bel { b"\x07" } else { b"\x1b\\" });
-        core.input.borrow_mut().push(&answer, false);
+        core.input.borrow_mut().push(&read.answer(&req.data), false);
         core.input_wake.notify_one();
         Ok(())
     }
@@ -1035,10 +1032,10 @@ impl Session {
     /// encode is dropped but still counts as applied, so a bad event can't
     /// wedge the client's resend queue.
     fn apply_input(&mut self, client: &str, input: &wire::Input) {
-        let term = &self.core.term;
+        let term = &mut self.core.term;
         let b = match input.ty.as_str() {
             "text" => Ok(input.text.as_bytes().to_vec()),
-            "paste" => term.encode_paste(&input.text),
+            "paste" => term.paste(&input.text),
             "focus" => term.encode_focus(input.focused),
             "key" => {
                 let Ok(mods) = ghostty::parse_mods(&input.mods) else { return };
@@ -1164,12 +1161,12 @@ impl Core {
                     self.pending.push(status_event(&st));
                 }
                 Raised::Event(ev) => self.pending.push(ev),
-                Raised::ClipboardRead(sel, bel) => {
+                Raised::ClipboardRead(r) => {
                     // Programs wait for each answer; a flood of reads keeps
                     // only so many waiting.
                     if self.clipboard_reads.len() < CLIPBOARD_READS {
-                        self.clipboard_reads.push_back((sel, bel));
-                        let selection = (sel as char).to_string();
+                        let selection = (r.selection as char).to_string();
+                        self.clipboard_reads.push_back(r);
                         self.pending.push(wire::EventMsg { kind: wire::EVENT_CLIPBOARD_READ.into(), selection, ..Default::default() });
                     }
                 }
