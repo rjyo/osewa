@@ -112,8 +112,14 @@ echo in 102 ms, as fast as idle; ssh's take 145.
 | Connect + run a command | **311 ms** | 511 ms | 1,337 ms | 1,993 ms |
 | Echo p50, idle | **99 ms** | 101 ms | 110 ms | 114 ms |
 | Echo p50 / p95 during a download | **102 / 105 ms** | 104 / 143 ms | 145 / 150 ms | 113 / 119 ms |
-| Download alone | **39.67 MB/s** | 27.26 MB/s | 11.96 MB/s | — |
+| Download alone | **39.67 MB/s** | 27.26 MB/s | 11.96 MB/s | n/a |
 | Download while typing | **30.55 MB/s** | 27.28 MB/s | 11.55 MB/s | 15.45 MB/s |
+
+mosh carries only the terminal, so it has no download of its own: its
+"while typing" figure is a separate ssh connection beside the mosh
+session, which is why it can beat ssh's download over the session's own
+connection. ssh's download swings a lot from run to run on this path, so
+treat the ssh and mosh download numbers as rough until we rerun them.
 
 QUIC's download while typing ranged 15.8–39.9 MB/s across the five runs;
 the WebSocket's held at 27 in every one. Runs of 2026-10-31 with
@@ -181,6 +187,34 @@ ride, and a multiplexer on top of it.
 
 The transport stays usable on its own: the mux is one client of the same
 open protocol.
+
+## Built for agents
+
+A coding agent runs for hours in a full-screen TUI, and you check in from
+wherever you are. osewa keeps that screen on the host in libghostty-vt, so
+what the agent's terminal does reaches you whole, on every reconnect, and
+the host answers the agent's queries itself, so it never waits on a client
+that is asleep.
+
+| Sequence | What it is | What osewa does |
+| --- | --- | --- |
+| OSC 7501 | Agent status: working, blocked, done, idle, with progress and a message | Kept per session: `osewa ls` shows it, and attach shows a notice when the agent is blocked or done |
+| OSC 133 | Prompt marks | Passed to your terminal; a new prompt ends a working or blocked status |
+| OSC 9, OSC 777 | Desktop notifications | Sent to your terminal as one, live only, never replayed on reconnect |
+| OSC 52 | Clipboard | Copies reach your clipboard; reads only with `--clipboard-read`, owner only |
+| OSC 8 | Hyperlinks | Kept in the screen and passed through |
+| OSC 7 | Current directory | Passed through |
+| OSC 0, 1, 2 | Window and tab titles | Passed through, control characters stripped |
+| OSC 4, 10, 11, 12, 21 and resets 104, 110–112 | Palette, foreground, background and cursor colors | Your terminal's colors answer the agent's queries; colors it sets are drawn on your terminal and reset on detach |
+| DSR 996, mode 2031 | Light or dark appearance | Answered from your terminal's, and reported when it changes |
+| OSC 22 | Pointer shape | Your terminal's pointer follows |
+| Kitty keyboard (`CSI u`) | Unambiguous keys and modifiers | Supported |
+| Kitty graphics (`APC G`) | Images, including animation | Drawn on terminals that draw them (kitty, Ghostty, WezTerm; `--graphics` to choose): kept on the host and redrawn on reconnect; images sent inline only |
+| OSC 5522 | Kitty's clipboard protocol | Reads refused; use OSC 52 |
+
+Everything else (other OSCs, DCS including tmux passthrough, APC, PM, SOS)
+is dropped before it reaches your terminal: the remote program doesn't get
+to command it.
 
 ## Features
 
