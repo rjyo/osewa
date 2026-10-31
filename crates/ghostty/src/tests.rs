@@ -534,6 +534,16 @@ fn paste_events() {
     assert!(reads.borrow().is_empty(), "raised instead of answered");
     let got = String::from_utf8_lossy(&replies.borrow()).into_owned();
     assert!(got.contains(&format!(";{}\x1b\\", b64(b"pasted"))) && got.contains("status=DONE"), "{got:?}");
+    // One event out at a time: until it is read, pastes are text, and a
+    // read answers only its own paste, once.
+    let first = String::from_utf8(t.paste("one").unwrap()).unwrap();
+    assert!(first.starts_with("\x1b]5522;"), "{first:?}");
+    assert_eq!(t.paste("two").unwrap(), b"two", "a second event while one is out");
+    let pw = first.split(":pw=").nth(1).unwrap().split(['\x1b', ':']).next().unwrap().to_string();
+    replies.borrow_mut().clear();
+    t.write(format!("\x1b]5522;type=read:name={}:pw={pw};{}\x1b\\", b64(b"app"), b64(b"text/plain")).as_bytes());
+    assert!(String::from_utf8_lossy(&replies.borrow()).contains(&b64(b"one")), "{:?}", replies.borrow());
+    assert!(t.paste("three").unwrap().starts_with(b"\x1b]5522;"), "events again once read");
 }
 
 #[test]

@@ -412,7 +412,8 @@ live, and answers empty unless its user let programs read the clipboard.
 
 A `paste` input is pasted as the program's modes have it: a Kitty paste
 event when it set mode 5522, its follow-up read answered at once with the
-pasted text. Clients keep mode 5522 off their own terminal, whose paste
+pasted text. One event is out at a time: until the program reads it,
+further pastes are text. Clients keep mode 5522 off their own terminal, whose paste
 events' reads only the holder could answer.
 
 ## Channel streams

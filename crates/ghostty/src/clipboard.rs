@@ -89,8 +89,11 @@ pub(crate) struct Pending {
 #[derive(Default)]
 pub(crate) struct ClipboardState {
     pending: Option<Pending>,
-    /// The text of the last paste, for the read that follows a paste event.
+    /// The text of a paste event the program hasn't read yet. Only one is
+    /// ever out: a read doesn't say which event it follows.
     pasted: Option<Vec<u8>>,
+    /// The text a read is being answered with, kept while C replies.
+    answering: Option<Vec<u8>>,
     /// What write_pty produced during a paste.
     capture: Option<Vec<u8>>,
 }
@@ -136,7 +139,9 @@ extern "C" fn osewa_rs_clipboard_read(
         return false;
     }
     if granted {
-        if let Some(p) = &s.clip.pasted {
+        // The paste event's one-time password: its text, once.
+        if let Some(p) = s.clip.pasted.take() {
+            let p = s.clip.answering.insert(p);
             unsafe {
                 *data = p.as_ptr();
                 *len = p.len();
@@ -172,19 +177,28 @@ impl Terminal {
     /// What pasting text from the clipboard writes to the PTY, as the
     /// program's modes have it: bracketed (mode 2004), or a Kitty paste
     /// event (mode 5522) when the terminal answers clipboard reads, the
-    /// program's follow-up read then answered with text. Unsafe bytes are
-    /// replaced; the text is the user's to paste, so newlines are not
-    /// refused.
+    /// program's follow-up read then answered with text. While an event
+    /// hasn't been read, pastes are text, so none answers for another.
+    /// Unsafe bytes are replaced; the text is the user's to paste, so
+    /// newlines are not refused.
     pub fn paste(&mut self, text: &str) -> Result<Vec<u8>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
+        let events = self.mode(5522, false);
         let st = unsafe { &mut *self.state };
+        if !events {
+            // An event the program stopped waiting for.
+            st.clip.pasted = None;
+        }
         st.clip.capture = Some(Vec::new());
-        let r = unsafe { ffi::osewa_term_paste(self.t, text.as_ptr(), text.len()) };
+        let event_ok = st.clip.pasted.is_none();
+        let r = unsafe { ffi::osewa_term_paste(self.t, text.as_ptr(), text.len(), event_ok) };
         let out = st.clip.capture.take().unwrap_or_default();
         crate::check(r, "paste")?;
-        st.clip.pasted = Some(text.as_bytes().to_vec());
+        if out.starts_with(b"\x1b]5522;") {
+            st.clip.pasted = Some(text.as_bytes().to_vec());
+        }
         Ok(out)
     }
 }

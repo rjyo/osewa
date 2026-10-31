@@ -66,6 +66,6 @@ extern "C" {
         cap: usize,
         n: *mut usize,
     ) -> i32;
-    pub fn osewa_term_paste(t: Term, text: *const u8, len: usize) -> i32;
+    pub fn osewa_term_paste(t: Term, text: *const u8, len: usize, event_ok: bool) -> i32;
     pub fn osewa_encode_focus(focused: bool, out: *mut u8, cap: usize, n: *mut usize) -> i32;
 }

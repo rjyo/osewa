@@ -622,14 +622,17 @@ static bool paste_read(void *ud, GhosttyString mime, GhosttyWriter w) {
   return w.write(w.userdata, text->ptr, text->len);
 }
 
-// Pastes text from the clipboard; what it writes goes to write_pty.
-int osewa_term_paste(GhosttyTerminal t, const uint8_t *text, size_t len) {
+// Pastes text from the clipboard; what it writes goes to write_pty. Without
+// event_ok it is pasted as text even when the program wants paste events.
+int osewa_term_paste(GhosttyTerminal t, const uint8_t *text, size_t len,
+                     bool event_ok) {
   GhosttyString data = {text, len};
   GhosttyString mime = {(const uint8_t *)"text/plain", 10};
   GhosttyPaste p = {
       .size = sizeof(p),
       .location = GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
-      .source = GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+      .source = event_ok ? GHOSTTY_PASTE_SOURCE_CLIPBOARD
+                         : GHOSTTY_PASTE_SOURCE_TEXT,
       .mimes = &mime,
       .mimes_len = 1,
       .reader = {paste_read, &data},
