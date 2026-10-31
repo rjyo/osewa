@@ -30,8 +30,8 @@ in from a laptop or a phone.
 | Transport | TCP | UDP only | QUIC, falling back to TLS over TCP |
 | Screen on the host | None, bytes are replayed | Its own emulator, no scrollback | libghostty-vt, Ghostty's terminal engine |
 | Beyond the shell | Port forwards, exec | Terminal only | Port forwards and exec on the same connection |
-| Kitty protocols (keyboard, graphics, clipboard) | Passed through | No | Yes, images kept on the host and redrawn on reconnect |
-| OSC, including modern ones (hyperlinks, cwd, prompt marks, agent status OSC 7501) | Passed through | Few | Yes |
+| Kitty protocols (keyboard, graphics, clipboard) | Passed through | No | Keyboard; graphics with animation, kept on the host and redrawn on reconnect (images sent inline); OSC 52 copy, and paste with `--clipboard-read` |
+| OSC, including modern ones (hyperlinks, cwd, prompt marks, agent status OSC 7501) | Passed through | Few | Yes, plus colors (your terminal's answer programs' queries), light/dark reports, pointer shapes and notifications (OSC 9, 777) |
 
 **mosh bet on saving bandwidth.** It sends small screen diffs from its own
 terminal emulator, and when that emulator reads the output differently from
