@@ -181,7 +181,21 @@ struct Writer<S> {
     deflate: Option<Deflater>,
     reset_deflate: bool,
     body: Vec<u8>,
+    /// Level::Fast bytes still to go uncompressed, after one that didn't
+    /// shrink: bulk such as a compressed file or random bytes gains nothing
+    /// from deflate yet costs it as much CPU as text, which on a small
+    /// host caps a download and holds every echo behind it.
+    plain: usize,
+    /// The next run of plain bytes: doubles while bulk stays
+    /// incompressible, so a long download probes rarely.
+    plain_span: usize,
 }
+
+/// Fast messages at least this long tell whether deflate pays; shorter
+/// ones are cheap to compress either way.
+const PROBE_MIN: usize = 1 << 10;
+const PLAIN_MIN: usize = 64 << 10;
+const PLAIN_MAX: usize = 4 << 20;
 
 enum Event {
     Message(u8, Vec<u8>),
@@ -302,6 +316,8 @@ impl<S: AsyncRead + AsyncWrite> Conn<S> {
                     deflate: deflater,
                     reset_deflate,
                     body: Vec::new(),
+                    plain: 0,
+                    plain_span: PLAIN_MIN,
                 }),
                 closing: Cell::new(false),
                 closed: Cell::new(false),
@@ -779,14 +795,28 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
         if self.close_sent.get() || self.closed.get() {
             return Err(Error::Closed);
         }
-        let Writer { out, deflate, reset_deflate, body, .. } = w;
-        let compress = op == OP_BINARY && self.threshold.is_some_and(|t| p.len() >= t);
+        let Writer { out, deflate, reset_deflate, body, plain, plain_span, .. } = w;
+        let mut compress = op == OP_BINARY && self.threshold.is_some_and(|t| p.len() >= t);
+        if compress && level == Level::Fast && *plain > 0 {
+            // RFC 7692 lets each message choose, and a plain one leaves the
+            // deflate context alone.
+            *plain = plain.saturating_sub(p.len());
+            compress = false;
+        }
         let payload = if compress {
             let d = deflate.as_mut().expect("threshold only with a deflater");
             body.clear();
             d.compress(p, body, level);
             if *reset_deflate {
                 d.reset();
+            }
+            if level == Level::Fast && p.len() >= PROBE_MIN {
+                if body.len() > p.len() - p.len() / 16 {
+                    *plain = *plain_span;
+                    *plain_span = (*plain_span * 2).min(PLAIN_MAX);
+                } else {
+                    *plain_span = PLAIN_MIN;
+                }
             }
             &body[..]
         } else {

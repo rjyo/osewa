@@ -557,6 +557,56 @@ async fn server_compresses_from_128_bytes_with_context() {
     .await;
 }
 
+// Incompressible bulk goes plain for a span after a message that didn't
+// shrink, then deflate is tried again, and text after it still inflates in
+// the same context.
+#[tokio::test]
+async fn server_sends_incompressible_bulk_plain() {
+    local(async {
+        let (mut raw, server, _) = raw_server(&format!("{OSEWA}{DEFLATE}")).await;
+        let mut inf = Inflater::new();
+        let mut recv = async |raw: &mut Raw| {
+            let (h, mut p) = raw.recv().await.unwrap();
+            if h.rsv1 {
+                p.extend_from_slice(&TAIL);
+                let mut out = Vec::new();
+                inf.inflate(&p, &mut out, 1 << 20).unwrap();
+                p = out;
+            }
+            (h.rsv1, p)
+        };
+        let mut rsv1 = Vec::new();
+        // 64 KiB of plain after the first, then a probe, then 128 KiB.
+        for i in 0..(1 + 4 + 1 + 8 + 1) {
+            let m = noise(16 << 10, i + 1);
+            server.write(&m).await.unwrap();
+            let (c, p) = recv(&mut raw).await;
+            assert_eq!(p, m);
+            rsv1.push(c);
+        }
+        let want: Vec<bool> = [vec![true], vec![false; 4], vec![true], vec![false; 8], vec![true]].concat();
+        assert_eq!(rsv1, want);
+        // Screens compress whatever bulk does; text compresses again once
+        // a probe shows it shrinks.
+        let m = text(4000, 1);
+        server.write_level(&m, super::Level::Dense).await.unwrap();
+        assert_eq!(recv(&mut raw).await, (true, m.clone()));
+        // The last noise probe left 256 KiB to go plain.
+        let mut plain = 0;
+        loop {
+            server.write(&m).await.unwrap();
+            let (c, p) = recv(&mut raw).await;
+            assert_eq!(p, m);
+            if c {
+                break;
+            }
+            plain += m.len();
+        }
+        assert_eq!(plain.div_ceil(m.len()), (256_usize << 10).div_ceil(m.len()));
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn server_without_context_takeover() {
     local(async {
