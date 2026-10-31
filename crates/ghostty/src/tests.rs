@@ -451,6 +451,32 @@ fn colors() {
     assert_eq!(back.colors(), t.colors(), "colors lost in a snapshot");
 }
 
+/// OSC 52 reads are left to the clipboard_read callback, unanswered;
+/// without it they are answered empty.
+#[test]
+fn clipboard_reads() {
+    let replies = Rc::new(RefCell::new(Vec::new()));
+    let reads = Rc::new(RefCell::new(Vec::new()));
+    let (r, rd) = (replies.clone(), reads.clone());
+    let mut t = new_term(
+        20,
+        5,
+        Callbacks {
+            write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))),
+            clipboard_read: Some(Box::new(move |sel, bel| rd.borrow_mut().push((sel, bel)))),
+            ..Default::default()
+        },
+    );
+    t.write(b"\x1b]52;c;?\x1b\\\x1b]52;p;?\x07\x1b]52;s;?\x1b\\\x1b[5n");
+    assert_eq!(*reads.borrow(), [(b'c', false), (b'p', true), (b's', false)]);
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b[0n", "only the DSR is answered");
+    let r = replies.clone();
+    let mut t = new_term(20, 5, Callbacks { write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))), ..Default::default() });
+    replies.borrow_mut().clear();
+    t.write(b"\x1b]52;c;?\x1b\\");
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b]52;c;\x1b\\");
+}
+
 #[test]
 fn pointer_shapes() {
     let mut t = new_term(20, 5, Callbacks::default());

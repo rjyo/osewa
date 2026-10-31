@@ -304,6 +304,28 @@ fn colors_answer_queries() {
     a.wait_for("the replies", |c| unwrapped(&c.text()).contains("R:]11;rgb:1010/2020/3030]4;5;rgb:abab/cdcd/efef:END"));
 }
 
+/// An OSC 52 read goes to the owner alone, and its answer to the program;
+/// an answer with no read waiting goes nowhere.
+#[test]
+fn clipboard_reads() {
+    let h = start(cfg(sh(
+        r#"stty raw -echo; printf GO; dd bs=1 count=1 >/dev/null 2>&1; printf '\033]52;c;?\033\\'; s=; while c=$(dd bs=1 count=1 2>/dev/null); [ "$c" != '\' ]; do s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033')"; sleep 30"#,
+    )));
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.wait_text("GO");
+    let clip = |d: &str| wire::Request { stream: 7, data: d.as_bytes().to_vec(), ..method(wire::METHOD_CLIPBOARD) };
+    assert!(a.request(clip("early")).error.is_empty(), "with nothing to answer");
+    let mut b = h.dial("b");
+    b.attach(wire::Request { stream: 7, cols: 80, rows: 24, ..method(wire::METHOD_ATTACH) });
+    a.text_input(1, "x");
+    a.wait_for("clipboard_read event", |c| c.has_event(|e| e.kind == wire::EVENT_CLIPBOARD_READ && e.selection == "c"));
+    assert_eq!(b.request(clip("viewer")).error, wire::ERR_NOT_OWNER);
+    assert!(!b.has_event(|e| e.kind == wire::EVENT_CLIPBOARD_READ), "a viewer saw the read");
+    assert!(a.request(clip("hi!")).error.is_empty());
+    a.wait_text("R:]52;c;aGkh:END");
+}
+
 #[test]
 fn key_paste_focus_input() {
     // The child prints what it reads as one run of hex digits after "H:",

@@ -27,9 +27,10 @@ pub(crate) fn ask_appearance() -> String {
 }
 
 /// Runs `attach [--take] [--quiet] [--predict auto|always|never]
-/// [--graphics auto|always|never] <host> [id]` and returns the exit code.
+/// [--graphics auto|always|never] [--clipboard-read] <host> [id]` and
+/// returns the exit code.
 pub(crate) async fn attach(ctx: &Ctx, env: &Env, args: &[String]) -> Result<i32> {
-    let mut fs = Flags::new(&[("take", Kind::Bool), ("quiet", Kind::Bool), ("predict", Kind::Str), ("graphics", Kind::Str)]);
+    let mut fs = Flags::new(&[("take", Kind::Bool), ("quiet", Kind::Bool), ("predict", Kind::Str), ("graphics", Kind::Str), ("clipboard-read", Kind::Bool)]);
     let pos = fs.parse(args)?;
     let predict = if fs.all("predict").is_empty() { "auto".to_string() } else { fs.str("predict") };
     let mode = parse_predict_mode(&predict).map_err(Error::Msg)?;
@@ -45,7 +46,7 @@ pub(crate) async fn attach(ctx: &Ctx, env: &Env, args: &[String]) -> Result<i32>
     let h = osewa_client::hosts::find(&env.dir, &pos[0])?;
     let cfg = env.config(&h)?;
     let l = Link::new(cfg);
-    let r = attach_on(ctx, env, &l, &pos, fs.bool("take"), fs.bool("quiet"), mode, graphics).await;
+    let r = attach_on(ctx, env, &l, &pos, fs.bool("take"), fs.bool("quiet"), mode, graphics, fs.bool("clipboard-read")).await;
     l.close().await;
     r
 }
@@ -60,6 +61,7 @@ async fn attach_on(
     quiet: bool,
     mode: osewa_mirror::PredictMode,
     graphics: bool,
+    clipboard_read: bool,
 ) -> Result<i32> {
     let c = bounded(ctx, Duration::from_secs(15), async { Ok(l.conn().await?) }).await?;
     let (cols, rows) = tty::term_size(1);
@@ -79,6 +81,9 @@ async fn attach_on(
     let mut ui = Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() }));
     if graphics {
         ui = ui.with_graphics();
+    }
+    if clipboard_read {
+        ui = ui.with_clipboard_read();
     }
     let a = Attached::new(ui, me.clone());
     if restore.is_some() {
@@ -267,9 +272,12 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
     }
 }
 
-/// What the local terminal said about itself, answering ask_appearance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the local terminal said about itself, answering ask_appearance
+/// and clipboard reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Report {
+    /// An OSC 52 reply: what the clipboard holds.
+    Clipboard(Vec<u8>),
     /// Dark when true (CSI ? 997 ; 1|2 n).
     Scheme(bool),
     /// OSC 10, 11 and 12 replies.
@@ -292,6 +300,9 @@ const SCHEME_REPORT: &[u8] = b"\x1b[?997;";
 
 /// The longest color reply held for the next read.
 const COLOR_REPORT_MAX: usize = 64;
+
+/// The longest clipboard reply held for the next read.
+const CLIPBOARD_REPORT_MAX: usize = 8 << 20;
 
 impl Reports {
     /// The typed bytes, and the reports.
@@ -371,22 +382,23 @@ enum ColorReport {
     Not,
 }
 
-/// Reads an OSC 4, 10, 11 or 12 reply at the start of b (ESC ] ...).
+/// Reads an OSC 4, 10, 11, 12 or 52 reply at the start of b (ESC ] ...).
 fn color_report(b: &[u8]) -> ColorReport {
     let digits = b[2..].iter().take_while(|c| c.is_ascii_digit()).count();
     let num = &b[2..2 + digits];
-    if !matches!(num, b"4" | b"10" | b"11" | b"12") {
+    if !matches!(num, b"4" | b"10" | b"11" | b"12" | b"52") {
         // Only a prefix of one of those can wait.
-        let partial = 2 + digits == b.len() && digits > 0 && matches!(num, b"1");
+        let partial = 2 + digits == b.len() && digits > 0 && matches!(num, b"1" | b"5");
         return if partial { ColorReport::Partial } else { ColorReport::Not };
     }
+    let max = if num == b"52" { CLIPBOARD_REPORT_MAX } else { COLOR_REPORT_MAX };
     let body = &b[2..];
     if body.get(digits).is_some_and(|&c| c != b';') {
         return ColorReport::Not;
     }
     let end = body.iter().position(|&c| c == 0x07 || c == 0x1b);
     let Some(end) = end else {
-        return if b.len() < COLOR_REPORT_MAX { ColorReport::Partial } else { ColorReport::Not };
+        return if b.len() < max { ColorReport::Partial } else { ColorReport::Not };
     };
     let term = match body[end] {
         0x07 => 1,
@@ -401,6 +413,10 @@ fn color_report(b: &[u8]) -> ColorReport {
         (b"10", [_, spec]) => parse_xcolor(spec).map(Report::Foreground),
         (b"11", [_, spec]) => parse_xcolor(spec).map(Report::Background),
         (b"12", [_, spec]) => parse_xcolor(spec).map(Report::Cursor),
+        (b"52", [_, _, data]) => {
+            use base64::Engine as _;
+            Some(Report::Clipboard(base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default()))
+        }
         _ => return ColorReport::Not,
     };
     ColorReport::Done(len, report)

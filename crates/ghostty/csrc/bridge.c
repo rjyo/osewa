@@ -20,6 +20,7 @@ extern void osewa_rs_status(void *ud, int state, int kind, int progress,
 extern void osewa_rs_notify(void *ud, const uint8_t *title, size_t title_len,
                             const uint8_t *body, size_t body_len);
 extern int osewa_rs_color_scheme(void *ud);
+extern void osewa_rs_clipboard_read(void *ud, int location);
 extern bool osewa_rs_sink(void *ud, const uint8_t *data, size_t len);
 extern size_t osewa_rs_read(void *ud, uint8_t *buf, size_t cap);
 
@@ -57,6 +58,15 @@ static void on_clipboard_write(GhosttyTerminal t, void *ud,
       .remember = false,
   };
   w->reply(w, &reply);
+}
+
+// Clipboard reads go unanswered here: libghostty answers them empty when
+// we don't, and the Rust side holds that answer back so one can come later
+// (osewa_rs_write_pty).
+static void on_clipboard_read(GhosttyTerminal t, void *ud,
+                              const GhosttyClipboardRead *r) {
+  (void)t;
+  osewa_rs_clipboard_read(ud, (int)r->location);
 }
 
 static void on_program_status(GhosttyTerminal t, void *ud,
@@ -122,6 +132,8 @@ void osewa_term_install(GhosttyTerminal t, void *ud, bool write_pty) {
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_SIZE, (const void *)on_size);
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
                          (const void *)on_color_scheme);
+    ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ,
+                         (const void *)on_clipboard_read);
   }
   ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
                        (const void *)on_notify);

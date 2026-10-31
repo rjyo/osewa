@@ -77,6 +77,11 @@ pub(crate) struct Ui {
     pointer: &'static str,
     /// The local terminal may have colors a program set.
     colored: bool,
+    /// Programs may read the local clipboard (OSC 52): the local terminal
+    /// is asked, and it answers. Otherwise reads are answered empty.
+    clipboard_read: bool,
+    /// The session, to answer clipboard reads.
+    session: Arc<Mutex<Option<Session>>>,
 }
 
 impl Ui {
@@ -103,6 +108,8 @@ impl Ui {
             sent: SentImages::new(),
             pointer: "text",
             colored: false,
+            clipboard_read: false,
+            session: Arc::default(),
         }
     }
 
@@ -110,6 +117,13 @@ impl Ui {
     /// its images along with the screen.
     pub fn with_graphics(mut self) -> Ui {
         self.filter.graphics = true;
+        self
+    }
+
+    /// Lets programs read the local clipboard, through the local terminal,
+    /// which may ask first.
+    pub fn with_clipboard_read(mut self) -> Ui {
+        self.clipboard_read = true;
         self
     }
 
@@ -254,6 +268,21 @@ impl Ui {
             // catch-up would overwrite whatever was copied since.
             if live {
                 self.write(&clipboard_set(&e.data));
+            }
+            return;
+        }
+        if e.kind == wire::EVENT_CLIPBOARD_READ {
+            // Only live ones are still waiting; the holder sends them only to
+            // the owner.
+            if !live {
+                return;
+            }
+            if self.clipboard_read {
+                let sel = if matches!(e.selection.as_str(), "c" | "p" | "s") { e.selection.as_str() } else { "c" };
+                self.write(format!("\x1b]52;{sel};?\x1b\\").as_bytes());
+            } else if let Some(s) = self.session.lock().unwrap().clone() {
+                // Not blocking the mirror on a round trip.
+                std::thread::spawn(move || osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.clipboard(b""))));
             }
             return;
         }
@@ -409,7 +438,8 @@ impl Attached {
             on_event: Some(Box::new(move |e, live| lock(&u4).event(e, live))),
         });
         lock(&ui).later = Some(Later { m: m.clone(), ui: Arc::downgrade(&ui) });
-        Attached { ui, m, s: Arc::default(), id, wake: Arc::default(), look: Arc::default() }
+        let s = lock(&ui).session.clone();
+        Attached { ui, m, s, id, wake: Arc::default(), look: Arc::default() }
     }
 
     fn session(&self) -> Option<Session> {
@@ -525,6 +555,11 @@ impl InputHandler for Attached {
                     Report::Background(c) => look.colors.background = Some(c),
                     Report::Cursor(c) => look.colors.cursor = Some(c),
                     Report::Palette(i, c) => look.colors.palette[i as usize] = Some(c),
+                    Report::Clipboard(ref data) => {
+                        if let Some(s) = self.session() {
+                            let _ = osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.clipboard(data)));
+                        }
+                    }
                 }
             }
             *look != old

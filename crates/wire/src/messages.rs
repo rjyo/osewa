@@ -81,6 +81,7 @@ pub const METHOD_OWN: &str = "session.own";
 pub const METHOD_RESIZE: &str = "session.resize";
 pub const METHOD_COLOR_SCHEME: &str = "session.color_scheme";
 pub const METHOD_COLORS: &str = "session.colors";
+pub const METHOD_CLIPBOARD: &str = "session.clipboard";
 pub const METHOD_KILL: &str = "session.kill";
 pub const METHOD_FORWARD_OPEN: &str = "forward.open";
 pub const METHOD_EXEC_START: &str = "exec.start";
@@ -124,6 +125,9 @@ pub struct Request {
     pub cursor: String,
     #[serde(default, deserialize_with = "null_vec", skip_serializing_if = "Vec::is_empty")]
     pub palette: Vec<String>,
+    /// session.clipboard: what the clipboard holds, base64 in JSON
+    #[serde(default, with = "base64_bytes", skip_serializing_if = "Vec::is_empty")]
+    pub data: Vec<u8>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub epoch: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -303,6 +307,7 @@ pub const EVENT_OWNER: &str = "owner";
 pub const EVENT_EXIT: &str = "exit";
 pub const EVENT_INPUT_MODE: &str = "input_mode";
 pub const EVENT_NOTIFY: &str = "notify";
+pub const EVENT_CLIPBOARD_READ: &str = "clipboard_read";
 
 /// An EVENT's JSON body. Only the fields its kind uses are set.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -323,6 +328,9 @@ pub struct EventMsg {
     pub data: Vec<u8>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+    /// clipboard_read: c, p or s, as OSC 52 names them
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub selection: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub state: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]

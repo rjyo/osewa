@@ -1074,6 +1074,13 @@ impl Session {
         self.request(req).await.map(drop)
     }
 
+    /// Answers the program's oldest clipboard read (OSC 52) with data; empty
+    /// tells it the clipboard is empty. Only the owner's apply.
+    pub async fn clipboard(&self, data: &[u8]) -> Result<()> {
+        let req = wire::Request { method: wire::METHOD_CLIPBOARD.into(), data: data.to_vec(), ..Default::default() };
+        self.request(req).await.map(drop)
+    }
+
     /// Detaches the stream. The session keeps running on the host.
     pub async fn detach(&self) -> Result<()> {
         let r = self.request(wire::Request { method: wire::METHOD_DETACH.into(), ..Default::default() }).await;

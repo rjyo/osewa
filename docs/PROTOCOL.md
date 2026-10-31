@@ -141,6 +141,7 @@ Methods (REQUEST `method`):
 | `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |
 | `session.color_scheme` | `stream`, `color_scheme` (`light` or `dark`) | `{}` (applies only for the owner) |
 | `session.colors` | `stream`, `foreground`?, `background`?, `cursor`?, `palette`? (256 entries) | `{}` (applies only for the owner) |
+| `session.clipboard` | `stream`, `data` (base64)? | `{}` (applies only for the owner) |
 | `session.kill` | `session` | `{}` |
 
 `status` is the session's latest root OSC 7501 record
@@ -314,6 +315,7 @@ EVENT JSON, by `kind`:
 | `resize` | `cols`, `rows`, `width`?, `height`? |
 | `bell` | |
 | `clipboard` | `data` (base64), only to the owner |
+| `clipboard_read` | `selection` (`c`, `p` or `s`), only to the owner |
 | `title` | `title` |
 | `status` | OSC 7501 record: `state`, `id`?, `app`?, `msg`? |
 | `owner` | `owner` |
@@ -398,7 +400,15 @@ and of a snapshot; a client gives its terminal the same shape.
 ## Clipboard
 
 OSC 52 writes become `clipboard` events, sent only to the owner; a client
-puts them on its own clipboard. Clipboard reads are not answered.
+puts them on its own clipboard.
+
+An OSC 52 read becomes a `clipboard_read` event, sent only to the owner,
+and waits. `session.clipboard` answers the oldest one waiting with `data`
+(empty for an empty clipboard), in the read's own selection and
+terminator; with none waiting it does nothing. At most 16 wait; reads past
+that go unanswered. A client answers only reads it received live, and
+answers empty unless its user let programs read the clipboard. Kitty's
+clipboard protocol (OSC 5522) reads are refused.
 
 ## Channel streams
 

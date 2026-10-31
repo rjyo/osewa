@@ -83,6 +83,8 @@ fn reports_leave_typing() {
         (&["\x1b[?997;12345n"], "\x1b[?997;12345n", &[]),
         // Malformed replies are taken but say nothing.
         (&["\x1b]11;nope\x07"], "", &[]),
+        (&["\x1b]52;c;aG", "kh\x1b\\"], "", &[Clipboard(b"hi!".to_vec())]),
+        (&["\x1b]5", "2;c;\x07"], "", &[Clipboard(Vec::new())]),
     ];
     for (reads, want, want_schemes) in cases {
         let mut r = crate::attach::Reports::default();
@@ -237,6 +239,25 @@ fn notify_events_notify_locally() {
     a.m.event(&notify("", "done\x07"), true).unwrap();
     a.m.event(&notify("CI; main", "all\x1b\\ green"), true).unwrap();
     assert_eq!(out.string(), "\x1b]9;done\x1b\\\x1b]777;notify;CI, main;all\\ green\x1b\\");
+}
+
+/// With --clipboard-read a live read asks the local terminal; old ones
+/// from a catch-up don't, and without the flag it is never asked.
+#[test]
+fn clipboard_reads_ask_only_when_allowed() {
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let read = |sel: &str| osewa_wire::EventMsg { selection: sel.into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_CLIPBOARD_READ) };
+    for (allowed, want) in [(true, "\x1b]52;p;?\x1b\\"), (false, "")] {
+        let out = Buf::default();
+        let mut ui = crate::ui::Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default()));
+        if allowed {
+            ui = ui.with_clipboard_read();
+        }
+        let a = crate::ui::Attached::new(ui, "me".into());
+        a.m.event(&read("c"), false).unwrap();
+        a.m.event(&read("p"), true).unwrap();
+        assert_eq!(out.string(), want, "allowed {allowed}");
+    }
 }
 
 #[test]

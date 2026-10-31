@@ -27,6 +27,8 @@ const CHUNK_SIZE: usize = 64 << 10;
 /// What a terminal callback raised inside term.write, in order.
 pub(crate) enum Raised {
     Title(String),
+    /// An OSC 52 read: its selection, and whether it ended with BEL.
+    ClipboardRead(u8, bool),
     Status(ghostty::Status),
     Event(wire::EventMsg),
 }
@@ -168,6 +170,8 @@ pub(crate) struct Core {
     /// The owner's appearance, dark when true, once its client said; the
     /// terminal answers DSR 996 from it.
     color_scheme: Rc<Cell<Option<bool>>>,
+    /// OSC 52 reads waiting for the owner's answer, oldest first.
+    clipboard_reads: VecDeque<(u8, bool)>,
     pub pid: i32,
     pub reaped: Rc<Cell<bool>>,
 
@@ -239,7 +243,7 @@ impl Session {
         let input_wake = Rc::new(Notify::new());
         let color_scheme = Rc::new(Cell::new(None));
         let callbacks = {
-            let (f1, f2, f3, f4, f5) = (fx.clone(), fx.clone(), fx.clone(), fx.clone(), fx.clone());
+            let (f1, f2, f3, f4, f5, f6) = (fx.clone(), fx.clone(), fx.clone(), fx.clone(), fx.clone(), fx.clone());
             let scheme = color_scheme.clone();
             let (inp, wake) = (input.clone(), input_wake.clone());
             ghostty::Callbacks {
@@ -258,6 +262,7 @@ impl Session {
                     f5.borrow_mut().push(Raised::Event(wire::EventMsg { kind: wire::EVENT_NOTIFY.into(), title, msg, ..Default::default() }))
                 })),
                 color_scheme: Some(Box::new(move || scheme.get())),
+                clipboard_read: Some(Box::new(move |sel, bel| f6.borrow_mut().push(Raised::ClipboardRead(sel, bel)))),
             }
         };
         let mut term = ghostty::Terminal::new(
@@ -282,6 +287,7 @@ impl Session {
             input,
             input_wake,
             color_scheme,
+            clipboard_reads: VecDeque::new(),
             pid: 0,
             reaped: Rc::default(),
             owner: String::new(),
@@ -660,6 +666,7 @@ impl Session {
             wire::METHOD_RESIZE => self.resize_req(cid, &req),
             wire::METHOD_COLOR_SCHEME => self.color_scheme_req(cid, &req),
             wire::METHOD_COLORS => self.colors_req(cid, &req),
+            wire::METHOD_CLIPBOARD => self.clipboard_req(cid, &req),
             wire::METHOD_KILL => self.kill(&req),
             m => Err((wire::ERR_BAD_REQUEST, format!("unknown method {}", wire::quote(m)))),
         };
@@ -811,6 +818,32 @@ impl Session {
             core.input.borrow_mut().push(report, true);
             core.input_wake.notify_one();
         }
+        Ok(())
+    }
+
+    /// Answers the oldest OSC 52 read with the owner's clipboard. With none
+    /// waiting there is nothing to answer.
+    fn clipboard_req(&mut self, cid: u64, req: &wire::Request) -> Result<(), (&'static str, String)> {
+        use base64::Engine as _;
+        let owner = self.core.owner.clone();
+        let c = self.conns.get_mut(&cid).ok_or((wire::ERR_INTERNAL, String::new()))?;
+        let client = c.client.clone();
+        if c.stream_for(req.stream).is_none() {
+            return Err((wire::ERR_BAD_REQUEST, format!("stream {} is not attached", req.stream)));
+        }
+        if client.is_empty() || client != owner {
+            return Err((wire::ERR_NOT_OWNER, "not the owner".into()));
+        }
+        let core = &mut self.core;
+        let Some((sel, bel)) = core.clipboard_reads.pop_front() else { return Ok(()) };
+        if core.exited {
+            return Ok(());
+        }
+        let mut answer = format!("\x1b]52;{};", sel as char).into_bytes();
+        answer.extend_from_slice(base64::engine::general_purpose::STANDARD.encode(&req.data).as_bytes());
+        answer.extend_from_slice(if bel { b"\x07" } else { b"\x1b\\" });
+        core.input.borrow_mut().push(&answer, false);
+        core.input_wake.notify_one();
         Ok(())
     }
 
@@ -1096,7 +1129,8 @@ impl Core {
     }
 
     fn log_event(&mut self, ev: &wire::EventMsg) -> Record {
-        self.log.append(REC_EVENT, &wire::marshal_event(ev), ev.kind == wire::EVENT_CLIPBOARD, None)
+        let owner_only = ev.kind == wire::EVENT_CLIPBOARD || ev.kind == wire::EVENT_CLIPBOARD_READ;
+        self.log.append(REC_EVENT, &wire::marshal_event(ev), owner_only, None)
     }
 
     /// Feeds b to the terminal in pieces split at prompt marks, so a status
@@ -1130,6 +1164,15 @@ impl Core {
                     self.pending.push(status_event(&st));
                 }
                 Raised::Event(ev) => self.pending.push(ev),
+                Raised::ClipboardRead(sel, bel) => {
+                    // Programs wait for each answer; a flood of reads keeps
+                    // only so many waiting.
+                    if self.clipboard_reads.len() < CLIPBOARD_READS {
+                        self.clipboard_reads.push_back((sel, bel));
+                        let selection = (sel as char).to_string();
+                        self.pending.push(wire::EventMsg { kind: wire::EVENT_CLIPBOARD_READ.into(), selection, ..Default::default() });
+                    }
+                }
             }
         }
     }
@@ -1528,6 +1571,9 @@ fn kill_group(pgid: i32, sig: libc::c_int) {
 
 /// OSC 133;A, a shell's "prompt starts" mark.
 const PROMPT_MARK: &[u8] = b"\x1b]133;A";
+
+/// The most OSC 52 reads waiting for an answer.
+const CLIPBOARD_READS: usize = 16;
 
 /// Finds prompt marks in PTY output, across reads.
 #[derive(Default)]
