@@ -49,6 +49,9 @@ struct Opts {
 #[derive(Default, Clone)]
 struct Side {
     connect: Vec<Duration>,
+    /// Cold connects that failed and were tried again: a public host's
+    /// path now and then drops a fresh TCP flow's every SYN.
+    connect_failed: usize,
     bulk: Option<f64>,
     idle_echo: Vec<Duration>,
     load_echo: Vec<Duration>,
@@ -142,7 +145,18 @@ pub fn vs_main(args: &[String], w: &mut dyn Write) -> Result<(), Error> {
 fn measure(o: &Opts, p: &dyn Proto) -> Result<Side, Error> {
     let mut s = Side::default();
     for _ in 0..o.connects {
-        s.connect.push(p.connect()?);
+        let mut tries = 0;
+        loop {
+            match p.connect() {
+                Ok(d) => break s.connect.push(d),
+                Err(e) if tries < CONNECT_RETRIES => {
+                    eprintln!("vs: {}: connect failed, trying again: {e}", p.name());
+                    tries += 1;
+                    s.connect_failed += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
     if p.owns_bulk() {
         let got = Arc::new(AtomicU64::new(0));
@@ -164,6 +178,13 @@ fn measure(o: &Opts, p: &dyn Proto) -> Result<Side, Error> {
     term.close();
     Ok(s)
 }
+
+/// Retries of a cold connect before a run gives up.
+const CONNECT_RETRIES: usize = 2;
+
+/// How long a fresh ssh connection may take to answer: a flow whose SYNs
+/// are all dropped otherwise waits out the system's whole retry schedule.
+const SSH_CONNECT_TIMEOUT: &str = "ConnectTimeout=10";
 
 fn rate_over(got: &AtomicU64, warmup: Duration, d: Duration) -> f64 {
     thread::sleep(warmup);
@@ -335,7 +356,10 @@ impl Ssh {
     fn start(target: &str) -> Result<Ssh, Error> {
         // Unix socket paths are short; a scratch directory's may not fit.
         let sock = format!("/tmp/osewa-bench-{}.sock", std::process::id());
-        let st = Command::new("ssh").args(["-MNf", "-o", &format!("ControlPath={sock}"), "--", target]).status().map_err(Error::io)?;
+        let st = Command::new("ssh")
+            .args(["-MNf", "-o", &format!("ControlPath={sock}"), "-o", SSH_CONNECT_TIMEOUT, "--", target])
+            .status()
+            .map_err(Error::io)?;
         if !st.success() {
             return Err(Error(format!("vs: ssh -MNf {target}: {st}")));
         }
@@ -378,7 +402,10 @@ impl Proto for Ssh {
 
     fn connect(&self) -> Result<Duration, Error> {
         let t0 = Instant::now();
-        let out = Command::new("ssh").args(["-o", "ControlPath=none", "--", &self.target, "true"]).output().map_err(Error::io)?;
+        let out = Command::new("ssh")
+            .args(["-o", "ControlPath=none", "-o", SSH_CONNECT_TIMEOUT, "--", &self.target, "true"])
+            .output()
+            .map_err(Error::io)?;
         if !out.status.success() {
             return Err(Error(format!("ssh connect: {}: {}", out.status, String::from_utf8_lossy(&out.stderr))));
         }
@@ -592,6 +619,17 @@ fn table(names: &[&str], all: &[Vec<Side>]) -> String {
         }
         b += "\n";
     }
+    let failed: Vec<String> = names
+        .iter()
+        .zip(all)
+        .filter_map(|(n, runs)| {
+            let k: usize = runs.iter().map(|s| s.connect_failed).sum();
+            (k > 0).then(|| format!("{n} {k}"))
+        })
+        .collect();
+    if !failed.is_empty() {
+        b += &format!("\ncold connects that failed and were tried again (not in the timings): {}\n", failed.join(", "));
+    }
     b += "\nper run, echo during a download p50 ms:\n";
     for (n, runs) in names.iter().zip(all) {
         let v: Vec<String> = runs.iter().map(|s| ms(percentile(&s.load_echo, 0.5))).collect();
@@ -618,16 +656,19 @@ mod tests {
         assert_eq!(over_runs(&runs, |s| percentile(&s.idle_echo, 0.5)), Some(d(20)));
     }
 
-    // A protocol with no bulk of its own shows a dash, and a missed echo
-    // shows as past the limit, not as a time.
+    // A protocol with no bulk of its own shows a dash, a missed echo shows
+    // as past the limit, not as a time, and retried connects are counted.
     #[test]
     fn table_cells() {
-        let s = Side { connect: vec![d(400)], bulk: None, idle_echo: vec![d(120)], load_echo: vec![MISSED], load_bulk: Some(1.5) };
-        let t = table(&["x"], &[vec![s]]);
+        let s = Side { connect: vec![d(400)], connect_failed: 0, bulk: None, idle_echo: vec![d(120)], load_echo: vec![MISSED], load_bulk: Some(1.5) };
+        let t = table(&["x"], &[vec![s.clone()]]);
         assert!(t.contains("| connect + run p50 ms | 400 |"), "{t}");
         assert!(t.contains("| download alone MB/s | — |"), "{t}");
         assert!(t.contains(">15000 / >15000"), "{t}");
         assert!(t.contains("| download during the echo MB/s | 1.50 |"), "{t}");
+        assert!(!t.contains("tried again"), "{t}");
+        let t = table(&["x", "y"], &[vec![s.clone()], vec![Side { connect_failed: 2, ..s }]]);
+        assert!(t.contains("tried again (not in the timings): y 2\n"), "{t}");
     }
 
     // The ssh side against a local cat: each key's echo is the letter
