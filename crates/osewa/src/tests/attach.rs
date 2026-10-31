@@ -171,6 +171,20 @@ fn ticker_wakes_only_for_prediction_deadlines() {
     rt.block_on(t).unwrap();
 }
 
+/// A live clipboard event reaches the local clipboard as OSC 52; one from a
+/// catch-up doesn't.
+#[test]
+fn clipboard_events_set_the_local_clipboard() {
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let out = Buf::default();
+    let a = crate::ui::Attached::new(crate::ui::Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())), "me".into());
+    let clip = |data: &[u8]| osewa_wire::EventMsg { data: data.to_vec(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_CLIPBOARD) };
+    a.m.event(&clip(b"old"), false).unwrap();
+    assert_eq!(out.string(), "", "a catch-up clipboard event was applied");
+    a.m.event(&clip(b"hi!"), true).unwrap();
+    assert_eq!(out.string(), "\x1b]52;c;aGkh\x1b\\");
+}
+
 #[test]
 fn viewer_notices() {
     for (owner, me, want) in [("phone-abcd", "mac-1234", "phone owns"), ("mac-abcd", "mac-1234", "another window on this device owns"), ("", "mac-1234", "nobody owns")] {
@@ -375,9 +389,11 @@ fn live_queries_not_forwarded() {
     wait_for(&a.out, "after");
     a.stdin.close();
     a.code();
-    for q in ["\x1b[6n", "\x1b[c", "\x1b]52"] {
+    for q in ["\x1b[6n", "\x1b[c", "\x1b]52;c;aGk=\x07"] {
         assert!(!a.out.string().contains(q), "forwarded {q:?}");
     }
+    // The clipboard write reaches this owner once, from the holder's event.
+    assert_eq!(a.out.string().matches("\x1b]52;c;aGk=\x1b\\").count(), 1, "clipboard set");
 }
 
 /// A second client attaches as a viewer: its typing is refused with a

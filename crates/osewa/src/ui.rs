@@ -189,6 +189,14 @@ impl Ui {
             }
             return;
         }
+        if e.kind == wire::EVENT_CLIPBOARD {
+            // The holder sends these only to the owner; one replayed from a
+            // catch-up would overwrite whatever was copied since.
+            if live {
+                self.write(&clipboard_set(&e.data));
+            }
+            return;
+        }
         if e.kind != wire::EVENT_INPUT_MODE {
             return;
         }

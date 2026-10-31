@@ -358,6 +358,11 @@ The holder's terminal answers every terminal query (DSR, DA, DECRQM, kitty
 keyboard, size reports) by writing to the PTY, whether or not a client is
 attached. Client terminals must not reply.
 
+## Clipboard
+
+OSC 52 writes become `clipboard` events, sent only to the owner; a client
+puts them on its own clipboard. Clipboard reads are not answered.
+
 ## Channel streams
 
 A channel stream carries a byte stream that is not a terminal: a TCP

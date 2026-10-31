@@ -19,6 +19,7 @@ osewa-client.workspace = true
 osewa-mirror.workspace = true
 osewa-paths.workspace = true
 libc.workspace = true
+base64.workspace = true
 hex.workspace = true
 rand.workspace = true
 serde_json.workspace = true

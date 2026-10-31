@@ -171,6 +171,16 @@ pub(crate) fn notice_draw(t: &Terminal, msg: &str, style: &[u8]) -> Vec<u8> {
     out
 }
 
+/// OSC 52 that puts data on the local clipboard. The remote's selection
+/// target isn't carried, so it is always the clipboard.
+pub(crate) fn clipboard_set(data: &[u8]) -> Vec<u8> {
+    use base64::Engine as _;
+    let mut out = b"\x1b]52;c;".to_vec();
+    out.extend_from_slice(base64::engine::general_purpose::STANDARD.encode(data).as_bytes());
+    out.extend_from_slice(b"\x1b\\");
+    out
+}
+
 /// Redraws the screen and modes from a snapshot taken mid-session.
 pub(crate) fn snapshot_redraw(t: &Terminal) -> Vec<u8> {
     let v = vt(t);
