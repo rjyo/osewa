@@ -8,6 +8,7 @@
 //! osewa-bench resume -addr -session -key ...     cold resume timings
 //! osewa-bench serve -listen 127.0.0.1:8080       HTTP/WebSocket target for forwards
 //! osewa-bench bytes -n N [-check]                transfer pattern on stdout, or check stdin
+//! osewa-bench vs [-runs N] [-quic] [-mosh] host   osewa vs ssh vs mosh on a real host
 //! ```
 //!
 //! gen writes workload lines with a stamp line "@T<unix ms>@" before every
@@ -30,6 +31,7 @@ pub mod pattern;
 pub mod resume;
 pub mod serve;
 pub mod stamp;
+pub mod vs;
 pub mod w4;
 pub mod workload;
 
@@ -54,7 +56,7 @@ impl Error {
     }
 }
 
-pub const USAGE: &str = "usage: osewa-bench gen|drive|clock|resume|serve|bytes [flags]";
+pub const USAGE: &str = "usage: osewa-bench gen|drive|clock|resume|serve|bytes|vs [flags]";
 
 /// Runs one command; the exit code is the Go helper's: 2 for no command, 1
 /// for any failure.
@@ -70,6 +72,7 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
         "resume" => resume::resume_main(rest, stdout),
         "serve" => serve::serve_main(rest),
         "bytes" => serve::bytes_main(rest, io::stdin().lock(), stdout),
+        "vs" => vs::vs_main(rest, stdout),
         c => Err(Error(format!("unknown command {}", osewa_wire::go_quote(c)))),
     };
     match r {
