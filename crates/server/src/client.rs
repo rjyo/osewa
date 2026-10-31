@@ -30,7 +30,7 @@ const TYPED_FRAME_MAX: usize = 256;
 
 pub(crate) struct Client {
     pub srv: Rc<Server>,
-    conn: Rc<dyn Conn>,
+    pub(crate) conn: Rc<dyn Conn>,
     pub send: SendQueue,
     /// client_id from HELLO.
     pub id: RefCell<String>,

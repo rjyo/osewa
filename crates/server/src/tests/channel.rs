@@ -764,7 +764,7 @@ fn path_bounds_bulk_while_typing() {
         let mut c = e.connect("phone").await;
         // Credit held: no rate is measured, so the path's floor is its room.
         c.hold_channel = true;
-        let empty = Sample { queued: 0, min_rtt: Duration::from_millis(100) };
+        let empty = Sample { queued: 0, min_rtt: Duration::from_millis(100), rtt: Duration::from_millis(100) };
         c.set_path(Some(empty));
         // A key: INPUT on a stream that isn't there still counts as typing.
         c.send(wire::json(wire::TYPE_INPUT, 99, &wire::Input { seq: 1, ty: "text".into(), text: "a".into(), ..Default::default() }))
@@ -777,7 +777,7 @@ fn path_bounds_bulk_while_typing() {
             assert!(f.payload.len() <= PATH_FLOOR as usize, "CHANNEL_DATA of {} bytes while typing", f.payload.len());
         }
         // A full path holds bulk back, apart from what was already queued...
-        c.set_path(Some(Sample { queued: 1 << 20, ..empty }));
+        c.set_path(Some(Sample { queued: 1 << 20, rtt: Duration::from_millis(400), ..empty }));
         let mut late = 0;
         while let Ok(f) = c.read(Duration::from_millis(200)).await {
             if data(&f) {
@@ -798,7 +798,7 @@ fn path_free_while_nobody_types() {
     run(async {
         let e = Env::new();
         let mut c = e.connect("phone").await;
-        c.set_path(Some(crate::path::Sample { queued: 1 << 20, min_rtt: Duration::from_millis(100) }));
+        c.set_path(Some(crate::path::Sample { queued: 1 << 20, min_rtt: Duration::from_millis(100), rtt: Duration::from_millis(400) }));
         let r = c.exec(1, &["sh", "-c", "head -c 1048576 /dev/zero"]).await;
         assert!(r.error.is_empty(), "exec.start {r:?}");
         let r = c.drain(1).await;

@@ -21,6 +21,9 @@ use crate::queue::Class;
 /// How often a channel held back by the path alone looks again.
 const PATH_POLL: Duration = Duration::from_millis(5);
 
+/// How often a stream's windows are traced.
+const TRACE_ROOM: Duration = Duration::from_millis(250);
+
 /// Keeps a client's CREDIT from overflowing the counter; what the server
 /// sends is bounded by the send queue anyway.
 const MAX_CREDIT: i64 = 1 << 40;
@@ -34,6 +37,8 @@ pub(crate) struct Channel {
     /// Fires on every change a task may wait for.
     cond: Notify,
     pub s: RefCell<ChanState>,
+    /// When await_room last traced its windows.
+    traced: std::cell::Cell<Option<Instant>>,
 }
 
 pub(crate) struct ChanState {
@@ -151,6 +156,7 @@ impl Channel {
                 hupped: false,
                 over: false,
             }),
+            traced: std::cell::Cell::new(None),
         })
     }
 
@@ -360,6 +366,36 @@ impl Channel {
     /// many bytes to send, or 0 once the channel stopped. Spending without
     /// an await between the check and the spend keeps two pumps from both
     /// sending into the same room.
+    /// Traces what bounds the stream, at most every TRACE_ROOM: a stream
+    /// sending far below its link is otherwise a black box.
+    fn trace_room(&self, s: &ChanState, now: Instant, avail: i64, path: Option<i64>, room: i64) {
+        let Some(tr) = &self.c.srv.trace else { return };
+        if self.traced.get().is_some_and(|t| now.saturating_duration_since(t) < TRACE_ROOM) {
+            return;
+        }
+        self.traced.set(Some(now));
+        let cf = self.c.flight.borrow();
+        let sample = self.c.conn.path(now);
+        tr.event(
+            "room",
+            &[
+                ("stream", self.id.into()),
+                ("credit", s.credit.into()),
+                ("ch_window", s.fl.window.into()),
+                ("ch_in_flight", s.fl.in_flight().into()),
+                ("conn_window", cf.window.into()),
+                ("conn_in_flight", cf.in_flight().into()),
+                ("rate_max", cf.rate_max(now).into()),
+                ("typing", self.c.typing(now).into()),
+                ("avail", avail.into()),
+                ("path", path.map_or(serde_json::Value::Null, Into::into)),
+                ("kernel_queued", sample.map_or(serde_json::Value::Null, |x| x.queued.into())),
+                ("min_rtt_us", sample.map_or(serde_json::Value::Null, |x| (x.min_rtt.as_micros() as u64).into())),
+                ("room", room.into()),
+            ],
+        );
+    }
+
     async fn await_room(&self, want: usize) -> usize {
         loop {
             let path_bound = {
@@ -371,6 +407,7 @@ impl Channel {
                 let avail = self.avail(&s);
                 let path = self.c.path_room(now);
                 let room = path.map_or(avail, |p| avail.min(p));
+                self.trace_room(&s, now, avail, path, room);
                 if room >= 2 {
                     let m = ((room - 1) as usize).min(want);
                     s.credit -= m as i64 + 1;

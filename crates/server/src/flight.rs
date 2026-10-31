@@ -140,7 +140,18 @@ impl Flight {
             }
             self.rates.push_back((rate, now));
             let queue = if typing { QUEUE_TARGET } else { QUEUE_IDLE };
-            let est = clamp_window(rate, self.base() + queue);
+            let mut est = clamp_window(rate, self.base() + queue);
+            // The rate was measured under this window, so a window that
+            // held data back can't measure its way past itself: while it is
+            // full and the last round trip shows no more queue than
+            // allowed, it doubles,
+            // as slow start does, and the rate bounds it again once a queue
+            // shows. Without this a stream that starts while someone types
+            // stays a fraction of the link for as long as they do.
+            let filled = rate * self.base().as_secs_f64() >= 0.9 * self.window as f64;
+            if self.blocked && filled && sample.is_some_and(|s| s <= self.base() + queue) {
+                est = est.max((self.window * 2).min(FLIGHT_MAX));
+            }
             if self.blocked || est > self.window || (typing && !self.capped) {
                 self.window = est;
             }
@@ -238,6 +249,32 @@ mod tests {
     // While someone types, the window follows what credit shows the link
     // carrying: the bytes credited per minimum round trip plus QUEUE_TARGET,
     // within its bounds.
+    // A stream that starts while someone types, on a path that doesn't
+    // queue: each round trip it fills its window and the round trip stays
+    // put, so the window doubles to the link instead of staying at the rate
+    // it held itself to. Once the round trip grows, it stops.
+    #[test]
+    fn grows_while_typing_without_a_queue() {
+        let mut f = Flight::default();
+        let mut now = Instant::now();
+        let round = |f: &mut Flight, now: &mut Instant, rtt: Duration| {
+            let n = f.window;
+            f.send(n, *now);
+            f.blocked = true;
+            *now += rtt;
+            f.credit(n as u32, *now, true);
+        };
+        for _ in 0..6 {
+            round(&mut f, &mut now, ms(100));
+        }
+        assert!(f.window >= FLIGHT_INITIAL << 5, "window {} after 6 round trips with no queue", f.window);
+        let w = f.window;
+        for i in 1..4 {
+            round(&mut f, &mut now, ms(100 + 100 * i));
+        }
+        assert!(f.window <= w, "window {} grew from {w} with a growing queue", f.window);
+    }
+
     // rate_max keeps the highest rate of the last FLIGHT_RTT_SPAN, so a
     // bound sized from it isn't shrunk by the rate it held a sender to.
     #[test]

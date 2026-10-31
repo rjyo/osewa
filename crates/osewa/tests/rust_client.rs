@@ -344,3 +344,34 @@ fn link_resumes_after_drop() {
     run(l.close());
     m.close();
 }
+
+/// One connection, many downloads, each ended early with output still in
+/// flight, as a user stops a transfer: every new one must get the
+/// connection's full room again, not what the earlier ones left uncredited.
+#[test]
+fn downloads_closed_early_leave_room() {
+    let rig = Rig::start(Path::new(RUST_OSEWA), "closed-early");
+    let c = rig.dial("rust-closed-early");
+    let sess_id = run(c.create(CreateOptions { cols: 80, rows: 24, argv: argv(&["cat"]), ..Default::default() })).unwrap();
+    let sess = run(c.attach(&sess_id, AttachOptions { cols: 80, rows: 24, own: true, ..Default::default() })).unwrap();
+    for i in 0..40 {
+        let e = run(c.exec(ExecOptions { argv: argv(&["cat", "/dev/urandom"]), ..Default::default() })).unwrap();
+        let out = e.stdout();
+        let want = 4 << 20;
+        let (mut got, mut buf, t0) = (0usize, vec![0u8; 64 << 10], Instant::now());
+        while got < want {
+            let n = block_on(timeout(Duration::from_secs(5), out.read(&mut buf))).unwrap_or_else(|| panic!("download {i} stalled after {got} bytes")).unwrap();
+            assert!(n > 0, "download {i} ended");
+            got += n;
+            // Someone types meanwhile, now and then.
+            if i % 3 == 0 && got % (1 << 20) < n {
+                sess.send_text("x").unwrap();
+            }
+        }
+        let el = t0.elapsed();
+        assert!(el < Duration::from_secs(5), "download {i}: {want} bytes took {el:?}");
+        run(e.close()).unwrap();
+    }
+    sess.close();
+    run(c.close());
+}

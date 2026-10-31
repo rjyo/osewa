@@ -18,6 +18,8 @@ pub struct Sample {
     pub queued: u64,
     /// The path's minimum round trip, without any queue.
     pub min_rtt: Duration,
+    /// Its latest (smoothed) round trip: above min_rtt by the queue.
+    pub rtt: Duration,
 }
 
 /// How long a minimum round trip stands on macOS, which reports only the
@@ -66,7 +68,8 @@ impl Probe {
         if min_rtt == 0 || min_rtt == u32::MAX {
             return None;
         }
-        Some(Sample { queued: in_flight * snd_mss + notsent, min_rtt: Duration::from_micros(min_rtt as u64) })
+        let (min_rtt, rtt) = (Duration::from_micros(min_rtt as u64), Duration::from_micros(u32_at(&b, 68) as u64));
+        Some(Sample { queued: in_flight * snd_mss + notsent, min_rtt, rtt: rtt.max(min_rtt) })
     }
 
     #[cfg(target_os = "macos")]
@@ -81,7 +84,7 @@ impl Probe {
         let sbbytes = u32_at(&b, 32) as u64;
         let rttcur = u32_at(&b, 40);
         if rttcur == 0 {
-            return self.min.get().map(|(m, _)| Sample { queued: sbbytes, min_rtt: m });
+            return self.min.get().map(|(m, _)| Sample { queued: sbbytes, min_rtt: m, rtt: m });
         }
         let cur = Duration::from_millis(rttcur as u64);
         let min = match self.min.get() {
@@ -89,7 +92,7 @@ impl Probe {
             _ => (cur, now),
         };
         self.min.set(Some(min));
-        Some(Sample { queued: sbbytes, min_rtt: min.0 })
+        Some(Sample { queued: sbbytes, min_rtt: min.0, rtt: cur })
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -142,10 +145,20 @@ pub(crate) fn probe_gain(since: Duration, min_rtt: Duration) -> f64 {
 /// How many more bulk bytes may go to a path whose kernel holds s, while
 /// waiting bytes are already queued above the kernel, for a link carrying
 /// rate bytes per second: enough for its minimum round trip plus
-/// TYPING_QUEUE.
+/// TYPING_QUEUE. While the round trip shows no more queue than that, the
+/// path may hold twice what it does, as slow start grows: the rate is
+/// measured under this same bound, so a stream that starts while someone
+/// types would otherwise climb only as fast as the probe lets it, seconds
+/// at a fraction of the link.
 pub(crate) fn room(s: Sample, rate: f64, waiting: u64) -> i64 {
-    let allowed = ((rate * (s.min_rtt + TYPING_QUEUE).as_secs_f64()) as u64).max(PATH_FLOOR);
-    allowed as i64 - (s.queued + waiting) as i64
+    let held = s.queued + waiting;
+    let mut allowed = ((rate * (s.min_rtt + TYPING_QUEUE).as_secs_f64()) as u64).max(PATH_FLOOR);
+    if s.rtt <= s.min_rtt + TYPING_QUEUE {
+        // Twice what is in flight, not counting what still waits above
+        // the kernel: that isn't on the path yet.
+        allowed = allowed.max(2 * s.queued);
+    }
+    allowed as i64 - held as i64
 }
 
 #[cfg(test)]
@@ -160,7 +173,8 @@ mod tests {
     fn room_is_a_round_trip_and_a_little_queue() {
         // 125 kB/s over 100 ms: 12.5 kB carried per round trip, plus 10 ms
         // of queue, 1.25 kB.
-        let s = Sample { queued: 0, min_rtt: ms(100) };
+        // A queue shows in the round trip.
+        let s = Sample { queued: 0, min_rtt: ms(100), rtt: ms(150) };
         assert_eq!(room(s, 125_000.0, 0), 13_750);
         assert_eq!(room(Sample { queued: 10_000, ..s }, 125_000.0, 3_000), 750);
         assert!(room(Sample { queued: 20_000, ..s }, 125_000.0, 0) < 0);
@@ -179,9 +193,20 @@ mod tests {
 
     #[test]
     fn room_keeps_a_floor() {
-        let s = Sample { queued: 0, min_rtt: ms(1) };
+        let s = Sample { queued: 0, min_rtt: ms(1), rtt: ms(50) };
         assert_eq!(room(s, 0.0, 0), PATH_FLOOR as i64);
         assert_eq!(room(s, 1000.0, 1000), PATH_FLOOR as i64 - 1000);
+    }
+
+    // With no queue in the round trip, what the path holds may double
+    // whatever the measured rate says; once a queue shows, the rate bounds
+    // it again.
+    #[test]
+    fn room_grows_while_nothing_queues() {
+        let s = Sample { queued: 40_000, min_rtt: ms(100), rtt: ms(105) };
+        assert_eq!(room(s, 100_000.0, 10_000), 30_000);
+        assert_eq!(room(Sample { queued: 0, ..s }, 0.0, 0), PATH_FLOOR as i64);
+        assert!(room(Sample { rtt: ms(200), ..s }, 100_000.0, 10_000) < 0);
     }
 
     // A connected socket reads back with the kernel's numbers: nothing
