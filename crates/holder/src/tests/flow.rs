@@ -1,4 +1,4 @@
-//! Ported from flow_test.go.
+//! Flow control: the credit window, snapshots and control frames.
 
 use std::fmt::Write;
 use std::time::{Duration, Instant};
@@ -97,7 +97,7 @@ fn credit_after_exit() {
     assert!(end.exit_code == Some(3) && c.text().contains("100000"), "end {end:?}, text {:?}", c.text());
 }
 
-/// An LCG step, as the Go helpers use.
+/// An LCG step: cheap deterministic noise.
 fn lcg(r: &mut u32) -> u32 {
     *r = r.wrapping_mul(1103515245).wrapping_add(12345);
     *r

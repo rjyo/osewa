@@ -1,6 +1,6 @@
 //! The device's list of enrolled servers, hosts.json in the osewa config
-//! directory, shared by every client on the machine (the CLI, app-hook, the
-//! Go ones too: the file's format is Go's). It pins each server's key, so
+//! directory, shared by every client on the machine (the CLI, app-hook and
+//! any other v0 client, so its format is fixed). It pins each server's key, so
 //! it is trusted only when private.
 
 use std::fmt;
@@ -41,7 +41,7 @@ fn is_zero(n: &i64) -> bool {
 /// Why a hosts call failed.
 #[derive(Debug)]
 pub enum Error {
-    /// Find didn't find the host (Go's ErrUnknown).
+    /// Find didn't find the host.
     Unknown(String),
     Io(io::Error),
     Invalid(String),
@@ -161,8 +161,9 @@ fn tmp_suffix() -> String {
     format!("{}-{}-{ns}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Go's json.MarshalIndent(v, "", "  "): serde_json's pretty form is the
-/// same layout; Go also escapes <, > and & (and U+2028, U+2029) in strings.
+/// hosts.json's layout: two-space indented JSON (serde_json's pretty
+/// form), with <, > and & (and U+2028, U+2029) escaped in strings, so
+/// every client rewrites the file to the same bytes.
 fn marshal_indent<T: Serialize>(v: &T) -> Vec<u8> {
     let b = serde_json::to_vec_pretty(v).expect("hosts: marshal");
     let mut out = Vec::with_capacity(b.len());
@@ -221,7 +222,7 @@ fn check_private_file(p: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Go's FileMode.String for permission bits: -rw-r--r--.
+/// Permission bits as ls shows them: -rw-r--r--.
 fn perm_string(perm: u32) -> String {
     let mut s = String::from("-");
     for i in (0..9).rev() {
@@ -433,9 +434,9 @@ mod tests {
         assert!(old.ssh.is_empty() && old.server_key == "k", "old = {old:?}");
     }
 
-    // The bytes Go's json.MarshalIndent writes, and a newline.
+    // The v0 hosts.json bytes, and a newline.
     #[test]
-    fn hosts_json_is_gos() {
+    fn hosts_json_is_v0() {
         let t = TempDir::new();
         let dir = t.path();
         save(dir, Host { ssh: "me@<box>&".into(), quic_port: 7323, ..h("a", "a:1", "k1") }).unwrap();

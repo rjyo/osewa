@@ -1,4 +1,4 @@
-//! The attach UI (Go's cmd/osewa/ui.go): one attached session drawn on the
+//! The attach UI: one attached session drawn on the
 //! local terminal, with predictions over it and notices.
 
 use std::io::Write;

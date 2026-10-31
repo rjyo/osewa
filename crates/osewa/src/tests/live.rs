@@ -1,4 +1,4 @@
-//! A real server for the live tests (Go's live_test.go liveHost): the Rust
+//! A real server for the live tests: the
 //! server in this process, with holders on threads of their own, and a
 //! client config directory enrolled on it as host "h".
 
@@ -157,7 +157,7 @@ impl LiveHost {
         rx.recv().unwrap();
     }
 
-    /// Stops serving, as Go's srv.Close: client connections drop, holders
+    /// Stops serving: client connections drop, holders
     /// stay.
     pub fn stop_serving(&self) {
         let (tx, rx) = mpsc::channel();

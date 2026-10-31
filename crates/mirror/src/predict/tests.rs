@@ -1,6 +1,5 @@
-//! Ported from client/mirror/predict_test.go and predict_review_test.go.
-//! Go's fuzz targets run here over their seed corpus plus deterministic
-//! pseudo-random cases.
+//! Echo prediction. The fuzz properties run here over a seed corpus plus
+//! deterministic pseudo-random cases.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -478,7 +477,7 @@ fn chunk(b: &[u8], i: usize, n: usize) -> &[u8] {
 }
 
 /// Predictions never change the mirror, and the overlay stays on screen,
-/// whatever the input, output and timing (Go's FuzzPredictor).
+/// whatever the input, output and timing.
 #[test]
 fn fuzz_predictor() {
     let seeds: &[(&[u8], &[u8], u8)] = &[
@@ -552,7 +551,7 @@ fn predictor_rebases_on_new_mirror() {
     );
 }
 
-// From predict_review_test.go: the findings in .cache/reviews/predict.md.
+// The prediction review's findings.
 
 /// #1: after Enter a new epoch draws nothing until the mirror confirms one
 /// of its predictions, so a password typed at a prompt that doesn't echo is
@@ -702,8 +701,7 @@ fn predict_arrows_only_outside_canonical() {
 }
 
 /// Overlay never shows a key the mirror hasn't echoed: with no echo at
-/// all, whatever is typed and printed, nothing is ever drawn (Go's
-/// FuzzPredictNeverDrawsUnechoed).
+/// all, whatever is typed and printed, nothing is ever drawn.
 #[test]
 fn fuzz_predict_never_draws_unechoed() {
     let seeds: &[(&[u8], &[u8], u8)] = &[

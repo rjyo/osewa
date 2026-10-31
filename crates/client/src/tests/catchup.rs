@@ -1,4 +1,5 @@
-//! catchup_test.go
+//! Catch-up: a screen snapshot, then full output, and what a resume
+//! after one asks for.
 
 use super::*;
 

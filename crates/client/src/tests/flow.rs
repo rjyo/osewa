@@ -1,4 +1,4 @@
-//! flow_test.go
+//! Flow control: credit for received bytes and acks riding with it.
 
 use super::*;
 use crate::conn::CREDIT_DELAY;

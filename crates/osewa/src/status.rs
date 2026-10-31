@@ -1,4 +1,4 @@
-//! A program's status (OSC 7501) in one line (Go's status.go).
+//! A program's status (OSC 7501) in one line.
 
 use crate::vtfilter::printable;
 

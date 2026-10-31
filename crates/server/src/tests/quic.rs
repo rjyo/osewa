@@ -1,7 +1,6 @@
 //! The server on the QUIC carrier (docs/QUIC.md): WELCOME's carriers,
 //! sessions, channel streams on lanes, compression by ALPN, auth, close;
-//! and a smoke comparison with the WebSocket on loopback. The Go peers
-//! are in crates/osewa/tests/go_quic.rs.
+//! and a smoke comparison with the WebSocket on loopback.
 
 use std::time::{Duration, Instant};
 
@@ -18,7 +17,8 @@ fn conn(c: &Tc) -> &quic::Conn {
     }
 }
 
-// As Go's server: QUIC on the TCP port's number, ALPN osewa.v0 listed.
+// QUIC on the TCP port's number, ALPN osewa.v0 listed, as docs/QUIC.md
+// has v0 servers advertise it.
 #[test]
 fn welcome_advertises_quic() {
     run(async {
@@ -73,7 +73,7 @@ fn no_compress_takes_plain_alpn() {
 }
 
 // exec and forward data travel on lanes; more than a window of credit
-// moves under the Go client's CREDIT rules.
+// moves under the protocol's CREDIT rules.
 #[test]
 fn channels_on_lanes() {
     run(async {

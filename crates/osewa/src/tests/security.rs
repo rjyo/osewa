@@ -1,4 +1,4 @@
-//! security_test.go
+//! Printing remote strings safely.
 
 use super::*;
 use crate::commands::{owner_name, print_sessions};

@@ -1,4 +1,4 @@
-//! `osewa service` (Go's service.go): the server as a per-user service that
+//! `osewa service`: the server as a per-user service that
 //! survives reboots, a systemd --user unit on Linux, a launchd agent on
 //! macOS.
 
@@ -18,8 +18,8 @@ const LAUNCH_LABEL: &str = "dev.osewa.server";
 pub(crate) type RunFn = Box<dyn FnMut(&str, &[&str]) -> Result<(), String>>;
 
 pub(crate) struct Service {
-    /// "linux", "darwin", or another of Go's GOOS names.
-    pub goos: String,
+    /// "linux", "darwin", or another OS name as the release binaries use.
+    pub os_name: String,
     pub home: PathBuf,
     /// The osewa binary the service runs.
     pub exe: PathBuf,
@@ -39,7 +39,7 @@ fn run_quiet(name: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Words an exit status as Go's exec.ExitError does.
+/// Words an exit status: "exit status N" or "signal: N".
 fn exit_status(s: std::process::ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
     match (s.code(), s.signal()) {
@@ -54,8 +54,8 @@ impl Service {
         let home = osewa_paths::home();
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-        let goos = osewa_client::login::local_platform().0.to_string();
-        Ok(Service { goos, home, exe, stdout, run: Box::new(run_quiet) })
+        let os_name = osewa_client::login::local_platform().0.to_string();
+        Ok(Service { os_name, home, exe, stdout, run: Box::new(run_quiet) })
     }
 
     fn say(&self, s: &str) {
@@ -86,14 +86,14 @@ impl Service {
         ]);
         // One flag.Parse: no positional arguments.
         if fs.parse_once_all(args).is_err() {
-            return Err(format!("bad server flags {}", go_quote_list(args)));
+            return Err(format!("bad server flags {}", quote_list(args)));
         }
         // A server started with --daemon holds the port; the service takes
         // over.
         stop_daemon()?;
         let mut argv = vec![self.exe.to_string_lossy().into_owned(), "server".into()];
         argv.extend(args.iter().cloned());
-        match self.goos.as_str() {
+        match self.os_name.as_str() {
             "linux" => self.install_systemd(&argv),
             "darwin" => self.install_launchd(&argv),
             os => Err(format!("no service manager support on {os}; use `osewa server --daemon`")),
@@ -165,7 +165,7 @@ impl Service {
     }
 
     pub fn uninstall(&mut self) -> Result<(), String> {
-        match self.goos.as_str() {
+        match self.os_name.as_str() {
             "linux" => {
                 let _ = (self.run)("systemctl", &["--user", "disable", "--now", UNIT_NAME]);
                 remove(&self.unit_path())?;
@@ -189,7 +189,7 @@ impl Service {
     /// whatever becomes of this process, else a daemon (with default
     /// flags). Sessions live in their holders and survive.
     pub fn restart(&mut self) -> Result<(), String> {
-        match self.goos.as_str() {
+        match self.os_name.as_str() {
             "darwin" => {
                 let uid = unsafe { libc::getuid() };
                 for domain in [format!("gui/{uid}"), format!("user/{uid}")] {
@@ -318,7 +318,7 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// Formats args as Go's %q of a []string: ["a" "b"].
-fn go_quote_list(args: &[String]) -> String {
+/// Formats args quoted, in brackets: ["a" "b"].
+fn quote_list(args: &[String]) -> String {
     format!("[{}]", args.iter().map(|a| osewa_wire::go_quote(a)).collect::<Vec<_>>().join(" "))
 }

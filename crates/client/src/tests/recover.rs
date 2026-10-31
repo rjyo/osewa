@@ -1,4 +1,5 @@
-//! recover_test.go and proxy_test.go
+//! Recovery through a proxy that can black-hole the connection: suspect
+//! and lost connections, and resumes.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

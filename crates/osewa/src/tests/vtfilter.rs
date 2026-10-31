@@ -1,4 +1,4 @@
-//! vtfilter_test.go
+//! What remote output may reach the local terminal.
 
 use crate::vtfilter::{printable_lines, FState, QueryFilter};
 
@@ -110,7 +110,7 @@ fn query_filter_reset() {
     assert_eq!(f.filter(b"n"), b"n", "after reset");
 }
 
-/// One fuzz input, as FuzzQueryFilterSplit checks it.
+/// One fuzz input: filtered whole and split, the same output.
 fn check_split(input: &[u8], a: usize, b: usize) {
     let mut whole = QueryFilter::default();
     let want = whole.filter(input);
@@ -136,7 +136,7 @@ fn check_split(input: &[u8], a: usize, b: usize) {
     assert!(!s.chars().any(|c| ('\u{80}'..='\u{9f}').contains(&c)), "C1 control passed: {:?}", short(&want));
 }
 
-/// Go's FuzzQueryFilterSplit over its seed corpus (each case split at a
+/// The split property over a seed corpus (each case split at a
 /// half and a third) and fixed pseudo-random inputs built from the cases'
 /// bytes.
 #[test]

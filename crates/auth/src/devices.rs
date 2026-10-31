@@ -50,8 +50,8 @@ impl Devices {
             if line.is_empty() {
                 continue;
             }
-            // As lenient as Go's decoder: any key case, last duplicate wins,
-            // invalid UTF-8 as U+FFFD.
+            // Leniently, as v0 peers decode JSON: any key case, last duplicate
+            // wins, invalid UTF-8 as U+FFFD.
             let dev = osewa_wire::decode_json(line)
                 .map_err(|e| Error::Msg(format!("auth: {}:{}: {e}", self.path.display(), i + 1)))?;
             out.push(dev);
@@ -139,7 +139,7 @@ impl Devices {
     fn write(&self, list: &[Device]) -> Result<(), Error> {
         let mut buf = String::new();
         for e in list {
-            buf.push_str(&go_json(e));
+            buf.push_str(&device_json(e));
             buf.push('\n');
         }
         let (mut f, tmp) = create_temp(dir_of(&self.path), ".devices-")?;
@@ -150,9 +150,10 @@ impl Devices {
     }
 }
 
-/// A device as Go's json.Encoder writes it, HTML escaping included, so both
-/// implementations write the same bytes.
-fn go_json(d: &Device) -> String {
+/// A device as one devices-file line: compact JSON with <, >, & and
+/// U+2028/U+2029 escaped, as the v0 file has them, so every implementation
+/// sharing the file writes the same bytes.
+fn device_json(d: &Device) -> String {
     let s = serde_json::to_string(d).expect("strings serialize");
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -264,8 +265,9 @@ mod tests {
         for name in ["", "evil\x1b]52;c;aGk=\x07", "a\nb", "c\u{9b}d", long.as_str()] {
             assert!(d.add(Device { name: name.into(), key: k.clone() }).is_err(), "name {name:?} accepted");
         }
-        // Go's "bad\xff" case can't be built: a Rust String is always UTF-8,
-        // and the JSON decoder refuses invalid UTF-8 before it gets here.
+        // A name with invalid UTF-8 can't be built: a Rust String is always
+        // UTF-8, and the JSON decoder refuses invalid UTF-8 before it gets
+        // here.
         d.add(Device { name: "jyo's iPhone 15".into(), key: k }).unwrap();
     }
 
@@ -297,8 +299,8 @@ mod tests {
     }
 
     #[test]
-    fn writes_what_go_writes() {
+    fn writes_v0_bytes() {
         let d = Device { name: "a<b>&c\u{2028}".into(), key: "k".into() };
-        assert_eq!(go_json(&d), "{\"name\":\"a\\u003cb\\u003e\\u0026c\\u2028\",\"key\":\"k\"}");
+        assert_eq!(device_json(&d), "{\"name\":\"a\\u003cb\\u003e\\u0026c\\u2028\",\"key\":\"k\"}");
     }
 }

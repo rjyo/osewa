@@ -429,7 +429,7 @@ async fn http_refusals() {
             assert!(head.starts_with(&format!("HTTP/1.1 {want}\r\n")), "{req:?}\n=> {head}");
         }
         let head = refused(&req.replace("GET ", "POST ").replace("Upgrade: websocket\r\n", "")).await;
-        assert!(head.starts_with("HTTP/1.1 426"), "Upgrade is checked before the method, as coder/websocket does");
+        assert!(head.starts_with("HTTP/1.1 426"), "Upgrade is checked before the method, as v0 servers do");
     })
     .await;
 }
@@ -500,7 +500,7 @@ fn deflate_offers() {
     let sel = |v: &str| select_deflate(&handshake::headers(&[("Sec-WebSocket-Extensions", v)]));
     let d = |c, s| Some(Deflate { client_no_context_takeover: c, server_no_context_takeover: s });
     assert_eq!(sel("permessage-deflate"), d(false, false));
-    // What coder/websocket's own client offers.
+    // What some clients offer: no takeover either way.
     assert_eq!(sel("permessage-deflate; client_no_context_takeover; server_no_context_takeover"), d(true, true));
     // What browsers offer.
     assert_eq!(sel("permessage-deflate; client_max_window_bits"), d(false, false));
@@ -666,7 +666,7 @@ async fn server_protocol_violations() {
                 assert_eq!(close.unwrap().1, "read limited at 1048577 bytes");
             }
         }
-        // coder/websocket just hangs up on an unmasked client frame.
+        // A v0 server just hangs up on an unmasked client frame.
         let (e, close) = violate("", &[(bin, b"x".to_vec())], false).await;
         assert!(matches!(e, Error::Protocol(_)));
         assert_eq!(close, None);

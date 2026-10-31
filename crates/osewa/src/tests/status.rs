@@ -1,4 +1,4 @@
-//! status_test.go (TestStatusNotice is the attach UI's).
+//! Program status lines (the status notice is the attach UI's).
 
 use super::security::no_controls;
 use crate::commands::print_sessions;

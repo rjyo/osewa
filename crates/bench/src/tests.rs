@@ -1,6 +1,5 @@
-//! Go's bench/cmd/osewa-bench/main_test.go and serve_test.go, and the bench
-//! package's own tests (pattern_test.go and the workload tests of
-//! bench_test.go).
+//! osewa-bench's tests: the command line, serve, the transfer pattern and
+//! the workloads.
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
@@ -40,7 +39,7 @@ impl Write for FailWriter {
     }
 }
 
-/// A writer threads can share, as Go's syncBuffer.
+/// A writer threads can share.
 #[derive(Clone, Default)]
 struct SyncBuffer(Arc<Mutex<Vec<u8>>>);
 
@@ -90,7 +89,7 @@ fn new_term(cols: usize, rows: usize, scrollback: usize) -> Terminal {
     Terminal::new(cols, rows, ghostty::Options { scrollback_bytes: scrollback, continuation: true, ..Default::default() }).unwrap()
 }
 
-// pattern_test.go
+// The transfer pattern.
 
 #[test]
 fn pattern_deterministic() {
@@ -140,7 +139,7 @@ fn check_pattern_errors() {
     assert!(err.to_string().contains("boom"), "check_pattern on empty = {err}, want boom");
 }
 
-// bench_test.go: the workloads' own tests.
+// The workloads' own tests.
 
 #[test]
 fn workloads_deterministic() {
@@ -251,7 +250,7 @@ fn r1_fixture() {
     assert!(term.text() == got.text(), "restored R1 differs from the source terminal");
 }
 
-// main_test.go
+// The command line.
 
 #[test]
 fn units_keep_lines() {
@@ -265,7 +264,7 @@ fn units_keep_lines() {
     assert!(workload("w9", 80, 24).is_err(), "unknown workload accepted");
 }
 
-/// A clock that moves a millisecond per reading, as the Go test's.
+/// A clock that moves a millisecond per reading.
 fn fake_clock(start: SystemTime) -> crate::gen::Clock {
     let mut t = start;
     Box::new(move || {
@@ -345,7 +344,7 @@ fn errors() {
     }
     let errs = String::from_utf8_lossy(&errb);
     assert!(errs.contains("usage"), "no usage: {errs}");
-    // The messages are the Go helper's.
+    // The messages the harness matches.
     for want in [
         "osewa-bench: unknown command \"bogus\"",
         "osewa-bench: unknown workload \"nope\"",
@@ -460,7 +459,7 @@ pub(crate) fn temp_dir() -> String {
     p.to_string_lossy().into_owned()
 }
 
-// serve_test.go
+// serve and bytes.
 
 /// Starts the mux on a free port, on its own runtime thread.
 fn start_serve() -> String {
@@ -483,7 +482,7 @@ struct Resp {
 }
 
 /// One HTTP/1.1 request on its own connection. A chunked body goes out in
-/// pieces, as Go's client sends a body of unknown length.
+/// pieces, as an HTTP client sends a body of unknown length.
 fn http(addr: &str, method: &str, path: &str, body: Option<(&[u8], bool)>) -> Resp {
     let mut c = TcpStream::connect(addr).unwrap();
     c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();

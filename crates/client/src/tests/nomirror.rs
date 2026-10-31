@@ -1,4 +1,4 @@
-//! nomirror_test.go
+//! A session without a mirror: the app's own renderer.
 
 use super::*;
 

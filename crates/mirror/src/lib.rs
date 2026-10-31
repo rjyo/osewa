@@ -26,7 +26,7 @@ pub use predict::{
 /// osewa_ghostty's types are `!Send` because they hold raw pointers and
 /// callback boxes that need not be `Send`. Every value wrapped here is made
 /// with `Callbacks::default()`, so it holds no closures; libghostty-vt keeps
-/// no thread affinity (the Go client uses it from any goroutine); and each
+/// no thread affinity; and each
 /// is only ever reached through a Mutex, so access is serialized.
 pub(crate) struct SendCell<T>(pub T);
 

@@ -1,4 +1,5 @@
-//! Ported from review3_test.go.
+//! Review findings: screens while streaming, input not starved, catch-up
+//! reset.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};

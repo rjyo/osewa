@@ -1,5 +1,5 @@
-//! osewa-bench, the e2e benchmarks' helper (Go's bench/cmd/osewa-bench and
-//! the bench package it uses). It runs inside the test containers:
+//! osewa-bench, the e2e benchmarks' helper. It runs inside the test
+//! containers:
 //!
 //! ```text
 //! osewa-bench gen   -kind w1|w2 -rate B/s       timestamped output
@@ -19,8 +19,9 @@
 //! the clock in another.
 //!
 //! The command line, the output formats, the workloads' bytes and the
-//! transfer pattern's bytes are the Go helper's exactly: the Go e2e harness
-//! drives this one, and checks patterns with its own code.
+//! transfer pattern's bytes are fixed: the e2e harness drives this helper
+//! and checks patterns with its own code, and a benchmark is only
+//! comparable on the same bytes.
 
 use std::fmt;
 use std::io::{self, BufRead, Write};
@@ -58,8 +59,8 @@ impl Error {
 
 pub const USAGE: &str = "usage: osewa-bench gen|drive|clock|resume|serve|bytes|vs [flags]";
 
-/// Runs one command; the exit code is the Go helper's: 2 for no command, 1
-/// for any failure.
+/// Runs one command; the exit code is what the harness expects: 2 for no
+/// command, 1 for any failure.
 pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32 {
     let Some((cmd, rest)) = args.split_first() else {
         let _ = writeln!(stderr, "{USAGE}");
@@ -97,8 +98,8 @@ pub fn clock_main(r: impl BufRead, w: &mut dyn Write) -> Result<(), Error> {
     Ok(())
 }
 
-/// Parses flags as Go's flag.FlagSet with ContinueOnError does: a bad flag
-/// prints its error and the usage to stderr and fails.
+/// Parses flags (osewa_flag's syntax): a bad flag prints its error and the
+/// usage to stderr and fails.
 pub(crate) fn parse(fs: &osewa_flag::FlagSet, args: &[String]) -> Result<osewa_flag::Parsed, Error> {
     fs.parse(args).map_err(|e| {
         if e.0 == "help requested" {
@@ -111,7 +112,7 @@ pub(crate) fn parse(fs: &osewa_flag::FlagSet, args: &[String]) -> Result<osewa_f
     })
 }
 
-/// An int flag; Go rejects a bad one while parsing, with the usage.
+/// An int flag; a bad one is rejected with the usage, as a parse error is.
 pub(crate) fn int(p: &osewa_flag::Parsed, name: &str) -> Result<i64, Error> {
     p.int(name).map_err(|e| {
         eprintln!("{e}");
@@ -128,7 +129,7 @@ pub(crate) fn duration(p: &osewa_flag::Parsed, name: &str) -> Result<std::time::
     })
 }
 
-/// A JSON array of numbers as Go's encoding/json writes a []float64: the
+/// A JSON array of numbers as the harness parses and compares them: the
 /// shortest representation, no ".0" on whole numbers, and null for none.
 pub(crate) fn json_f64s(v: &[f64]) -> String {
     if v.is_empty() {
@@ -138,8 +139,9 @@ pub(crate) fn json_f64s(v: &[f64]) -> String {
     format!("[{}]", parts.join(","))
 }
 
-/// An I/O error as Go words its syscall errors ("no such file or
-/// directory"), without Rust's " (os error N)".
+/// An I/O error as the C library words it ("no such file or
+/// directory"), without Rust's " (os error N)": the harness matches the
+/// text.
 pub(crate) fn go_io_error(e: &io::Error) -> String {
     let s = e.to_string();
     match s.find(" (os error ") {
@@ -154,7 +156,8 @@ pub(crate) fn go_io_error(e: &io::Error) -> String {
     }
 }
 
-/// A failed start as Go's os/exec and creack/pty word it.
+/// A failed start, worded as the harness expects ("exec: ...: executable
+/// file not found in $PATH").
 pub(crate) fn go_exec_error(name: &str, e: &io::Error) -> String {
     if e.kind() == io::ErrorKind::NotFound && !name.contains('/') {
         return format!("exec: {}: executable file not found in $PATH", osewa_wire::go_quote(name));

@@ -1,4 +1,5 @@
-//! Ported from server/relay_test.go and server/security_test.go.
+//! Relaying to holders, and the server's limits: backpressure, queue
+//! overflow, client ids, sizes, stream and busy limits.
 
 use std::time::{Duration, Instant};
 

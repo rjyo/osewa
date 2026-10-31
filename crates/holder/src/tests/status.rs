@@ -1,4 +1,4 @@
-//! Ported from status_test.go.
+//! Program status (OSC 7501).
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -1,4 +1,4 @@
-//! channel_test.go
+//! Channel streams: exec and forward against the fake server.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -197,7 +197,7 @@ fn forward_slow_reader_bounded() {
     fc.close();
 }
 
-/// Go's deadlines become the caller's timeouts: a cancelled read or write
+/// Deadlines are the caller's timeouts: a cancelled read or write
 /// leaves the forward usable, and a write without grants takes what the
 /// window allows and then waits.
 #[test]

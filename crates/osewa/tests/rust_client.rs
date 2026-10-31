@@ -1,6 +1,5 @@
-//! The Rust client library (osewa-client, osewa-mirror) against real
-//! servers: the Rust `osewa server` with Rust holders, and the Go one
-//! (built from the Go checkout; skipped without Go). Attach with a
+//! The client library (osewa-client, osewa-mirror) against a real
+//! `osewa server` with its holders. Attach with a
 //! snapshot, input echo, resume after a dropped connection without a new
 //! snapshot, exec with large output and input, forward, list and kill, and
 //! login's check of a saved host.
@@ -11,7 +10,7 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use osewa_client::{block_on, hosts, timeout, AttachOptions, Config, Conn, CreateOptions, ExecOptions, Renderer, RendererError};
@@ -23,33 +22,6 @@ const WAIT: Duration = Duration::from_secs(10);
 
 fn run<F: std::future::Future>(f: F) -> F::Output {
     block_on(timeout(WAIT, f)).expect("timed out")
-}
-
-/// The Go osewa built from the checkout next to this one ($OSEWA_GO_DIR),
-/// or None with a note.
-fn go_osewa() -> Option<&'static Path> {
-    static BIN: OnceLock<Option<PathBuf>> = OnceLock::new();
-    BIN.get_or_init(|| {
-        let repo = std::env::var_os("OSEWA_GO_DIR").map(PathBuf::from).or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|a| a.join("osewa")).find(|p| {
-                fs::read_to_string(p.join("go.mod")).is_ok_and(|m| m.starts_with("module github.com/rjyo/osewa\n"))
-            })
-        });
-        let Some(repo) = repo else {
-            eprintln!("skipping Go server interop: no Go osewa checkout (set OSEWA_GO_DIR)");
-            return None;
-        };
-        let bin = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("osewa-go-server");
-        match Command::new("go").args(["build", "-o"]).arg(&bin).arg("./cmd/osewa").current_dir(&repo).status() {
-            Ok(s) if s.success() => Some(bin),
-            Ok(s) => panic!("building the Go osewa: {s}"),
-            Err(e) => {
-                eprintln!("skipping Go server interop: go: {e}");
-                None
-            }
-        }
-    })
-    .as_deref()
 }
 
 struct TempDir(PathBuf);
@@ -73,7 +45,7 @@ impl Drop for TempDir {
     }
 }
 
-/// A server (Rust or Go) with its own config and run directories, and a
+/// A server with its own config and run directories, and a
 /// client directory with this device's key and the host in hosts.json, as
 /// `osewa login` leaves them.
 struct Rig {
@@ -349,24 +321,6 @@ fn rust_client_against_rust_server_quic() {
 #[test]
 fn rust_client_against_rust_server_race() {
     client_against(Path::new(RUST_OSEWA), "rsr", "");
-}
-
-#[test]
-fn rust_client_against_go_server() {
-    let Some(go) = go_osewa() else { return };
-    client_against(go, "go", "ws");
-}
-
-#[test]
-fn rust_client_against_go_server_quic() {
-    let Some(go) = go_osewa() else { return };
-    client_against(go, "goq", "quic");
-}
-
-#[test]
-fn rust_client_against_go_server_race() {
-    let Some(go) = go_osewa() else { return };
-    client_against(go, "gor", "");
 }
 
 /// A Link survives its connection dropping: the session is resumed by

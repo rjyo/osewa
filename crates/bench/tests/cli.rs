@@ -34,8 +34,7 @@ fn args(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
 }
 
-/// drive renders gen's stamped output and samples its age (Go's
-/// TestDriveWatch, whose test binary doubled as gen).
+/// drive renders gen's stamped output and samples its age.
 #[test]
 fn drive_watch() {
     let mut out = Vec::new();
@@ -80,7 +79,7 @@ fn binary_exit_codes_and_pipes() {
     assert!(o.status.success());
     assert_eq!(String::from_utf8_lossy(&o.stdout).lines().count(), 3);
 
-    // gen's stamps leave as they are written: unbuffered, as Go's stdout.
+    // gen's stamps leave as they are written: unbuffered.
     let o = bench(&["gen", "-kind", "w3", "-rate", "100000", "-duration", "300ms"], b"");
     assert!(o.status.success());
     let s = String::from_utf8_lossy(&o.stdout);

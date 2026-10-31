@@ -1,4 +1,4 @@
-//! exec and forward (Go's channels.go).
+//! exec and forward.
 
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -226,7 +226,7 @@ pub(crate) fn parse_forward(s: &str) -> Result<ForwardSpec> {
     if hport.is_empty() {
         hport = lport;
     }
-    let (Ok(lp), Ok(hp)) = (go_atoi(lport), go_atoi(hport)) else { return Err(bad()) };
+    let (Ok(lp), Ok(hp)) = (atoi(lport), atoi(hport)) else { return Err(bad()) };
     if !(0..=65535).contains(&lp) || !(1..=65535).contains(&hp) || host.is_empty() {
         return Err(bad());
     }
@@ -235,8 +235,8 @@ pub(crate) fn parse_forward(s: &str) -> Result<ForwardSpec> {
     Ok(ForwardSpec { listen: join_host_port(bind, lport), host: host.into(), port: hp as u16 })
 }
 
-/// Go's strconv.Atoi: an optional sign and decimal digits.
-fn go_atoi(s: &str) -> std::result::Result<i64, ()> {
+/// A plain integer: an optional sign and decimal digits, nothing else.
+fn atoi(s: &str) -> std::result::Result<i64, ()> {
     s.parse::<i64>().map_err(drop)
 }
 

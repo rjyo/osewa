@@ -1,5 +1,5 @@
-//! Locates osewa's per-user directories. The layout is shared with the Go
-//! osewa, so the two find each other's sockets and keys.
+//! Locates osewa's per-user directories. The layout is protocol v0's, shared
+//! by every osewa on a host, so they find each other's sockets and keys.
 
 use std::env;
 use std::fs;

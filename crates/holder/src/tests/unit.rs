@@ -1,4 +1,4 @@
-//! Ported from unit_test.go.
+//! Unit tests: the output log ring, the queue, input.
 
 use std::cell::{Cell, RefCell};
 use std::io::Read;
@@ -35,8 +35,8 @@ fn log_ring() {
     l.append(REC_OUTPUT, &[0; 100], false, None);
     assert_eq!((l.len(), l.start()), (1, 40));
     assert_eq!(OutputLog::new(0).start(), 0);
-    // Go's last check, record.frame, has no Rust counterpart: the queue
-    // builds frames from records itself.
+    // Records have no frame of their own to check: the queue builds frames
+    // from records itself.
 }
 
 pub(crate) struct FakeClock(Rc<Cell<Instant>>);
@@ -203,8 +203,8 @@ fn pty_writer_cap() {
         let input = s.borrow().core.input.clone();
         let (r, w) = pipe();
         let writer = spawn_writer(&s, w);
-        // Go's io.Pipe holds nothing; a kernel pipe takes up to 64 KiB
-        // before its writer blocks, so this pushes that much more.
+        // A kernel pipe takes up to 64 KiB before its writer blocks, so
+        // this pushes that much more.
         let pipe_slack = 128 << 10;
         input.borrow_mut().push(&vec![0; MAX_PENDING_INPUT + pipe_slack + 10], false);
         s.borrow().core.input_wake.notify_one();

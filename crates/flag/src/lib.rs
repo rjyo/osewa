@@ -1,7 +1,7 @@
-//! Command-line flags parsed the way Go's flag package parses them, so the
-//! Rust osewa accepts exactly what the Go one does: `-name value`,
-//! `--name value`, `-name=value`, bare boolean flags, and flags ending at
-//! `--` or the first non-flag argument. Also Go's duration syntax.
+//! Command-line flags as osewa's command line has always taken them, so
+//! scripts written for any osewa keep working: `-name value`, `--name
+//! value`, `-name=value`, bare boolean flags, and flags ending at `--` or
+//! the first non-flag argument. Also duration strings ("300ms", "2h45m").
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -31,7 +31,7 @@ struct Def {
     usage: String,
 }
 
-/// A set of flag definitions, as Go's flag.FlagSet.
+/// A set of flag definitions.
 #[derive(Debug, Clone, Default)]
 pub struct FlagSet {
     name: String,
@@ -63,7 +63,7 @@ impl FlagSet {
         self
     }
 
-    /// The usage text Go prints for the set.
+    /// The usage text for the set, in osewa's usual layout.
     pub fn usage(&self) -> String {
         let mut s = format!("Usage of {}:\n", self.name);
         for (name, d) in &self.defs {
@@ -162,7 +162,7 @@ impl Parsed {
     }
 }
 
-/// Parses an integer as Go's strconv.ParseInt(s, 0, 64): decimal, 0x, 0o,
+/// Parses an integer flag value: decimal, 0x, 0o,
 /// 0b, or a leading 0 for octal, with an optional sign and underscores.
 pub fn parse_int(s: &str) -> Option<i64> {
     let (neg, body) = match s.strip_prefix('-') {
@@ -188,8 +188,9 @@ pub fn parse_int(s: &str) -> Option<i64> {
     Some(if neg { -v } else { v })
 }
 
-/// Parses a Go duration string such as "300ms", "1.5h" or "2h45m". As in
-/// Go, "0" needs no unit and negative durations are rejected here because
+/// Parses a duration string such as "300ms", "1.5h" or "2h45m" (units ns,
+/// us/µs, ms, s, m, h). "0" needs no unit and negative durations are
+/// rejected here because
 /// no osewa flag takes one.
 pub fn parse_duration(s: &str) -> Result<Duration, String> {
     if s == "0" {
@@ -230,7 +231,7 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
     Ok(Duration::from_nanos(total.round() as u64))
 }
 
-/// Formats a duration as Go's time.Duration.String does.
+/// Formats a duration the way parse_duration reads it: "1h2m3.5s", "300ms".
 pub fn format_duration(d: Duration) -> String {
     let ns = d.as_nanos();
     if ns == 0 {
@@ -277,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn go_flag_syntax() {
+    fn flag_syntax() {
         let p = set().parse(&["--run", "/r", "-cols=100", "-quic", "--", "sh", "-c", "x"]).unwrap();
         assert_eq!(p.str("run"), "/r");
         assert_eq!(p.int("cols").unwrap(), 100);

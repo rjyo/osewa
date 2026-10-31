@@ -1,4 +1,4 @@
-//! OSEWA_TRACE events (Go's client/trace.go): JSON lines in
+//! OSEWA_TRACE events: JSON lines in
 //! `<dir>/client-<pid>.jsonl`, each with one write(2) on an O_APPEND file,
 //! so a killed process loses nothing it traced. No tracer is tracing off:
 //! callers check for one before building anything.

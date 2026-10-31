@@ -1,9 +1,9 @@
-//! The transfer pattern (Go's bench/pattern.go): deterministic
-//! pseudo-random bytes that the e2e transfer tests send through forwards and
-//! exec streams and check at the far end. The Go harness makes and checks
-//! them too, so they are Go's math/rand/v2 ChaCha8 stream, bit for bit
-//! (internal/chacha8rand: four interleaved ChaCha8 blocks per refill, a
-//! reseed from the last four words every 16 blocks).
+//! The transfer pattern: deterministic pseudo-random bytes that the e2e
+//! transfer tests send through forwards and exec streams and check at the
+//! far end. The harness makes and checks them with its own code, so they
+//! are a fixed generator, bit for bit: ChaCha8Rand (C2SP chacha8rand: four
+//! interleaved ChaCha8 blocks per refill, a reseed from the last four
+//! words every 16 blocks).
 
 use std::fmt;
 use std::io::{self, Read};
@@ -12,7 +12,7 @@ use std::io::{self, Read};
 /// without sending a hash.
 const SEED: &[u8; 32] = b"osewa e2e transfer pattern v1...";
 
-/// Go's chacha8rand.State.
+/// The chacha8rand generator's state.
 struct ChaCha8 {
     buf: [u64; 32],
     seed: [u64; 4],
@@ -38,10 +38,11 @@ fn qr(a: u32, b: u32, c: u32, d: u32) -> (u32, u32, u32, u32) {
     (a, b, c, d)
 }
 
-/// Go's block_generic: four ChaCha8 blocks with counters counter..counter+3,
-/// laid out lane by lane as Go's [16][4]uint32 view of buf.
+/// chacha8rand's block: four ChaCha8 blocks with counters
+/// counter..counter+3, interleaved lane by lane, buf viewed as
+/// [16][4]u32.
 fn block(seed: &[u64; 4], buf: &mut [u64; 32], counter: u32) {
-    // Row j, lane i, as Go's [16][4]uint32: every lane the same but the
+    // Row j, lane i, of the [16][4]u32 view: every lane the same but the
     // counter.
     let consts = [0x61707865u32, 0x3320646e, 0x79622d32, 0x6b206574];
     let input = |j: usize, i: usize| -> u32 {
@@ -144,7 +145,7 @@ impl Read for Pattern {
     }
 }
 
-/// Why a stream was not the pattern; the messages are Go's.
+/// Why a stream was not the pattern; the harness matches the messages.
 #[derive(Debug)]
 pub enum PatternError {
     Read(u64, io::Error),

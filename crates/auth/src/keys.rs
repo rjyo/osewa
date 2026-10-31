@@ -13,8 +13,8 @@ use crate::{create_temp, dir_of, io_at, Error};
 /// A raw Ed25519 public key.
 pub type PublicKey = [u8; 32];
 
-/// PKCS#8 v1 for Ed25519 up to the seed: what Go's MarshalPKCS8PrivateKey
-/// writes, so a key we create is byte-for-byte one Go could have.
+/// PKCS#8 v1 for Ed25519 up to the seed: the v0 key file's DER, so a key
+/// we create is byte-for-byte one any v0 implementation could have.
 const PKCS8_PREFIX: [u8; 16] =
     [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
 
@@ -109,8 +109,8 @@ fn pem_encode(kind: &str, der: &[u8]) -> String {
     s
 }
 
-/// Go's base64.StdEncoding: padded, but lenient about trailing bits and
-/// ignoring line breaks.
+/// Standard base64, padded, but lenient about trailing bits and ignoring
+/// line breaks, so keys other v0 implementations wrote still load.
 const STD: GeneralPurpose =
     GeneralPurpose::new(&base64::alphabet::STANDARD, general_purpose::PAD.with_decode_allow_trailing_bits(true));
 
@@ -141,8 +141,7 @@ mod tests {
         assert_eq!(a.public(), b.public(), "identity changed on reload");
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&dir), 0o700);
-        // The file is exactly what Go's pem.Encode of MarshalPKCS8PrivateKey
-        // would write.
+        // The file is exactly the v0 layout: PKCS#8 in PEM, 64-column lines.
         assert_eq!(fs::read_to_string(&path).unwrap(), pem_encode("PRIVATE KEY", a.pkcs8()));
         assert_eq!(a.pkcs8().len(), 48);
     }

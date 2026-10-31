@@ -1,4 +1,4 @@
-//! Link (Go's client/link.go): one server kept connected, its sessions
+//! Link: one server kept connected, its sessions
 //! resumed on every new connection.
 
 use std::collections::HashMap;

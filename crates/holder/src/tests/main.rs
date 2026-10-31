@@ -1,7 +1,6 @@
-//! Ported from main_test.go: the holder as a real process, and the test
-//! binary as the PTY child that floods. Go's TestMain re-executes the test
-//! binary; here the binary re-executes itself to run child_process alone,
-//! which dispatches on the same environment variables.
+//! The holder as a real process, and the test binary as the PTY child
+//! that floods: the binary re-executes itself to run child_process alone,
+//! which dispatches on environment variables.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -54,14 +53,14 @@ pub fn self_child(prefix: &str) -> Vec<String> {
     sh(&format!("{prefix}exec '{}' {SELF_ARGS} 3>&1 >/dev/null", exe.display()))
 }
 
-/// echoFloodArgv: echoFloodMain with the tty's own echo off: the program
+/// The echo flood with the tty's own echo off: the program
 /// draws its echo, and a tty echo's newline on the last row would scroll the
 /// flood over it.
 pub fn echo_flood_argv() -> Vec<String> {
     self_child("stty -echo; ")
 }
 
-/// echoFloodRawArgv: echoFloodMain in raw mode.
+/// The echo flood in raw mode.
 pub fn echo_flood_raw_argv() -> Vec<String> {
     self_child("stty raw -echo; ")
 }
@@ -264,7 +263,7 @@ fn scrollback_flag() {
     assert!(rows < 2000, "scrollback cap ignored: {rows} rows");
 }
 
-// The generators (round3_test.go's floodMain, w2Loop and echoFloodMain).
+// The generators: a flood, a W2 loop and an echo flood.
 
 /// Where a generator writes: fd 3, the PTY (see self_child).
 static OUT: Mutex<Option<File>> = Mutex::new(None);

@@ -1,3 +1,0 @@
-    m2_test.go:133: M2 echo under W1 flood, 1 Mbit/s 100 ms RTT 1% loss: p50 129ms, p95 145ms, min 126ms, max 227ms over 30 runs, 0 not seen within 10 s
-    m2_test.go:133: M2 echo under W2 flood, 1 Mbit/s 100 ms RTT 1% loss: p50 220ms, p95 501ms, min 140ms, max 588ms over 30 runs, 0 not seen within 10 s
-    m2_test.go:133: M2 echo under W4 flood, 1 Mbit/s 100 ms RTT 1% loss: p50 129ms, p95 207ms, min 125ms, max 208ms over 30 runs, 0 not seen within 10 s

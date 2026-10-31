@@ -1,4 +1,4 @@
-//! Ported from client/mirror/mirror_test.go.
+//! The mirror terminal: following the stream, snapshots, visible text.
 
 use std::future::Future;
 use std::pin::pin;
@@ -145,7 +145,7 @@ fn poll_once<F: Future>(f: F) -> Poll<F::Output> {
 #[test]
 fn mirror_end_and_close() {
     let m = Mirror::new(Options::default());
-    // Go's deadline: the wait doesn't finish on its own.
+    // A deadline: the wait doesn't finish on its own.
     let m1 = m.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || tx.send(block_on(m1.wait_text("x"))).unwrap());

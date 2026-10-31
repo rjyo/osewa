@@ -1,4 +1,4 @@
-//! visible_test.go
+//! What wait_text sees: the screen, not the scrollback.
 
 use super::*;
 

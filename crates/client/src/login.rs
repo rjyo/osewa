@@ -220,7 +220,7 @@ async fn run_ssh_config(target: &str) -> Result<Vec<u8>, Error> {
     output("ssh", vec!["-G".into(), "--".into(), target.into()], Vec::new(), false).await
 }
 
-/// Runs a program and returns its stdout, as Go's exec.Cmd.Output.
+/// Runs a program and returns its stdout; a failed exit is an error.
 async fn output(prog: &'static str, args: Vec<String>, stdin: Vec<u8>, stderr: bool) -> Result<Vec<u8>, Error> {
     crate::rt::run_local(move || async move {
         let mut child = tokio::process::Command::new(prog)
@@ -264,29 +264,29 @@ async fn ssh_hostname(cfg: Option<&SshConfigFn>, target: &str) -> String {
     host
 }
 
-/// This machine's platform, named as Go names them.
+/// This machine's platform, named as the release binaries are.
 pub fn local_platform() -> (&'static str, &'static str) {
-    let goos = match std::env::consts::OS {
+    let os_name = match std::env::consts::OS {
         "macos" => "darwin",
         os => os,
     };
-    let goarch = match std::env::consts::ARCH {
+    let arch_name = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
         a => a,
     };
-    (goos, goarch)
+    (os_name, arch_name)
 }
 
-/// Finds an osewa build for a host: osewa-<goos>-<goarch> next to this
+/// Finds an osewa build for a host: osewa-<os_name>-<arch_name> next to this
 /// program or in $OSEWA_DIST, else this program itself when it is osewa
 /// for the host's platform (a dev build of the CLI).
-pub fn local_binaries(goos: &str, goarch: &str) -> Result<Vec<u8>, Error> {
-    local_binaries_with(goos, goarch, is_osewa)
+pub fn local_binaries(os_name: &str, arch_name: &str) -> Result<Vec<u8>, Error> {
+    local_binaries_with(os_name, arch_name, is_osewa)
 }
 
-fn local_binaries_with(goos: &str, goarch: &str, is_osewa: fn(&Path) -> bool) -> Result<Vec<u8>, Error> {
-    let name = format!("osewa-{goos}-{goarch}");
+fn local_binaries_with(os_name: &str, arch_name: &str, is_osewa: fn(&Path) -> bool) -> Result<Vec<u8>, Error> {
+    let name = format!("osewa-{os_name}-{arch_name}");
     let me = std::env::current_exe().ok();
     let mut dirs: Vec<PathBuf> = me.iter().filter_map(|p| p.parent().map(Path::to_path_buf)).collect();
     if let Some(d) = std::env::var_os("OSEWA_DIST").filter(|d| !d.is_empty()) {
@@ -298,12 +298,12 @@ fn local_binaries_with(goos: &str, goarch: &str, is_osewa: fn(&Path) -> bool) ->
         }
     }
     if let Some(me) = me {
-        if (goos, goarch) == local_platform() && is_osewa(&me) {
+        if (os_name, arch_name) == local_platform() && is_osewa(&me) {
             return Ok(std::fs::read(me)?);
         }
     }
     Err(Error::Other(format!(
-        "no osewa build for {goos}/{goarch}: put {name} next to this program or in $OSEWA_DIST"
+        "no osewa build for {os_name}/{arch_name}: put {name} next to this program or in $OSEWA_DIST"
     )))
 }
 
@@ -318,7 +318,7 @@ fn is_osewa(path: &Path) -> bool {
 /// Finds the enroll response among whatever else the remote shell printed
 /// (a motd, warnings).
 pub fn parse_enroll(out: &[u8]) -> Result<EnrollResponse, Error> {
-    // As lenient as Go's json.Unmarshal: missing fields are zero.
+    // Lenient, as v0 peers decode: missing fields are zero.
     #[derive(Deserialize, Default)]
     #[serde(default)]
     struct Resp {
@@ -386,9 +386,9 @@ mod tests {
         assert_eq!(local_binaries("plan9", "mips").unwrap(), b"built");
         // The local platform falls back to this binary, if it is osewa: a
         // program that only uses this library must not install itself.
-        let (goos, goarch) = local_platform();
-        assert!(local_binaries(goos, goarch).is_err(), "the test binary installed itself as osewa");
-        let b = local_binaries_with(goos, goarch, |_| true).unwrap();
+        let (os_name, arch_name) = local_platform();
+        assert!(local_binaries(os_name, arch_name).is_err(), "the test binary installed itself as osewa");
+        let b = local_binaries_with(os_name, arch_name, |_| true).unwrap();
         unsafe { std::env::remove_var("OSEWA_DIST") };
         assert!(!b.is_empty(), "empty");
     }

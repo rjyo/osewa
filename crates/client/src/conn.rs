@@ -1,4 +1,4 @@
-//! Connections (Go's client/client.go): HELLO and WELCOME, requests, the
+//! Connections: HELLO and WELCOME, requests, the
 //! reader, applier, writer and keepalive, and credit on receipt.
 
 use std::collections::{HashMap, VecDeque};

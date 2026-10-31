@@ -1,4 +1,4 @@
-//! The fake server (Go's client/fake_test.go and fakechan_test.go): the
+//! The fake server: the
 //! server side of PROTOCOL.md with in-memory sessions, each backed by a
 //! real libghostty terminal so snapshots are the real format, and channel
 //! streams with real processes and TCP connections, flow-controlled as
@@ -1102,7 +1102,7 @@ fn start_exec(fi: &Arc<FakeInner>, st: &mut FState, cid: u64, req: wire::Request
     let fi = fi.clone();
     tokio::task::spawn_local(async move {
         let status = child.wait().await;
-        // Both pipes drained first, as Go's cmd.Wait after the pumps.
+        // Both pipes drained first, so no output is lost after the exit.
         let mut rx = fi.chan_wake.subscribe();
         loop {
             {

@@ -1,5 +1,5 @@
 //! A WebSocket connection carrying whole binary messages, with the
-//! behavior of coder/websocket's Conn as osewa uses it.
+//! behavior docs/PROTOCOL.md asks of a v0 peer.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ pub const STATUS_MESSAGE_TOO_BIG: u16 = 1009;
 pub const STATUS_INTERNAL_ERROR: u16 = 1011;
 
 /// How long a control frame's write, and the wait for the peer's close
-/// frame, may take (coder/websocket's 5 s).
+/// frame, may take: 5 s, as v0 peers allow.
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
@@ -51,7 +51,7 @@ pub enum Error {
     /// A text message, which no osewa peer sends; answered with 1003.
     NotBinary,
     /// A message over the read limit; answered with 1009. Holds the limit
-    /// plus one, as coder/websocket reports it.
+    /// plus one, as v0 peers report it.
     TooBig(usize),
     /// The peer broke the protocol.
     Protocol(String),
@@ -64,7 +64,7 @@ pub enum Error {
 
 impl Error {
     /// The status of the peer's close frame, if that is what ended the
-    /// connection (coder/websocket's CloseStatus).
+    /// connection.
     pub fn close_status(&self) -> Option<u16> {
         match self {
             Error::Close(c) => Some(c.code),
@@ -193,7 +193,7 @@ enum Event {
 }
 
 /// A protocol violation: the close status to send (None: just drop the
-/// connection, as coder/websocket does for an unmasked client frame) and
+/// connection, as v0 servers do for an unmasked client frame) and
 /// the error to return.
 struct Violation(Option<u16>, Error);
 
@@ -266,8 +266,9 @@ impl<S: AsyncRead + AsyncWrite> Conn<S> {
         // whenever the client accepts it.
         let (threshold, deflater, reset_deflate) = match deflate {
             Some(d) if !client => {
-                // coder/websocket's defaults: 128 bytes when the context
-                // carries over, 512 when every message starts afresh.
+                // Smaller messages grow under deflate: 128 bytes when the
+                // context carries over, 512 when every message starts afresh,
+                // the thresholds v0 servers use.
                 let t = if d.server_no_context_takeover { 512 } else { 128 };
                 (Some(t), Some(Deflater::new()), d.server_no_context_takeover)
             }
@@ -588,8 +589,8 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
         Ok(())
     }
 
-    /// Takes the next frame off the buffer, checking it as coder/websocket
-    /// does, and adds a data frame to the message.
+    /// Takes the next frame off the buffer, checking it as v0 peers do,
+    /// and adds a data frame to the message.
     fn next_frame(&self, r: &mut Reader<S>) -> Result<Event, Violation> {
         let limit = self.read_limit.get();
         let avail = &r.buf[r.pos..];
@@ -727,7 +728,7 @@ impl<S: AsyncRead + AsyncWrite> Inner<S> {
     }
 
     /// Sends our close frame and reads until the peer's, discarding data
-    /// (coder/websocket's closeHandshake on a reader it holds).
+    /// (RFC 6455's closing handshake, from the side holding the reader).
     async fn close_handshake(&self, r: &mut Reader<S>, code: u16, reason: &str) -> Result<(), Error> {
         self.send_close(code, reason).await?;
         tokio::time::timeout(CONTROL_TIMEOUT, self.await_close(r)).await.unwrap_or(Err(Error::Timeout))

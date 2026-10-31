@@ -4,8 +4,8 @@
 # same commit: the snapshot format is not binary-stable yet.
 #
 # TARGET=<zig triple> (e.g. x86_64-linux-musl) cross-builds into
-# .cache/libghostty/<os>-<arch> for that triple, where the ghostty package's
-# cgo flags for that GOOS/GOARCH look.
+# .cache/libghostty/<os>-<arch> for that triple, where crates/ghostty/build.rs
+# looks for that target.
 set -euo pipefail
 
 GHOSTTY_COMMIT=83fb95624b0439ee660c2679b43b38c8b63769cd
@@ -17,7 +17,7 @@ zigflags=()
 if [[ -n "${TARGET:-}" ]]; then
 	arch=${TARGET%%-*} os=${TARGET#*-}
 	os=${os%%[-.]*}
-	# Match `uname` on macOS, as the cgo flags do.
+	# Match `uname` on macOS, as native builds' directory names do.
 	[[ $os == macos ]] && os=darwin && arch=${arch/aarch64/arm64}
 	platform="$os-$arch"
 	[[ $TARGET == *simulator* ]] && platform="$platform-simulator"

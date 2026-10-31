@@ -1,6 +1,6 @@
-//! The QUIC carrier (docs/QUIC.md), wire-compatible with the Go peers'
-//! quic-go one (internal/carrier): the same ALPNs, transport parameters,
-//! main stream, lanes and compression.
+//! The QUIC carrier (docs/QUIC.md), wire-compatible with every v0 peer:
+//! the same ALPNs, transport parameters, main stream, lanes and
+//! compression.
 //!
 //! Frames travel on QUIC streams, each after its length (u32):
 //!   - the main stream (bidirectional, opened by the client) carries all
@@ -44,11 +44,12 @@ pub const ALPN: &str = wire::SUBPROTOCOL;
 pub const ALPN_DEFLATE: &str = "osewa.v0+deflate";
 
 /// The congestion controller a connection's sender runs (docs/QUIC.md,
-/// "Rust"). Each end picks its own: the server's governs downloads.
+/// "Congestion control"). Each end picks its own: the server's governs downloads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Congestion {
     /// quinn's Cubic (RFC 9438): slow start ends only on loss or ECN, never
-    /// on a delay rise, which is what stalled quic-go's on jittery paths.
+    /// on a delay rise: a slow start that ends on delay stalls downloads on
+    /// jittery paths.
     #[default]
     Cubic,
     /// quinn's BBR (v1, marked experimental by quinn).
@@ -84,16 +85,16 @@ impl Congestion {
     }
 }
 
-/// quic-go's first congestion window: 32 packets. quinn's default (ten,
-/// 14720 bytes) would cost a fresh connection's first download a round
-/// trip or two against the Go peers.
+/// The first congestion window: 32 packets, as v0 peers start. quinn's
+/// default (ten, 14720 bytes) would cost a fresh connection's first
+/// download a round trip or two.
 const INITIAL_WINDOW: u64 = 32 * 1200;
 
-/// What quic-go asks of a UDP socket's buffers: a burst at 10 MB/s and
+/// What a UDP socket's buffers should hold: a burst at 10 MB/s and
 /// 120 ms doesn't fit Linux's default 208 KiB.
 const SOCKET_BUFFER: usize = 7 << 20;
 
-/// Both ends' transport parameters, Go's QUICConfig: first packets that fit
+/// Both ends' transport parameters, as docs/QUIC.md has them: first packets that fit
 /// a tailnet's 1280-byte MTU (path MTU discovery then grows them), liveness
 /// as the WebSocket's pings keep it, and receive windows above credit's
 /// (wire::CHANNEL_WINDOW, 4 MiB) from the start, so that osewa's own credit
@@ -105,7 +106,8 @@ pub fn transport(cc: Congestion) -> TransportConfig {
         .min_mtu(1200)
         .max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(30_000))))
         .keep_alive_interval(Some(Duration::from_secs(15)))
-        // quinn's windows don't grow, so they start where quic-go's end:
+        // quinn's windows don't grow, so they start where auto-tuned ones
+        // end:
         // 8 MiB per stream, 64 MiB per connection.
         .stream_receive_window(VarInt::from_u32(8 << 20))
         .receive_window(VarInt::from_u32(64 << 20))
@@ -114,10 +116,10 @@ pub fn transport(cc: Congestion) -> TransportConfig {
         .send_window(INITIAL_WINDOW + frames::LOWAT)
         .max_concurrent_uni_streams(VarInt::from_u32(4096))
         .max_concurrent_bidi_streams(VarInt::from_u32(100))
-        // quic-go's first RTT guess, so a lost first packet is resent as
+        // The first RTT guess v0 peers use, so a lost first packet is resent as
         // soon as it would be there.
         .initial_rtt(Duration::from_millis(100))
-        // Go's peers enable none.
+        // v0 peers enable none.
         .datagram_receive_buffer_size(None);
     match cc {
         Congestion::Cubic => {
@@ -141,7 +143,7 @@ pub fn transport(cc: Congestion) -> TransportConfig {
 
 /// The server's QUIC config over tls (osewa_auth::server_config: the
 /// device check, no resumption and so no 0-RTT), taking ALPN_DEFLATE when
-/// it compresses: rustls, like Go, picks by the server's order.
+/// it compresses: rustls picks by the server's order.
 pub fn server_config(mut tls: rustls::ServerConfig, compress: bool, cc: Congestion) -> io::Result<quinn::ServerConfig> {
     tls.alpn_protocols =
         if compress { vec![ALPN_DEFLATE.into(), ALPN.into()] } else { vec![ALPN.into()] };
@@ -169,7 +171,7 @@ pub fn endpoint(sock: UdpSocket, server: Option<quinn::ServerConfig>) -> io::Res
     Endpoint::new(EndpointConfig::default(), server, sock, rt)
 }
 
-/// Raises the socket's buffers toward SOCKET_BUFFER, as quic-go does; a
+/// Raises the socket's buffers toward SOCKET_BUFFER; a
 /// system that refuses keeps what it allows.
 fn grow_buffers(sock: &UdpSocket) {
     use std::os::fd::AsRawFd;
@@ -233,7 +235,7 @@ pub async fn dial(addr: &str, tls: rustls::ClientConfig, cc: Congestion) -> io::
 
     // Dropping the set aborts every attempt still in it, so a dial its
     // caller gave up on (a timeout, a race the WebSocket won) stops
-    // sending at once, as Go's deferred cancel does.
+    // sending at once.
     let mut attempts = tokio::task::JoinSet::new();
     let start = |attempts: &mut tokio::task::JoinSet<_>| -> io::Result<()> {
         let connecting = ep.connect(target, name).map_err(io::Error::other)?;
@@ -263,9 +265,8 @@ pub async fn dial(addr: &str, tls: rustls::ClientConfig, cc: Congestion) -> io::
     Ok(Conn::new(qc, send, recv, false))
 }
 
-/// The address to dial among host's, as Go's net.ResolveUDPAddr("udp")
-/// picks it for quic-go: an IPv6 literal's own, else the first IPv4
-/// address, else the first.
+/// The address to dial among host's, as v0 clients pick it: an IPv6
+/// literal's own, else the first IPv4 address, else the first.
 fn pick(host: &str, addrs: &[SocketAddr]) -> Option<SocketAddr> {
     if host.contains(':') {
         return addrs.iter().find(|a| a.is_ipv6()).copied();
@@ -412,7 +413,7 @@ impl Conn {
     }
 
     /// Pings the peer and waits for its answer. Only a client's pings are
-    /// answered, as with Go's peers.
+    /// answered, as with v0 peers.
     pub async fn ping(&self) -> io::Result<()> {
         let c = &*self.0;
         let mut pong = c.pongs.subscribe();
@@ -426,7 +427,7 @@ impl Conn {
 
     /// Ends the connection with a WebSocket status code, sent as QUIC's
     /// application error code, and reason. Unlike a WebSocket's close it
-    /// doesn't wait: what is still unsent is dropped, as with quic-go.
+    /// doesn't wait: what is still unsent is dropped.
     pub fn close(&self, code: u16, reason: &str) {
         self.0.closing.store(true, Ordering::Relaxed);
         self.0.qc.close(VarInt::from_u32(code.into()), reason.as_bytes());

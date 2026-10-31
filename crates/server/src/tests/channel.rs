@@ -1,4 +1,4 @@
-//! Ported from server/channel_test.go.
+//! Channel streams: exec and forward, data, EOF, credit and grants.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -699,7 +699,7 @@ fn exec_stdin_failure_grants() {
 }
 
 // A GRANT whose check passed is queued before STREAM_END, never after it.
-// Go needed a lock for this; here the check and the push run without an
+// The check and the push run without an
 // await between them, so the order holds by construction: a grant before
 // the end goes first, and one after it is not sent.
 #[test]

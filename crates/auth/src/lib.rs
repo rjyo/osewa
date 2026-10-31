@@ -1,6 +1,6 @@
 //! osewa's device auth (docs/PROTOCOL.md "Auth"): Ed25519 device keys, the
 //! devices file, pinned mutual TLS and enrollment. Keys, the devices file and
-//! the handshake are interchangeable with the Go osewa's.
+//! the handshake are protocol v0's, interchangeable with any v0 peer.
 
 mod devices;
 mod enroll;
@@ -16,8 +16,9 @@ pub use enroll::{devices_path, enroll, enroll_main, identity_path, EnrollRequest
 pub use keys::{decode_key, encode_key, Identity, PublicKey};
 pub use tls::{auth_error, cert_key, client_config, peer_key, server_config};
 
-/// Why auth refused something. The first three are the Go package's
-/// ErrUnknownDevice, ErrServerKey and ErrNoPeerKey, with the same messages.
+/// Why auth refused something. The first three are the refusals v0 peers
+/// tell apart (unknown device, server key, no peer key); their messages
+/// are the protocol's.
 #[derive(Debug)]
 pub enum Error {
     UnknownDevice,
@@ -54,7 +55,8 @@ impl From<io::Error> for Error {
     }
 }
 
-/// An I/O error naming the operation and path, as Go's *PathError does.
+/// An I/O error naming the operation and path ("open <path>: ..."), the
+/// wording users see in errors from every osewa.
 fn io_at(op: &str, path: &Path, e: io::Error) -> Error {
     Error::Io(io::Error::new(e.kind(), format!("{op} {}: {e}", path.display())))
 }
@@ -83,7 +85,7 @@ fn create_temp(dir: &Path, prefix: &str) -> Result<(std::fs::File, TempPath), Er
     }
 }
 
-/// Removes the file when dropped, as Go's `defer os.Remove(f.Name())`.
+/// Removes the file when dropped, so a failed write leaves no temp file.
 struct TempPath(PathBuf);
 
 impl Drop for TempPath {

@@ -1,4 +1,4 @@
-//! `osewa-bench resume` (Go's resume.go): cold resumes from inside a
+//! `osewa-bench resume`: cold resumes from inside a
 //! container, next to the server on one network, so TCP handshakes run end
 //! to end (a host's published port goes through a proxy that accepts at
 //! once).
@@ -59,7 +59,8 @@ pub fn resume_main(args: &[String], w: &mut dyn Write) -> Result<(), Error> {
     w.write_all(out.as_bytes()).map_err(Error::io)
 }
 
-/// Go's float64(d.Microseconds()) / 1000.
+/// Milliseconds with microsecond precision, truncated, as the harness
+/// reports them.
 pub(crate) fn ms(d: Duration) -> f64 {
     d.as_micros() as f64 / 1000.0
 }

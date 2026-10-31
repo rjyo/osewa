@@ -29,7 +29,7 @@ fn certificate(id: &Identity) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'s
     let mut params = CertificateParams::default();
     let mut serial = [0u8; 16];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut serial).expect("system random");
-    serial[0] &= 0x7f; // 127 bits, as Go's: positive whatever the draw.
+    serial[0] &= 0x7f; // 127 bits: positive whatever the draw.
     params.serial_number = Some(SerialNumber::from_slice(&serial));
     params.distinguished_name = DistinguishedName::new();
     params.distinguished_name.push(DnType::CommonName, "osewa");
@@ -45,8 +45,8 @@ fn certificate(id: &Identity) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'s
 /// A TLS 1.3 server config that accepts only clients whose key is in d,
 /// checked on every handshake. The server never resumes sessions: a resumed
 /// session skips the certificate check, which would let a revoked device
-/// back in on a ticket from before the revocation (Go re-checks in
-/// VerifyConnection instead; rustls has no hook that runs on resumption).
+/// back in on a ticket from before the revocation (rustls has no hook that
+/// re-checks on resumption).
 pub fn server_config(id: &Identity, d: &Devices) -> ServerConfig {
     let provider = provider();
     let (certs, key) = certificate(id);
@@ -63,7 +63,7 @@ pub fn server_config(id: &Identity, d: &Devices) -> ServerConfig {
 }
 
 /// A TLS 1.3 client config that presents id and accepts only a server
-/// holding server_key. Like Go's (no ClientSessionCache), it doesn't resume.
+/// holding server_key. It doesn't resume, so every handshake checks the pin.
 pub fn client_config(id: &Identity, server_key: PublicKey) -> ClientConfig {
     let provider = provider();
     let (certs, key) = certificate(id);
@@ -303,8 +303,7 @@ pub(crate) mod tests {
             .with_no_client_auth();
         let (serr, _, _) = handshake(&srv, &no_cert);
         assert!(serr.is_err(), "client without certificate accepted");
-        // TLS 1.2 isn't compiled in; the Go interop test checks a 1.2 client
-        // is refused.
+        // TLS 1.2 isn't compiled in, so a 1.2 client can't get this far.
     }
 
     // A server whose certificate isn't over an Ed25519 key can't match a pin.

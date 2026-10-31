@@ -1,5 +1,5 @@
-//! The Go client tests (client/*_test.go), ported: a fake server for the
-//! protocol's server side, and the client driven through its public API.
+//! The client tests: a fake server for the protocol's server side, and
+//! the client driven through its public API.
 
 use std::future::Future;
 use std::ops::Deref;
@@ -29,7 +29,7 @@ mod robust;
 mod trace;
 mod visible;
 
-/// The default wait, as the Go tests' 5 s contexts.
+/// The default wait.
 const WAIT: Duration = Duration::from_secs(5);
 
 /// Runs f to completion within WAIT, from a test thread.

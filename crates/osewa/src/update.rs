@@ -1,4 +1,4 @@
-//! `osewa update` (Go's update.go): this build onto a host over osewa
+//! `osewa update`: this build onto a host over osewa
 //! itself, then the host's server restarted with it.
 
 use std::io::Write;
@@ -88,8 +88,8 @@ impl Env {
         if f.len() != 2 {
             return Err(Error::Msg(format!("update {name}: uname said {}", osewa_wire::go_quote(&uname))));
         }
-        let (goos, goarch) = install::platform(f[0], f[1]).map_err(|e| format!("update {name}: {e}"))?;
-        let bin = login::local_binaries(goos, goarch)?;
+        let (os_name, arch_name) = install::platform(f[0], f[1]).map_err(|e| format!("update {name}: {e}"))?;
+        let bin = login::local_binaries(os_name, arch_name)?;
         let want = hex::encode(ring::digest::digest(&ring::digest::SHA256, &bin));
         // The same checks as install's: written aside, checked, then moved
         // over the old build, so a server starting meanwhile never runs
@@ -105,7 +105,7 @@ impl Env {
         if got != want {
             return Err(Error::Msg(format!("update {name}: copied {got}, want {want}")));
         }
-        writeln!(self.out(), "copied osewa ({goos}/{goarch}) to {name}")?;
+        writeln!(self.out(), "copied osewa ({os_name}/{arch_name}) to {name}")?;
         run_script(ctx, c, Vec::new(), &self.update_restart).await.map_err(|e| format!("update {name}: restart: {e}"))?;
         Ok(())
     }
