@@ -6,7 +6,9 @@
 //! style. The helpers below cut it along those lines; the render tests pin
 //! the shape against the linked libghostty.
 
-use osewa_ghostty::{Format, Terminal};
+use std::collections::HashMap;
+
+use osewa_ghostty::{Format, PixelFormat, Placement, Terminal};
 use osewa_mirror::{CellState, Prediction};
 
 /// Starts the screen over before the mirror's VT dump.
@@ -107,14 +109,16 @@ pub(crate) fn attach_redraw(t: &Terminal) -> Vec<u8> {
 /// Repaints only the active area from the mirror, restoring cursor and
 /// style, without touching the local scrollback. Rows go to absolute
 /// positions with the scroll region and origin mode off, so a region the
-/// remote set can't scroll them; both come back afterwards.
+/// remote set can't scroll them; both come back afterwards. Each row is
+/// erased rather than the screen: erasing the screen deletes the images on
+/// it, which the mirror still has.
 pub(crate) fn screen_redraw(t: &Terminal) -> Vec<u8> {
     let v = vt(t);
     let Some(VtParts { pre, rows, tail }) = vt_parts(&v) else { return Vec::new() };
     let rows = &rows[t.scrollback_rows().min(rows.len())..];
-    let mut out = b"\x1b[0m\x1b[r\x1b[?6l\x1b[2J".to_vec();
+    let mut out = b"\x1b[0m\x1b[r\x1b[?6l".to_vec();
     for (y, row) in rows.iter().enumerate() {
-        out.extend_from_slice(format!("\x1b[{};1H", y + 1).as_bytes());
+        out.extend_from_slice(format!("\x1b[{};1H\x1b[2K", y + 1).as_bytes());
         out.extend_from_slice(row);
     }
     if let Some(&(s, e)) = csi2_all(pre, b'r').first() {
@@ -169,6 +173,132 @@ pub(crate) fn notice_draw(t: &Terminal, msg: &str, style: &[u8]) -> Vec<u8> {
     out.extend_from_slice(style);
     out.extend_from_slice(&cursor_to(t));
     out
+}
+
+/// What the local terminal holds of each mirror image: the mirror
+/// generation of the pixels it was sent, or None for pixels sent while an
+/// earlier mirror was current, whose generations mean nothing to this one.
+pub(crate) type SentImages = HashMap<u32, Option<u64>>;
+
+/// Base64 bytes per graphics command; the protocol's suggested chunk size.
+const IMAGE_CHUNK: usize = 4096;
+
+/// Replaces the local terminal's image placements with the mirror's: the
+/// placements go, then each one on screen is placed again, its image's
+/// pixels sent first unless the local terminal has them (sent). An image
+/// whose pixels are still pending, and were never sent, waits for the next
+/// call. Leaves the cursor at the mirror's.
+pub(crate) fn images_draw(t: &Terminal, sent: &mut SentImages) -> Vec<u8> {
+    let mut out = b"\x1b_Ga=d,d=a,q=2\x1b\\".to_vec();
+    let mut placed = false;
+    for p in t.placements() {
+        if !send_image(t, p.image, sent, &mut out) {
+            continue;
+        }
+        if p.is_virtual {
+            out.extend_from_slice(format!("\x1b_Ga=p,U=1,i={},{}c={},r={},q=2\x1b\\", p.image, placement_id(&p), p.cols, p.rows).as_bytes());
+        } else if let Some(cmd) = place(t, &p) {
+            out.extend_from_slice(&cmd);
+            placed = true;
+        }
+    }
+    if placed {
+        if t.mode(6, false) {
+            out.extend_from_slice(ORIGIN_ON);
+        }
+        out.extend_from_slice(&cursor_to(t));
+    }
+    out
+}
+
+fn placement_id(p: &Placement) -> String {
+    if p.placement == 0 {
+        String::new()
+    } else {
+        format!("p={},", p.placement)
+    }
+}
+
+/// The command that places p where it is in the mirror, as the program
+/// asked for it, or None when it is off screen. Its top may have scrolled
+/// above the screen: the rows still showing are placed, from the matching
+/// part of the image at the same scale.
+fn place(t: &Terminal, p: &Placement) -> Option<Vec<u8>> {
+    let (gc, gr) = p.grid;
+    if !p.visible || gc == 0 || gr == 0 || p.row <= -(gr as i32) {
+        return None;
+    }
+    let (mut sx, mut sy, mut sw, mut sh) = p.source;
+    let (mut row, mut rows, mut y_off) = (p.row, p.rows, p.y_offset);
+    if row < 0 {
+        let img = t.image(p.image)?;
+        // Zero width or height runs to the image's edge.
+        sx = sx.min(img.width);
+        sy = sy.min(img.height);
+        if sw == 0 {
+            sw = img.width - sx;
+        }
+        if sh == 0 {
+            sh = img.height - sy;
+        }
+        let skip = (-row) as u32;
+        let (cw, ch) = t.cell_size();
+        // How tall it shows, in pixels: as asked for in rows, scaled with
+        // the width asked for in columns, or the source's own height.
+        let shown = match (p.cols, p.rows) {
+            (_, r) if r > 0 => r as u64 * ch as u64,
+            (c, _) if c > 0 && sw > 0 => sh as u64 * c as u64 * cw as u64 / sw as u64,
+            _ => sh as u64,
+        };
+        let gone = (skip as u64 * ch as u64).saturating_sub(y_off as u64);
+        let cut = if ch == 0 || shown == 0 { sh as u64 * skip as u64 / gr as u64 } else { (gone * sh as u64 / shown).min(sh as u64) };
+        sy += cut as u32;
+        sh -= cut as u32;
+        if sh == 0 {
+            return None;
+        }
+        if p.rows > 0 {
+            rows = p.rows.saturating_sub(skip).max(1);
+        }
+        (row, y_off) = (0, 0);
+    }
+    let mut cmd = format!("\x1b[?6l\x1b[{};{}H\x1b_Ga=p,i={},{}", row + 1, p.col + 1, p.image, placement_id(p));
+    for (k, v) in [('c', p.cols), ('r', rows), ('x', sx), ('y', sy), ('w', sw), ('h', sh), ('X', p.x_offset), ('Y', y_off)] {
+        if v > 0 {
+            cmd += &format!("{k}={v},");
+        }
+    }
+    cmd += &format!("z={},C=1,q=2\x1b\\", p.z);
+    Some(cmd.into_bytes())
+}
+
+/// Sends image id's pixels unless the local terminal has them. False when
+/// it has none to place.
+fn send_image(t: &Terminal, id: u32, sent: &mut SentImages, out: &mut Vec<u8>) -> bool {
+    use base64::Engine as _;
+    let Some(img) = t.image(id) else { return false };
+    let Some(px) = img.pixels else { return sent.contains_key(&id) };
+    if sent.get(&id) == Some(&Some(img.generation)) {
+        return true;
+    }
+    // Kitty takes 24 and 32-bit pixels only.
+    let (f, px): (u8, std::borrow::Cow<[u8]>) = match img.format {
+        PixelFormat::Rgb => (24, px.into()),
+        PixelFormat::Rgba => (32, px.into()),
+        PixelFormat::Gray => (24, px.iter().flat_map(|&g| [g, g, g]).collect::<Vec<_>>().into()),
+        PixelFormat::GrayAlpha => (32, px.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect::<Vec<_>>().into()),
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&px);
+    let chunks: Vec<&[u8]> = b64.as_bytes().chunks(IMAGE_CHUNK).collect();
+    for (i, c) in chunks.iter().enumerate() {
+        let more = (i + 1 < chunks.len()) as u8;
+        let keys = if i == 0 { format!("a=t,f={f},s={},v={},i={id},q=2,m={more}", img.width, img.height) } else { format!("m={more}") };
+        out.extend_from_slice(format!("\x1b_G{keys};").as_bytes());
+        out.extend_from_slice(c);
+        out.extend_from_slice(b"\x1b\\");
+    }
+    sent.insert(id, Some(img.generation));
+    true
 }
 
 /// OSC 52 that puts data on the local clipboard. The remote's selection

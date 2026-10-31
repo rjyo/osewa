@@ -69,6 +69,9 @@ pub(crate) struct Ui {
     ticking: bool,
     /// The ticker's wakeups, which the tests bound.
     pub ticker_wakes: u64,
+    /// The images the local terminal has, while graphics pass
+    /// (filter.graphics).
+    sent: SentImages,
 }
 
 impl Ui {
@@ -92,7 +95,15 @@ impl Ui {
             real_y: 0,
             ticking: false,
             ticker_wakes: 0,
+            sent: SentImages::new(),
         }
+    }
+
+    /// Passes the remote's Kitty graphics to the local terminal, and redraws
+    /// its images along with the screen.
+    pub fn with_graphics(mut self) -> Ui {
+        self.filter.graphics = true;
+        self
     }
 
     fn write(&mut self, b: &[u8]) {
@@ -126,7 +137,23 @@ impl Ui {
         }
         self.filter.reset(&tail_style(t));
         (self.real_x, self.real_y) = t.cursor();
+        if self.filter.graphics {
+            // A new mirror: its generations aren't the old one's.
+            self.sent.values_mut().for_each(|g| *g = None);
+            let draw = images_draw(t, &mut self.sent);
+            self.write(&draw);
+        }
         self.flush();
+    }
+
+    /// The snapshot's images have their pixels now.
+    pub fn snapshot_end(&mut self, t: &Terminal) {
+        if self.filter.graphics && !t.placements().is_empty() {
+            self.displaced = false;
+            let draw = images_draw(t, &mut self.sent);
+            self.write(&draw);
+            self.flush();
+        }
     }
 
     /// Writes remote output, after putting the cursor back if an overlay
@@ -142,6 +169,19 @@ impl Ui {
     }
 
     pub fn applied(&mut self, t: &Terminal) {
+        let (saw, ids) = self.filter.take_graphics();
+        if self.filter.graphics {
+            for id in ids {
+                if let Some(img) = t.image(id) {
+                    self.sent.insert(id, Some(img.generation));
+                }
+            }
+        } else if saw {
+            // The mirror placed images this terminal never saw, moving the
+            // cursor past them: the output after went elsewhere here.
+            self.write(&screen_redraw(t));
+            self.displaced = false;
+        }
         self.pred.check(t);
         self.paint_buffered(t);
         if !self.status_note.is_empty() {
@@ -319,9 +359,10 @@ fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
 impl Attached {
     pub fn new(ui: Ui, id: String) -> Attached {
         let ui = Arc::new(Mutex::new(ui));
-        let (u1, u2, u3, u4) = (ui.clone(), ui.clone(), ui.clone(), ui.clone());
+        let (u1, u2, u3, u4, u5) = (ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui.clone());
         let m = Mirror::new(osewa_mirror::Options {
             on_ready: Some(Box::new(move |t| lock(&u1).ready(t))),
+            on_snapshot_end: Some(Box::new(move |t| lock(&u5).snapshot_end(t))),
             on_output: Some(Box::new(move |b| lock(&u2).output(b))),
             on_applied: Some(Box::new(move |t| match t {
                 Some(t) => lock(&u3).applied(t),

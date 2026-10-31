@@ -64,9 +64,10 @@ fn mirror_follows_stream() {
         host.write(format!("line {i}\r\n").as_bytes());
     }
     let log = Arc::new(Mutex::new(Vec::<String>::new()));
-    let (l1, l2, l3, l4) = (log.clone(), log.clone(), log.clone(), log.clone());
+    let (l1, l2, l3, l4, l5) = (log.clone(), log.clone(), log.clone(), log.clone(), log.clone());
     let m = Mirror::new(Options {
         on_ready: Some(Box::new(move |_| l1.lock().unwrap().push("ready".into()))),
+        on_snapshot_end: Some(Box::new(move |_| l5.lock().unwrap().push("end".into()))),
         on_output: Some(Box::new(move |b| {
             l2.lock()
                 .unwrap()
@@ -108,7 +109,7 @@ fn mirror_follows_stream() {
     });
     m.event(&wire::EventMsg::kind(wire::EVENT_BELL), true)
         .unwrap();
-    let want = "ready applied out tail applied event resize false applied event bell true applied";
+    let want = "ready applied end out tail applied event resize false applied event bell true applied";
     assert_eq!(log.lock().unwrap().join(" "), want);
     m.close();
 }

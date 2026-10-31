@@ -20,6 +20,9 @@ type AppliedFn = dyn FnMut(Option<&mut Terminal>) + Send;
 pub struct Options {
     /// Runs when a snapshot becomes renderable, with the new mirror.
     pub on_ready: Cb<dyn FnMut(&mut Terminal) + Send>,
+    /// Runs once the rest of a snapshot is in: its history, and the pixels
+    /// of its images.
+    pub on_snapshot_end: Cb<dyn FnMut(&mut Terminal) + Send>,
     /// Runs with each OUTPUT's bytes after the mirror applied them.
     pub on_output: Cb<BytesFn>,
     /// Runs with every applied event; live is false for events from a
@@ -137,6 +140,10 @@ impl Mirror {
             }
         }
         st.dec = None;
+        let st = &mut *st;
+        if let (Some(f), Some(t)) = (st.opt.on_snapshot_end.as_mut(), st.term.as_mut()) {
+            f(&mut t.0);
+        }
         self.notify();
         res
     }

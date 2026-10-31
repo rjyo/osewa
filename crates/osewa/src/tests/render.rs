@@ -421,3 +421,147 @@ fn status_notice() {
         assert_eq!(got, want, "{name}: notice:\n{s}");
     }
 }
+
+/// Terminals that keep images, with 10x20 pixel cells.
+fn image_term(cols: usize, rows: usize) -> Terminal {
+    let mut t = Terminal::new(cols, rows, Options { images: true, ..Default::default() }).unwrap();
+    t.resize_cells(cols, rows, 10, 20).unwrap();
+    t
+}
+
+/// Where a terminal shows its images, and as what.
+type Placed = (u32, i32, i32, (u32, u32), bool, (u32, u32), (u32, u32, u32, u32));
+
+fn placed(t: &Terminal) -> Vec<Placed> {
+    let mut v: Vec<_> = t.placements().into_iter().map(|p| (p.image, p.col, p.row, p.grid, p.is_virtual, (p.cols, p.rows), p.source)).collect();
+    v.sort();
+    v
+}
+
+/// A 2x4 pixel RGB image (2 rows of cells at 10x20), placed at the cursor.
+fn image_cmd(id: u32) -> String {
+    format!("\x1b_Ga=T,f=24,s=2,v=40,i={id};{}\x1b\\", "AAAA".repeat(80))
+}
+
+fn image_harness(graphics: bool) -> Harness {
+    let out = Buf::default();
+    let mut u = Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default()));
+    if graphics {
+        u = u.with_graphics();
+    }
+    let mut h = Harness { mirror: image_term(20, 6), local: image_term(20, 6), out, u, now: Arc::new(Mutex::new(Instant::now())) };
+    h.u.ready(&h.mirror);
+    h.sync();
+    h
+}
+
+/// A snapshot of the mirror, restored as a new one, as a resnapshot does:
+/// screen only, or whole, and the UI told so.
+fn resnapshot(h: &mut Harness, history: bool) {
+    let snap = h.mirror.snapshot().unwrap();
+    let mut dec = osewa_ghostty::Decoder::new().unwrap();
+    dec.feed(if history { &snap[..] } else { &snap[..osewa_ghostty::ready_end(&snap)] });
+    h.mirror = dec.ready(Default::default()).unwrap();
+    h.u.ready(&h.mirror);
+    if history {
+        dec.finish().unwrap();
+        h.u.snapshot_end(&h.mirror);
+    }
+    h.sync();
+}
+
+#[test]
+fn ui_images_pass_and_survive_redraws() {
+    let mut h = image_harness(true);
+    h.output(&format!("$ cat pic\r\n{}\r\n$ ", image_cmd(3)));
+    assert_eq!(placed(&h.mirror), vec![(3, 0, 1, (1, 2), false, (0, 0), (0, 0, 0, 0))]);
+    assert_eq!(placed(&h.local), placed(&h.mirror));
+    h.matches();
+    // A notice and its removal repaint the screen, not the images.
+    h.u.notice_at = None;
+    h.u.notice(Some(&h.mirror), "hello");
+    h.u.paint(&h.mirror);
+    h.u.ready(&h.mirror);
+    h.sync();
+    assert_eq!(placed(&h.local), placed(&h.mirror), "a redraw lost the image");
+    // A screen snapshot has no pixels; the local terminal still has them.
+    h.output("\x1b[2;5H");
+    resnapshot(&mut h, false);
+    assert_eq!(placed(&h.local), placed(&h.mirror), "after a screen snapshot");
+    // Placed again, and moved, while this terminal saw none of it.
+    h.mirror.write(format!("\x1b[2J\x1b[H\r\nxx{}", image_cmd(4)).as_bytes());
+    resnapshot(&mut h, true);
+    assert_eq!(placed(&h.mirror), vec![(4, 2, 1, (1, 2), false, (0, 0), (0, 0, 0, 0))]);
+    assert_eq!(placed(&h.local), placed(&h.mirror), "after a full snapshot");
+    h.matches();
+}
+
+#[test]
+fn ui_images_on_a_fresh_attach() {
+    let mut mirror = image_term(20, 6);
+    mirror.write(format!("pic {}\r\nbelow", image_cmd(9)).as_bytes());
+    let mut h = image_harness(true);
+    h.mirror = mirror;
+    h.u = Ui::new(Box::new(h.out.clone()), true, Predictor::new(PredictorConfig::default())).with_graphics();
+    resnapshot(&mut h, true);
+    assert_eq!(placed(&h.local), placed(&h.mirror));
+    assert_eq!(h.local.image(9).and_then(|i| i.pixels).map(|p| p.len()), Some(2 * 40 * 3));
+    h.matches();
+}
+
+/// An image whose top scrolled off is placed again with only the rows
+/// still showing.
+#[test]
+fn ui_images_scrolled_partly_off() {
+    let mut h = image_harness(true);
+    h.output(&format!("{}\r\n\r\n\r\n\r\n\r\n", image_cmd(5)));
+    let p = &h.mirror.placements()[0];
+    assert_eq!((p.row, p.grid), (-1, (1, 2)), "{p:?}");
+    resnapshot(&mut h, true);
+    let p = &h.local.placements()[0];
+    assert_eq!((p.image, p.row, p.grid, p.source), (5, 0, (1, 1), (0, 20, 2, 20)), "{p:?}");
+}
+
+/// Placements keep the size and source part the program asked for, each
+/// key on its own, through a redraw.
+#[test]
+fn ui_images_keep_size_and_source() {
+    let mut h = image_harness(true);
+    // 20x40 pixels: 2x2 cells.
+    h.output(&format!("\x1b_Ga=t,f=24,s=20,v=40,i=6,q=2;{}\x1b\\", "AAAA".repeat(800)));
+    for keys in ["c=3", "r=2", "c=4,r=1", "x=1", "h=10", "y=8,w=1", "X=3,Y=5"] {
+        h.output(&format!("\x1b[2;2H\x1b_Ga=d,d=a,q=2\x1b\\\x1b_Ga=p,i=6,C=1,{keys}\x1b\\"));
+        let want = placed(&h.mirror);
+        assert_eq!(want.len(), 1, "{keys}");
+        resnapshot(&mut h, true);
+        assert_eq!(placed(&h.local), want, "{keys}");
+    }
+}
+
+/// A scaled image whose top scrolled off keeps its scale.
+#[test]
+fn ui_images_scaled_scrolled_partly_off() {
+    let mut h = image_harness(true);
+    h.output(&format!("\x1b_Ga=t,f=24,s=2,v=40,i=7;{}\x1b\\\x1b_Ga=p,i=7,c=2,r=4\x1b\\\r\n\r\n\r\n\r\n", "AAAA".repeat(80)));
+    let p = &h.mirror.placements()[0];
+    assert_eq!((p.row, p.grid), (-2, (2, 4)), "{p:?}");
+    resnapshot(&mut h, true);
+    let p = &h.local.placements()[0];
+    assert_eq!((p.row, p.grid, (p.cols, p.rows), p.source), (0, (2, 2), (2, 2), (0, 20, 2, 20)), "{p:?}");
+}
+
+/// Without graphics the local terminal never sees the image, but what
+/// follows it still lands where the mirror has it.
+#[test]
+fn ui_images_dropped_keep_the_screen() {
+    let mut h = image_harness(false);
+    h.output(&format!("a{}b", image_cmd(1)));
+    assert!(h.local.placements().is_empty());
+    h.matches();
+    // Split across outputs, the command is only placed once it ends.
+    let cmd = image_cmd(2);
+    let (head, tail) = cmd.split_at(cmd.len() / 2);
+    h.output(head);
+    h.output(&format!("{tail}c"));
+    h.matches();
+}

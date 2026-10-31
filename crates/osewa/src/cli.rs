@@ -28,9 +28,10 @@ client commands:
   login <ssh-target> [--name N] [--addr host:port] [--device N] [--no-install] [--service] [--no-check]
   ls <host>
   new <host> [-- argv...]
-  attach [--take] [--quiet] [--predict auto|always|never] <host> [id]
+  attach [--take] [--quiet] [--predict auto|always|never] [--graphics auto|always|never] <host> [id]
                                        ~. detaches (after a newline); while viewing,
-                                       Ctrl-T takes ownership
+                                       Ctrl-T takes ownership; --graphics shows Kitty
+                                       graphics (auto: when the terminal is known to)
   kill <host> <id>
   exec [--cwd dir] [--env K=V]... <host> -- argv...
                                        run a command on the host without a terminal;

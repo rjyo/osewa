@@ -102,6 +102,61 @@ fn query_filter() {
     }
 }
 
+/// With graphics on, Kitty graphics commands pass quiet; the ones the local
+/// terminal would answer or read from its own machine don't, and other APCs
+/// still don't.
+#[test]
+fn query_filter_graphics() {
+    let cases: &[(&str, &str, &str, &[u32])] = &[
+        ("transmit and place", "a\x1b_Ga=T,f=24,s=1,v=1,i=7;AAAA\x1b\\b", "a\x1b_Ga=T,f=24,s=1,v=1,i=7,q=2;AAAA\x1b\\b", &[7]),
+        ("quiet replaced", "\x1b_Gq=1,a=p,i=7\x1b\\", "\x1b_Ga=p,i=7,q=2\x1b\\", &[]),
+        ("no keys", "\x1b_G;AAAA\x1b\\", "\x1b_Gq=2;AAAA\x1b\\", &[]),
+        ("delete", "\x1b_Ga=d,d=A\x1b\\", "\x1b_Ga=d,d=A,q=2\x1b\\", &[]),
+        ("query dropped", "x\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\y", "xy", &[]),
+        ("file dropped", "\x1b_Ga=T,t=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\", "", &[]),
+        ("temp file dropped", "\x1b_Ga=T,t=t,i=1;L3RtcC94\x1b\\", "", &[]),
+        ("shm dropped", "\x1b_Ga=T,t=s,i=1;eA==\x1b\\", "", &[]),
+        ("direct passes", "\x1b_Ga=t,t=d,i=2;AAAA\x1b\\", "\x1b_Ga=t,t=d,i=2,q=2;AAAA\x1b\\", &[2]),
+        (
+            "chunks",
+            "\x1b_Ga=T,f=24,s=2,v=1,i=5,m=1;AAAA\x1b\\\x1b_Gm=0;AAAA\x1b\\",
+            "\x1b_Ga=T,f=24,s=2,v=1,i=5,m=1,q=2;AAAA\x1b\\\x1b_Gm=0,q=2;AAAA\x1b\\",
+            &[5],
+        ),
+        ("chunks of a dropped one", "\x1b_Ga=T,t=f,i=1,m=1;AAAA\x1b\\\x1b_Gm=1;AAAA\x1b\\\x1b_Gm=0;AAAA\x1b\\ok", "ok", &[]),
+        ("other apc", "a\x1b_Xyz\x1b\\b", "ab", &[]),
+        ("other apc keeps going after esc", "a\x1b_X\x1bx\x1b]52;c;aGk=\x07\x1b\\b", "ab", &[]),
+        ("long keys dropped", &(String::from("\x1b_G") + &"a=T,".repeat(100) + ";AAAA\x1b\\x"), "x", &[]),
+        ("graphics in a dcs", "\x1bPtmux;\x1b\x1b_Ga=T;AAAA\x1b\x1b\\\x1b\\", "", &[]),
+    ];
+    for (name, input, want, ids) in cases {
+        let step = 1 + input.len() / 100;
+        let mut cut = 0;
+        while cut <= input.len() {
+            let mut f = QueryFilter::default();
+            f.graphics = true;
+            let mut got = f.filter(&input.as_bytes()[..cut]);
+            got.extend(f.filter(&input.as_bytes()[cut..]));
+            assert!(got == want.as_bytes(), "{name} cut {cut}: got {:?}, want {want:?}", short(&got));
+            let (saw, sent) = f.take_graphics();
+            assert_eq!(saw, input.contains("\x1b_G") && !input.starts_with("\x1bP"), "{name}: saw");
+            assert_eq!(&sent, ids, "{name}");
+            cut += step;
+        }
+    }
+    // Off, every one is dropped, but still seen.
+    let mut f = QueryFilter::default();
+    assert_eq!(f.filter(b"a\x1b_Ga=T,f=24,s=1,v=1,i=7;AAAA\x1b\\b"), b"ab");
+    assert_eq!(f.take_graphics(), (true, vec![]));
+}
+
+#[test]
+fn query_filter_size_reports() {
+    for (input, want) in [("\x1b[14t\x1b[16t\x1b[18t\x1b[19t\x1b[21t\x1b[11t\x1b[13;2t", ""), ("\x1b[22;0t\x1b[23;0t\x1b[8;24;80t", "\x1b[22;0t\x1b[23;0t\x1b[8;24;80t")] {
+        assert_eq!(String::from_utf8_lossy(&QueryFilter::default().filter(input.as_bytes())), want);
+    }
+}
+
 #[test]
 fn query_filter_reset() {
     let mut f = QueryFilter::default();

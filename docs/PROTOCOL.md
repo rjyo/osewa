@@ -355,8 +355,23 @@ Prediction is local to the client and never changes the protocol.
 ## Replies
 
 The holder's terminal answers every terminal query (DSR, DA, DECRQM, kitty
-keyboard, size reports) by writing to the PTY, whether or not a client is
-attached. Client terminals must not reply.
+keyboard, size reports, Kitty graphics) by writing to the PTY, whether or
+not a client is attached. Client terminals must not reply.
+
+## Images
+
+The holder's terminal keeps Kitty graphics images, up to 64 MiB per screen,
+and decodes PNG. Images, their placements and their pixels are part of a
+snapshot; a screen snapshot carries images and placements but not pixels,
+which come after READY. A mirror applying `resize` events takes the same
+cell size, so images move the cursor there as they do on the holder.
+
+Only images sent in the data itself (`t=d`) are kept: the holder never reads
+files or shared memory a program names, which the program would have to
+fall back from. A client that draws images on another terminal passes the
+holder's graphics commands through with `q=2`, since the holder already
+replied, and draws placements again from its mirror after redrawing from a
+snapshot.
 
 ## Clipboard
 

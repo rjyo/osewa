@@ -186,6 +186,23 @@ fn clipboard_events_set_the_local_clipboard() {
 }
 
 #[test]
+fn shows_graphics_by_terminal() {
+    for (env, want) in [
+        (&[("TERM", "xterm-kitty")][..], true),
+        (&[("TERM", "xterm-ghostty")], true),
+        (&[("TERM", "xterm-256color"), ("TERM_PROGRAM", "ghostty")], true),
+        (&[("TERM", "xterm-256color"), ("TERM_PROGRAM", "WezTerm")], true),
+        (&[("TERM", "xterm-256color"), ("KITTY_WINDOW_ID", "1")], true),
+        (&[("TERM", "xterm-256color"), ("TERM_PROGRAM", "Apple_Terminal")], false),
+        (&[("TERM", "xterm-256color"), ("TERM_PROGRAM", "iTerm.app")], false),
+        (&[], false),
+    ] {
+        let got = crate::attach::shows_graphics(|k| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()));
+        assert_eq!(got, want, "{env:?}");
+    }
+}
+
+#[test]
 fn viewer_notices() {
     for (owner, me, want) in [("phone-abcd", "mac-1234", "phone owns"), ("mac-abcd", "mac-1234", "another window on this device owns"), ("", "mac-1234", "nobody owns")] {
         let got = viewer_notice(owner, me);

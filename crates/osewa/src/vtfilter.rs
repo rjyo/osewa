@@ -9,6 +9,10 @@
 /// stripped), 7 (cwd), 8 (hyperlinks) and 133 (prompt marks) pass; every
 /// other OSC (clipboard, notifications, color queries, file transfer), DCS
 /// (including tmux and screen passthrough), APC, PM and SOS is dropped.
+/// With graphics on, Kitty graphics commands (APC G) pass, made quiet (q=2)
+/// since the holder already answered them; queries (a=q) and transmissions
+/// the local terminal would read from its own disk or memory (t=f, t=t,
+/// t=s) are dropped.
 /// UTF-8 encoded C1 controls (U+0080-U+009F) are dropped: libghostty doesn't
 /// act on them, so the mirror has none, and a local terminal that would
 /// must not.
@@ -35,6 +39,20 @@ pub(crate) struct QueryFilter {
     /// Every SGR sequence since the last reset: replayed after "\x1b[0m", it
     /// restores the remote's current style.
     sgr: Vec<u8>,
+    /// Passes Kitty graphics commands.
+    pub(crate) graphics: bool,
+    /// A graphics command ended, passed or not, since take_graphics.
+    saw_graphics: bool,
+    /// The string being read is a graphics command.
+    in_graphics: bool,
+    /// The next string byte is an APC's first.
+    apc_start: bool,
+    /// Images whose pixels passed in full since take_graphics.
+    sent_images: Vec<u32>,
+    /// The image a passed chunked transmission (m=1) is loading.
+    loading: Option<u32>,
+    /// The rest of a dropped chunked transmission is dropped too.
+    drop_chunks: bool,
 }
 
 /// Bounds the tracked style; a program that never resets loses exactness
@@ -106,7 +124,13 @@ impl QueryFilter {
     pub fn reset(&mut self, style: &[u8]) {
         let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
-        *self = QueryFilter { buf, sgr: style.to_vec(), ..Default::default() };
+        *self = QueryFilter { buf, sgr: style.to_vec(), graphics: self.graphics, ..Default::default() };
+    }
+
+    /// Whether a graphics command went by since the last call, and the
+    /// images whose pixels passed.
+    pub fn take_graphics(&mut self) -> (bool, Vec<u32>) {
+        (std::mem::take(&mut self.saw_graphics), std::mem::take(&mut self.sent_images))
     }
 
     /// Sequences that set the remote's current style.
@@ -175,8 +199,10 @@ impl QueryFilter {
                     b']' | b'P' | b'_' | b'^' | b'X' => {
                         self.state = FState::Str;
                         self.kind = b;
-                        // Only OSC can be allowed; the rest go unseen.
-                        self.drop = b != b']';
+                        // Only OSC and graphics APC can be allowed; the rest
+                        // go unseen.
+                        self.drop = b != b']' && !(b == b'_' && self.graphics);
+                        self.apc_start = b == b'_';
                     }
                     // ESC ESC: the first one is ignored. Passing it alone
                     // would let whatever passes next complete a sequence we
@@ -251,6 +277,10 @@ impl QueryFilter {
             self.str_esc = true;
             return;
         }
+        // Flagged when the command ends, once the mirror has applied it.
+        if std::mem::take(&mut self.apc_start) && b == b'G' {
+            self.in_graphics = true;
+        }
         if b == BEL && self.kind == b']' {
             return self.end_str(out, b"\x07");
         }
@@ -267,6 +297,16 @@ impl QueryFilter {
             return;
         }
         self.buf.push(b);
+        if self.kind == b'_' {
+            // ESC _ G control-keys ; payload: decided once the keys are in.
+            if self.buf.len() == 3 && b != b'G' || self.buf.len() > CSI_MAX {
+                self.drop = true;
+                self.buf.clear();
+            } else if b == b';' {
+                self.graphics_cmd(out, true);
+            }
+            return;
+        }
         if self.buf.len() > STR_MAX {
             match osc_number(&self.buf[2..]) {
                 7 | 8 | 133 => {
@@ -280,6 +320,7 @@ impl QueryFilter {
     }
 
     fn end_abort(&mut self) {
+        self.in_graphics = false;
         self.pass = false;
         self.drop = false;
         self.state = FState::Ground;
@@ -289,9 +330,14 @@ impl QueryFilter {
     /// Finishes a string sequence with terminator st, letting through what
     /// the allowlist allows.
     fn end_str(&mut self, out: &mut Vec<u8>, st: &[u8]) {
+        self.saw_graphics |= self.in_graphics;
         if self.drop {
         } else if self.pass {
             out.extend_from_slice(st);
+        } else if self.kind == b'_' {
+            if self.buf.len() >= 3 && self.graphics_cmd(out, false) {
+                out.extend_from_slice(st);
+            }
         } else {
             let body = &self.buf[2..];
             match osc_number(body) {
@@ -311,6 +357,63 @@ impl QueryFilter {
             }
         }
         self.end_abort();
+    }
+
+    /// Decides a graphics command whose control keys are in buf (with the
+    /// ';' when a payload follows): passes it quiet, its payload streaming
+    /// after, or drops it whole.
+    fn graphics_cmd(&mut self, out: &mut Vec<u8>, payload: bool) -> bool {
+        let end = self.buf.len() - payload as usize;
+        let keys: Vec<(u8, &[u8])> = self.buf[3..end]
+            .split(|&c| c == b',')
+            .filter_map(|kv| match kv {
+                [k, b'=', v @ ..] => Some((*k, v)),
+                _ => None,
+            })
+            .collect();
+        let get = |k: u8| keys.iter().find(|(key, _)| *key == k).map(|(_, v)| *v);
+        let more = get(b'm') == Some(b"1");
+        // Kitty takes any command during a chunked transmission as its next
+        // chunk.
+        if self.drop_chunks {
+            self.drop_chunks = more;
+            self.drop = true;
+            return false;
+        }
+        if let Some(id) = self.loading {
+            if !more {
+                self.loading = None;
+                self.sent_images.push(id);
+            }
+        } else {
+            let action = get(b'a').unwrap_or(b"t");
+            if action == b"q" || get(b't').is_some_and(|t| t != b"d") {
+                self.drop_chunks = more;
+                self.drop = true;
+                return false;
+            }
+            let id = get(b'i').and_then(|v| std::str::from_utf8(v).ok()?.parse::<u32>().ok());
+            if let (Some(id), b"t" | b"T" | b"f") = (id, action) {
+                if more {
+                    self.loading = Some(id);
+                } else {
+                    self.sent_images.push(id);
+                }
+            }
+        }
+        out.extend_from_slice(b"\x1b_G");
+        for (k, v) in keys.iter().filter(|(k, _)| *k != b'q') {
+            out.extend_from_slice(&[*k, b'=']);
+            out.extend_from_slice(v);
+            out.push(b',');
+        }
+        out.extend_from_slice(b"q=2");
+        if payload {
+            out.push(b';');
+            self.pass = true;
+        }
+        self.buf.clear();
+        true
     }
 
     /// Follows the style set by a complete CSI ... m.
@@ -398,6 +501,13 @@ fn csi_query(seq: &[u8]) -> bool {
         b'q' if prefix == b'>' && inter.is_empty() => true,
         // kitty keyboard flags query
         b'u' if prefix == b'?' && inter.is_empty() => true,
+        // XTWINOPS reports: state, position, sizes, title. The holder
+        // answers the sizes; the rest would tell the program about this
+        // window, or type its title.
+        b't' if prefix == 0 && inter.is_empty() => {
+            let first = body.split(|&c| c == b';').next().unwrap_or_default();
+            matches!(first, b"11" | b"13" | b"14" | b"15" | b"16" | b"18" | b"19" | b"20" | b"21")
+        }
         _ => false,
     }
 }

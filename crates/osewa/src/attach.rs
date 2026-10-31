@@ -19,20 +19,26 @@ use crate::ui::{viewer_notice, Attached, InputHandler, Ui};
 pub(crate) const RESET_MODES: &str =
     "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\r\n";
 
-/// Runs `attach [--take] [--quiet] [--predict auto|always|never] <host>
-/// [id]` and returns the exit code.
+/// Runs `attach [--take] [--quiet] [--predict auto|always|never]
+/// [--graphics auto|always|never] <host> [id]` and returns the exit code.
 pub(crate) async fn attach(ctx: &Ctx, env: &Env, args: &[String]) -> Result<i32> {
-    let mut fs = Flags::new(&[("take", Kind::Bool), ("quiet", Kind::Bool), ("predict", Kind::Str)]);
+    let mut fs = Flags::new(&[("take", Kind::Bool), ("quiet", Kind::Bool), ("predict", Kind::Str), ("graphics", Kind::Str)]);
     let pos = fs.parse(args)?;
     let predict = if fs.all("predict").is_empty() { "auto".to_string() } else { fs.str("predict") };
     let mode = parse_predict_mode(&predict).map_err(Error::Msg)?;
+    let graphics = match fs.all("graphics").first().map_or("auto", |s| s.as_str()) {
+        "auto" => shows_graphics(|k| std::env::var(k).ok()),
+        "always" => true,
+        "never" => false,
+        g => return Err(Error::Msg(format!("osewa: graphics mode {}: want auto, always or never", osewa_wire::quote(g)))),
+    };
     if pos.is_empty() || pos.len() > 2 {
         return Err(Error::Usage);
     }
     let h = osewa_client::hosts::find(&env.dir, &pos[0])?;
     let cfg = env.config(&h)?;
     let l = Link::new(cfg);
-    let r = attach_on(ctx, env, &l, &pos, fs.bool("take"), fs.bool("quiet"), mode).await;
+    let r = attach_on(ctx, env, &l, &pos, fs.bool("take"), fs.bool("quiet"), mode, graphics).await;
     l.close().await;
     r
 }
@@ -46,6 +52,7 @@ async fn attach_on(
     take: bool,
     quiet: bool,
     mode: osewa_mirror::PredictMode,
+    graphics: bool,
 ) -> Result<i32> {
     let c = bounded(ctx, Duration::from_secs(15), async { Ok(l.conn().await?) }).await?;
     let (cols, rows) = tty::term_size(1);
@@ -62,7 +69,11 @@ async fn attach_on(
     // so no late remote mode lands after the reset.
     let restore = make_raw(env)?;
     let me = env.client_id();
-    let a = Attached::new(Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() })), me.clone());
+    let mut ui = Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() }));
+    if graphics {
+        ui = ui.with_graphics();
+    }
+    let a = Attached::new(ui, me.clone());
     let r = run_attached(ctx, env, l, &a, &id, cols, rows, take).await;
     if let Some(s) = a.s.lock().unwrap().take() {
         s.close();
@@ -73,6 +84,15 @@ async fn attach_on(
         restore();
     }
     r
+}
+
+/// Whether the local terminal draws Kitty graphics, from what it says about
+/// itself in the environment (getenv). Asking it would need its reply off
+/// stdin before attach starts reading.
+pub(crate) fn shows_graphics(getenv: impl Fn(&str) -> Option<String>) -> bool {
+    let term = getenv("TERM").unwrap_or_default();
+    let program = getenv("TERM_PROGRAM").unwrap_or_default();
+    term.contains("kitty") || term.contains("ghostty") || getenv("KITTY_WINDOW_ID").is_some() || matches!(program.as_str(), "ghostty" | "WezTerm")
 }
 
 /// Puts stdin in raw mode when it is a terminal. None means there was
