@@ -301,6 +301,34 @@ fn send_image(t: &Terminal, id: u32, sent: &mut SentImages, out: &mut Vec<u8>) -
     true
 }
 
+/// Puts the colors programs set in the mirror (OSC 4, 10, 11, 12) on the
+/// local terminal, after resetting it to its own: the mirror's defaults
+/// are another terminal's. Nothing when there are none and none were
+/// passed before (set).
+pub(crate) fn colors_redraw(t: &Terminal, set: bool) -> (Vec<u8>, bool) {
+    let (now, d) = (t.colors(), t.default_colors());
+    let mut sets = Vec::new();
+    for (n, c, dc) in [(10, now.foreground, d.foreground), (11, now.background, d.background), (12, now.cursor, d.cursor)] {
+        if let (Some(c), true) = (c, c != dc) {
+            sets.extend_from_slice(format!("\x1b]{n};{}\x1b\\", osewa_wire::rgb_hex(c)).as_bytes());
+        }
+    }
+    let pal: Vec<String> = (0..256).filter(|&i| now.palette[i] != d.palette[i]).map(|i| format!("{i};{}", osewa_wire::rgb_hex(now.palette[i]))).collect();
+    if !pal.is_empty() {
+        sets.extend_from_slice(format!("\x1b]4;{}\x1b\\", pal.join(";")).as_bytes());
+    }
+    let any = !sets.is_empty();
+    if !any && !set {
+        return (Vec::new(), false);
+    }
+    let mut out = COLORS_RESET.to_vec();
+    out.extend_from_slice(&sets);
+    (out, any)
+}
+
+/// Puts the local terminal's colors back to its own.
+pub(crate) const COLORS_RESET: &[u8] = b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
+
 /// OSC 22 that sets the local terminal's pointer shape; "text" is the
 /// shape a terminal starts with, so it resets instead.
 pub(crate) fn pointer_set(shape: &str) -> Vec<u8> {

@@ -64,20 +64,28 @@ fn split_utf8_holds_back_partial_runes() {
 }
 
 #[test]
-fn scheme_reports_leave_typing() {
-    let cases: &[(&[&str], &str, &[bool])] = &[
-        (&["ab\x1b[?997;1nc"], "abc", &[true]),
-        (&["\x1b[?997;2n\x1b[?997;1n"], "", &[false, true]),
-        (&["a\x1b[?99", "7;2nb"], "ab", &[false]),
-        (&["\x1b[?997;", "1", "n"], "", &[true]),
-        // Keys: a lone ESC, arrows and other reports pass, now.
+fn reports_leave_typing() {
+    use crate::attach::Report::*;
+    let cases: &[(&[&str], &str, &[crate::attach::Report])] = &[
+        (&["ab\x1b[?997;1nc"], "abc", &[Scheme(true)]),
+        (&["\x1b[?997;2n\x1b[?997;1n"], "", &[Scheme(false), Scheme(true)]),
+        (&["a\x1b[?99", "7;2nb"], "ab", &[Scheme(false)]),
+        (&["\x1b[?997;", "1", "n"], "", &[Scheme(true)]),
+        (&["\x1b]11;rgb:1010/2020/3030\x1b\\x"], "x", &[Background([0x10, 0x20, 0x30])]),
+        (&["\x1b]10;rgb:f/80/fff\x07\x1b]12;rgb:0/0/0\x07"], "", &[Foreground([0xff, 0x80, 0xff]), Cursor([0, 0, 0])]),
+        (&["\x1b]4;1;rgb:cc", "cc/0000/0000\x1b", "\\\x1b]4;255;rgb:1/2/3\x1b\\"], "", &[Palette(1, [0xcc, 0, 0]), Palette(255, [0x11, 0x22, 0x33])]),
+        (&["\x1b]1", "1;rgb:0/0/0\x07"], "", &[Background([0, 0, 0])]),
+        // Keys: a lone ESC, Alt-], arrows and other reports pass, now.
         (&["\x1b", "x"], "\x1bx", &[]),
+        (&["\x1b]", "x"], "\x1b]x", &[]),
         (&["\x1b[A\x1b[?1;2c"], "\x1b[A\x1b[?1;2c", &[]),
         (&["\x1b[?997;9n"], "", &[]),
         (&["\x1b[?997;12345n"], "\x1b[?997;12345n", &[]),
+        // Malformed replies are taken but say nothing.
+        (&["\x1b]11;nope\x07"], "", &[]),
     ];
     for (reads, want, want_schemes) in cases {
-        let mut r = crate::attach::SchemeReports::default();
+        let mut r = crate::attach::Reports::default();
         let (mut got, mut schemes) = (Vec::new(), Vec::new());
         for read in *reads {
             let (b, s) = r.feed(read.as_bytes());
@@ -93,7 +101,7 @@ struct Sink {
     got: Mutex<Vec<String>>,
     flushed: Mutex<usize>,
     takes: Mutex<usize>,
-    schemes: Mutex<Vec<bool>>,
+    reports: Mutex<Vec<crate::attach::Report>>,
 }
 
 impl InputHandler for Sink {
@@ -103,8 +111,8 @@ impl InputHandler for Sink {
     fn take(&self) {
         *self.takes.lock().unwrap() += 1;
     }
-    fn color_scheme(&self, dark: bool) {
-        self.schemes.lock().unwrap().push(dark);
+    fn reports(&self, r: &[crate::attach::Report]) {
+        self.reports.lock().unwrap().extend_from_slice(r);
     }
     fn flush(&self, _: &Ctx) {
         *self.flushed.lock().unwrap() = self.got.lock().unwrap().len();
@@ -117,7 +125,7 @@ fn forward_input_sends_takes_and_detaches() {
     forward_input(&ctx(), &mut "echo 你好\x1b[?997;1n\r~tx\r~.ignored".as_bytes(), &s);
     assert!(s.got.lock().unwrap().concat() == "echo 你好\rx\r" && *s.flushed.lock().unwrap() == 0, "got {:?}", s.got.lock().unwrap());
     assert_eq!(*s.takes.lock().unwrap(), 1);
-    assert_eq!(*s.schemes.lock().unwrap(), [true], "the color scheme report");
+    assert_eq!(*s.reports.lock().unwrap(), [crate::attach::Report::Scheme(true)], "the color scheme report");
     // EOF detaches too, but only once everything typed was delivered.
     let s = Sink::default();
     forward_input(&ctx(), &mut "x".as_bytes(), &s);
@@ -145,7 +153,7 @@ fn forward_input_waits_for_take() {
             std::thread::sleep(Duration::from_millis(30)); // a round trip
             self.st.lock().unwrap().0 = true;
         }
-        fn color_scheme(&self, _: bool) {}
+        fn reports(&self, _: &[crate::attach::Report]) {}
         fn flush(&self, _: &Ctx) {}
     }
     let s = TakeSink::default();

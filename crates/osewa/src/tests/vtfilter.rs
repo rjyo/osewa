@@ -34,7 +34,7 @@ fn filter_cases() -> Vec<Case> {
         ("osc 52 set", "a\x1b]52;c;aGk=\x07b".as_bytes().to_vec(), "ab".as_bytes().to_vec()),
         ("osc 52 query", "\x1b]52;c;?\x07".as_bytes().to_vec(), "".as_bytes().to_vec()),
         ("osc color query", "\x1b]10;?\x07\x1b]11;?\x1b\\\x1b]4;1;?\x07".as_bytes().to_vec(), "".as_bytes().to_vec()),
-        ("osc color set", "\x1b]4;1;rgb:ff/00/00\x07\x1b]10;#ffffff\x07".as_bytes().to_vec(), "".as_bytes().to_vec()),
+        ("osc color set", "\x1b]4;1;rgb:ff/00/00\x07\x1b]10;#ffffff\x07".as_bytes().to_vec(), "\x1b]4;1;rgb:ff/00/00\x07\x1b]10;#ffffff\x07".as_bytes().to_vec()),
         ("osc notification", "\x1b]9;hi\x07\x1b]777;notify;a;b\x07".as_bytes().to_vec(), "".as_bytes().to_vec()),
         ("osc iterm file", "\x1b]1337;File=name=eA==:aGk=\x07".as_bytes().to_vec(), "".as_bytes().to_vec()),
         ("osc number missing", "\x1b];x\x07".as_bytes().to_vec(), "".as_bytes().to_vec()),
@@ -170,6 +170,24 @@ fn query_filter_color_scheme() {
         ("\x1b[?996n", ""),
     ] {
         assert_eq!(String::from_utf8_lossy(&QueryFilter::default().filter(input.as_bytes())), want, "{input:?}");
+    }
+}
+
+/// Programs' color sets and resets reach the local terminal; their
+/// queries are the holder's to answer.
+#[test]
+fn query_filter_colors() {
+    for (input, want, passed) in [
+        ("\x1b]11;?\x1b\\\x1b]4;1;?\x07", "", false),
+        ("\x1b]4;1;#ff0000;2;?;3;red\x1b\\", "\x1b]4;1;#ff0000;3;red\x1b\\", true),
+        ("\x1b]10;#fff;?;blue\x07", "\x1b]10;#fff\x07\x1b]12;blue\x07", true),
+        ("\x1b]104;1\x1b\\\x1b]110\x1b\\", "\x1b]104;1\x1b\\\x1b]110\x1b\\", true),
+        ("\x1b]21;foreground=red;background=?\x1b\\", "\x1b]21;foreground=red\x1b\\", true),
+        ("\x1b]21;foreground=?\x1b\\", "", false),
+    ] {
+        let mut f = QueryFilter::default();
+        assert_eq!(String::from_utf8_lossy(&f.filter(input.as_bytes())), want, "{input:?}");
+        assert_eq!(f.passed_colors, passed, "{input:?}");
     }
 }
 

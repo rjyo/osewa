@@ -55,6 +55,21 @@ type DataFn = dyn FnMut(&[u8], bool) + Send;
 type BytesFn = dyn FnMut(&[u8]) + Send;
 type EventFn = dyn FnMut(&wire::EventMsg, bool) + Send;
 
+/// A terminal's colors as far as they are known: None where it didn't say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TermColors {
+    pub foreground: Option<[u8; 3]>,
+    pub background: Option<[u8; 3]>,
+    pub cursor: Option<[u8; 3]>,
+    pub palette: [Option<[u8; 3]>; 256],
+}
+
+impl Default for TermColors {
+    fn default() -> TermColors {
+        TermColors { foreground: None, background: None, cursor: None, palette: [None; 256] }
+    }
+}
+
 /// Configures an attach.
 #[derive(Default)]
 pub struct AttachOptions {
@@ -1039,6 +1054,23 @@ impl Session {
     pub async fn color_scheme(&self, dark: bool) -> Result<()> {
         let s = if dark { "dark" } else { "light" };
         let req = wire::Request { method: wire::METHOD_COLOR_SCHEME.into(), color_scheme: s.into(), ..Default::default() };
+        self.request(req).await.map(drop)
+    }
+
+    /// Tells the holder this client's terminal colors, which programs'
+    /// color queries are answered with. Only the owner's apply; None, and
+    /// a palette shorter than 256, leave the holder's as they are.
+    pub async fn colors(&self, c: &TermColors) -> Result<()> {
+        let hex = |c: Option<[u8; 3]>| c.map(wire::rgb_hex).unwrap_or_default();
+        let palette = if c.palette.iter().all(Option::is_none) { Vec::new() } else { (0..256).map(|i| hex(c.palette.get(i).copied().flatten())).collect() };
+        let req = wire::Request {
+            method: wire::METHOD_COLORS.into(),
+            foreground: hex(c.foreground),
+            background: hex(c.background),
+            cursor: hex(c.cursor),
+            palette,
+            ..Default::default()
+        };
         self.request(req).await.map(drop)
     }
 

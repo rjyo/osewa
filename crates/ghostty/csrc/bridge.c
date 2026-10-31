@@ -170,6 +170,70 @@ uint32_t osewa_term_height_px(GhosttyTerminal t) {
   return v;
 }
 
+// Colors cross as 0xRRGGBB, or -1 for none; the palette as 256 RGB
+// triples.
+static int32_t rgb_int(GhosttyTerminal t, GhosttyTerminalData key) {
+  GhosttyColorRgb c;
+  if (ghostty_terminal_get(t, key, &c) != GHOSTTY_SUCCESS) {
+    return -1;
+  }
+  return (int32_t)c.r << 16 | (int32_t)c.g << 8 | (int32_t)c.b;
+}
+
+// The effective colors, or with defaults only what the embedder set.
+void osewa_term_colors(GhosttyTerminal t, bool defaults, int32_t dyn[3],
+                       uint8_t palette[768]) {
+  if (defaults) {
+    dyn[0] = rgb_int(t, GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND_DEFAULT);
+    dyn[1] = rgb_int(t, GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT);
+    dyn[2] = rgb_int(t, GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT);
+  } else {
+    dyn[0] = rgb_int(t, GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND);
+    dyn[1] = rgb_int(t, GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND);
+    dyn[2] = rgb_int(t, GHOSTTY_TERMINAL_DATA_COLOR_CURSOR);
+  }
+  GhosttyColorRgb p[256];
+  memset(p, 0, sizeof(p));
+  ghostty_terminal_get(t,
+                       defaults ? GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT
+                                : GHOSTTY_TERMINAL_DATA_COLOR_PALETTE,
+                       p);
+  for (int i = 0; i < 256; i++) {
+    palette[3 * i] = p[i].r;
+    palette[3 * i + 1] = p[i].g;
+    palette[3 * i + 2] = p[i].b;
+  }
+}
+
+static int set_rgb(GhosttyTerminal t, GhosttyTerminalOption key, int32_t v) {
+  if (v < 0) {
+    return ghostty_terminal_set(t, key, NULL);
+  }
+  GhosttyColorRgb c = {(uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v};
+  return ghostty_terminal_set(t, key, &c);
+}
+
+// Sets the default colors; a NULL palette leaves the palette as it is.
+int osewa_term_set_colors(GhosttyTerminal t, const int32_t dyn[3],
+                          const uint8_t *palette) {
+  int r = set_rgb(t, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, dyn[0]);
+  if (r == GHOSTTY_SUCCESS) {
+    r = set_rgb(t, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, dyn[1]);
+  }
+  if (r == GHOSTTY_SUCCESS) {
+    r = set_rgb(t, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, dyn[2]);
+  }
+  if (r == GHOSTTY_SUCCESS && palette != NULL) {
+    GhosttyColorRgb p[256];
+    for (int i = 0; i < 256; i++) {
+      p[i] = (GhosttyColorRgb){palette[3 * i], palette[3 * i + 1],
+                               palette[3 * i + 2]};
+    }
+    r = ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, p);
+  }
+  return r;
+}
+
 int osewa_term_mouse_shape(GhosttyTerminal t) {
   GhosttyMouseShape v = GHOSTTY_MOUSE_SHAPE_TEXT;
   ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &v);

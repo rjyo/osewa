@@ -16,12 +16,15 @@ use crate::ui::{viewer_notice, Attached, InputHandler, Ui};
 /// Undoes modes the remote program may have left on our terminal (alt
 /// screen, hidden cursor, mouse and focus reporting, bracketed paste, kitty
 /// keyboard), since the local terminal outlives the attach.
-pub(crate) const RESET_MODES: &str =
-    "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[?2031l\x1b]22;\x1b\\\r\n";
+pub(crate) const RESET_MODES: &str = "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[?2031l\x1b]22;\x1b\\\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\\r\n";
 
-/// Asks the local terminal whether it is dark or light, now (DSR 996) and
-/// whenever that changes (mode 2031), for the programs that ask the holder.
-pub(crate) const ASK_COLOR_SCHEME: &str = "\x1b[?2031h\x1b[?996n";
+/// Asks the local terminal for its appearance, for the programs that ask
+/// the holder: dark or light, now (DSR 996) and whenever that changes
+/// (mode 2031), and its colors.
+pub(crate) fn ask_appearance() -> String {
+    let palette: Vec<String> = (0..256).map(|i| format!("{i};?")).collect();
+    format!("\x1b[?2031h\x1b[?996n\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b]4;{}\x1b\\", palette.join(";"))
+}
 
 /// Runs `attach [--take] [--quiet] [--predict auto|always|never]
 /// [--graphics auto|always|never] <host> [id]` and returns the exit code.
@@ -79,7 +82,7 @@ async fn attach_on(
     }
     let a = Attached::new(ui, me.clone());
     if restore.is_some() {
-        let _ = env.out().write_all(ASK_COLOR_SCHEME.as_bytes());
+        let _ = env.out().write_all(ask_appearance().as_bytes());
     }
     let r = run_attached(ctx, env, l, &a, &id, cols, rows, take).await;
     if let Some(s) = a.s.lock().unwrap().take() {
@@ -137,7 +140,7 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
             None => return Ok(1), // interrupted, as in the loop below
             Some(r) => r?,
         }
-        a.send_color_scheme().await;
+        a.send_appearance().await;
     } else {
         let _ = tokio::time::timeout(Duration::from_secs(5), a.m.wait_text("")).await;
         a.notice(&viewer_notice(&owner, &a.id));
@@ -228,7 +231,7 @@ async fn resize_on_winch(s: Session) {
 pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
     let mut esc = Escaper { nl: true, tilde: false };
     let mut carry: Vec<u8> = Vec::new();
-    let mut reports = SchemeReports::default();
+    let mut reports = Reports::default();
     let mut buf = [0u8; 4096];
     loop {
         let n = match r.read(&mut buf) {
@@ -238,9 +241,9 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
             }
             Ok(n) => n,
         };
-        let (typed, schemes) = reports.feed(&buf[..n]);
-        for dark in schemes {
-            h.color_scheme(dark);
+        let (typed, got) = reports.feed(&buf[..n]);
+        if !got.is_empty() {
+            h.reports(&got);
         }
         let mut input = &typed[..];
         while !input.is_empty() {
@@ -264,19 +267,35 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
     }
 }
 
-/// Takes the local terminal's color scheme reports (CSI ? 997 ; 1|2 n)
-/// out of what is typed. A report cut by a read is held for the next one,
-/// but only from "ESC [ ?" on: a lone ESC is a key that must not wait.
+/// What the local terminal said about itself, answering ask_appearance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Report {
+    /// Dark when true (CSI ? 997 ; 1|2 n).
+    Scheme(bool),
+    /// OSC 10, 11 and 12 replies.
+    Foreground([u8; 3]),
+    Background([u8; 3]),
+    Cursor([u8; 3]),
+    /// OSC 4 replies.
+    Palette(u8, [u8; 3]),
+}
+
+/// Takes the local terminal's reports out of what is typed. A report cut
+/// by a read is held for the next one, but only from "ESC [ ?" or "ESC ]"
+/// and a digit on: a lone ESC is a key that must not wait.
 #[derive(Default)]
-pub(crate) struct SchemeReports {
+pub(crate) struct Reports {
     held: Vec<u8>,
 }
 
 const SCHEME_REPORT: &[u8] = b"\x1b[?997;";
 
-impl SchemeReports {
-    /// The typed bytes, and each report's dark (true) or light.
-    pub fn feed(&mut self, input: &[u8]) -> (Vec<u8>, Vec<bool>) {
+/// The longest color reply held for the next read.
+const COLOR_REPORT_MAX: usize = 64;
+
+impl Reports {
+    /// The typed bytes, and the reports.
+    pub fn feed(&mut self, input: &[u8]) -> (Vec<u8>, Vec<Report>) {
         let mut data = std::mem::take(&mut self.held);
         data.extend_from_slice(input);
         let (mut out, mut schemes) = (Vec::with_capacity(data.len()), Vec::new());
@@ -286,6 +305,23 @@ impl SchemeReports {
             if rest[0] != 0x1b {
                 out.push(rest[0]);
                 i += 1;
+                continue;
+            }
+            if rest.get(1) == Some(&b']') {
+                match color_report(rest) {
+                    ColorReport::Done(len, r) => {
+                        schemes.extend(r);
+                        i += len;
+                    }
+                    ColorReport::Partial => {
+                        self.held = rest.to_vec();
+                        break;
+                    }
+                    ColorReport::Not => {
+                        out.push(rest[0]);
+                        i += 1;
+                    }
+                }
                 continue;
             }
             let n = rest.len().min(SCHEME_REPORT.len());
@@ -307,8 +343,8 @@ impl SchemeReports {
             match rest.get(n + digits) {
                 Some(b'n') if (1..=3).contains(&digits) => {
                     match &rest[n..n + digits] {
-                        b"1" => schemes.push(true),
-                        b"2" => schemes.push(false),
+                        b"1" => schemes.push(Report::Scheme(true)),
+                        b"2" => schemes.push(Report::Scheme(false)),
                         _ => {}
                     }
                     i += n + digits + 1;
@@ -325,6 +361,66 @@ impl SchemeReports {
         }
         (out, schemes)
     }
+}
+
+enum ColorReport {
+    /// A reply this long, and what it said if it was well formed.
+    Done(usize, Option<Report>),
+    /// The start of one: wait for the rest.
+    Partial,
+    Not,
+}
+
+/// Reads an OSC 4, 10, 11 or 12 reply at the start of b (ESC ] ...).
+fn color_report(b: &[u8]) -> ColorReport {
+    let digits = b[2..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let num = &b[2..2 + digits];
+    if !matches!(num, b"4" | b"10" | b"11" | b"12") {
+        // Only a prefix of one of those can wait.
+        let partial = 2 + digits == b.len() && digits > 0 && matches!(num, b"1");
+        return if partial { ColorReport::Partial } else { ColorReport::Not };
+    }
+    let body = &b[2..];
+    if body.get(digits).is_some_and(|&c| c != b';') {
+        return ColorReport::Not;
+    }
+    let end = body.iter().position(|&c| c == 0x07 || c == 0x1b);
+    let Some(end) = end else {
+        return if b.len() < COLOR_REPORT_MAX { ColorReport::Partial } else { ColorReport::Not };
+    };
+    let term = match body[end] {
+        0x07 => 1,
+        _ if body.get(end + 1) == Some(&b'\\') => 2,
+        _ if end + 1 == body.len() => return ColorReport::Partial,
+        _ => return ColorReport::Not,
+    };
+    let len = 2 + end + term;
+    let parts: Vec<&[u8]> = body[..end].split(|&c| c == b';').collect();
+    let report = match (num, parts.as_slice()) {
+        (b"4", [_, i, spec]) => std::str::from_utf8(i).ok().and_then(|i| i.parse::<u8>().ok()).zip(parse_xcolor(spec)).map(|(i, c)| Report::Palette(i, c)),
+        (b"10", [_, spec]) => parse_xcolor(spec).map(Report::Foreground),
+        (b"11", [_, spec]) => parse_xcolor(spec).map(Report::Background),
+        (b"12", [_, spec]) => parse_xcolor(spec).map(Report::Cursor),
+        _ => return ColorReport::Not,
+    };
+    ColorReport::Done(len, report)
+}
+
+/// Parses an XParseColor rgb:r/g/b spec, 1 to 4 hex digits a part, as
+/// terminals reply with.
+fn parse_xcolor(spec: &[u8]) -> Option<[u8; 3]> {
+    let s = std::str::from_utf8(spec).ok()?.strip_prefix("rgb:")?;
+    let mut c = [0u8; 3];
+    let mut parts = s.split('/');
+    for v in &mut c {
+        let p = parts.next()?;
+        if p.is_empty() || p.len() > 4 {
+            return None;
+        }
+        let max = (1u32 << (4 * p.len())) - 1;
+        *v = ((u32::from_str_radix(p, 16).ok()? * 255 + max / 2) / max) as u8;
+    }
+    parts.next().is_none().then_some(c)
 }
 
 /// ssh-style escapes right after a newline: `~.` detaches, `~t` takes

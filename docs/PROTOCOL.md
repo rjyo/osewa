@@ -140,6 +140,7 @@ Methods (REQUEST `method`):
 | `session.own` | `stream` | `{"owner"}` |
 | `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |
 | `session.color_scheme` | `stream`, `color_scheme` (`light` or `dark`) | `{}` (applies only for the owner) |
+| `session.colors` | `stream`, `foreground`?, `background`?, `cursor`?, `palette`? (256 entries) | `{}` (applies only for the owner) |
 | `session.kill` | `session` | `{}` |
 
 `status` is the session's latest root OSC 7501 record
@@ -383,6 +384,13 @@ answers DSR 996 (`CSI ? 996 n`) from it, and leaves the query unanswered
 until a client has said; a program that set mode 2031 gets the report
 unasked when it changes. Clients keep mode 2031 on their own terminal for
 themselves and don't pass a program's on.
+
+`session.colors` gives the owner's terminal colors as `#rrggbb`; an empty
+or absent color, and an absent palette, leave the holder's as they were.
+They become the holder's terminal's default colors, which programs' color
+queries (OSC 4, 10, 11, 12, 21) are answered with. Colors a program sets
+are terminal state, in snapshots; a client puts them on its own terminal
+over its own colors and resets them when it detaches.
 
 The pointer shape a program sets (OSC 22) is part of the terminal's state
 and of a snapshot; a client gives its terminal the same shape.

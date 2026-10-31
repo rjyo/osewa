@@ -277,6 +277,33 @@ fn notify_and_color_scheme() {
     assert_eq!(unwrapped(&a.text()).matches("R:").count(), 2, "{:?}", a.text());
 }
 
+/// The owner's terminal colors answer programs' color queries; a viewer's
+/// and bad ones don't count.
+#[test]
+fn colors_answer_queries() {
+    let h = start(cfg(sh(
+        r#"stty raw -echo; printf GO; dd bs=1 count=1 >/dev/null 2>&1; printf '\033]11;?\033\\\033]4;5;?\033\\'; s=; n=0; while [ $n -lt 2 ]; do c=$(dd bs=1 count=1 2>/dev/null); [ "$c" = '\' ] && n=$((n+1)); s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033\\')"; sleep 30"#,
+    )));
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.wait_text("GO");
+    let colors = |bg: &str, p5: &str| {
+        let mut palette = vec![String::new(); 256];
+        palette[5] = p5.into();
+        wire::Request { stream: 7, background: bg.into(), palette, ..method(wire::METHOD_COLORS) }
+    };
+    assert_eq!(a.request(colors("blue", "")).error, wire::ERR_BAD_REQUEST);
+    assert_eq!(a.request(wire::Request { palette: vec!["#000000".into()], ..colors("", "") }).error, wire::ERR_BAD_REQUEST);
+    let mut b = h.dial("b");
+    b.attach(wire::Request { stream: 7, cols: 80, rows: 24, ..method(wire::METHOD_ATTACH) });
+    assert_eq!(b.request(colors("#ffffff", "")).error, wire::ERR_NOT_OWNER);
+    assert!(a.request(colors("#102030", "#abcdef")).error.is_empty());
+    // Unsaid: stays.
+    assert!(a.request(colors("", "")).error.is_empty());
+    a.text_input(1, "x");
+    a.wait_for("the replies", |c| unwrapped(&c.text()).contains("R:]11;rgb:1010/2020/3030]4;5;rgb:abab/cdcd/efef:END"));
+}
+
 #[test]
 fn key_paste_focus_input() {
     // The child prints what it reads as one run of hex digits after "H:",

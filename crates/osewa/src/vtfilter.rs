@@ -53,6 +53,9 @@ pub(crate) struct QueryFilter {
     loading: Option<u32>,
     /// The rest of a dropped chunked transmission is dropped too.
     drop_chunks: bool,
+    /// A color set or reset (OSC 4, 10-12, 21, 104, 110-112) passed since
+    /// the UI last cleared it.
+    pub(crate) passed_colors: bool,
 }
 
 /// Bounds the tracked style; a program that never resets loses exactness
@@ -124,7 +127,7 @@ impl QueryFilter {
     pub fn reset(&mut self, style: &[u8]) {
         let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
-        *self = QueryFilter { buf, sgr: style.to_vec(), graphics: self.graphics, ..Default::default() };
+        *self = QueryFilter { buf, sgr: style.to_vec(), graphics: self.graphics, passed_colors: self.passed_colors, ..Default::default() };
     }
 
     /// Whether a graphics command went by since the last call, and the
@@ -353,6 +356,11 @@ impl QueryFilter {
                     out.extend_from_slice(&self.buf);
                     out.extend_from_slice(st);
                 }
+                n @ (4 | 10..=12 | 21 | 104 | 110..=112) => {
+                    let sets = color_sets(n, body, st);
+                    self.passed_colors |= !sets.is_empty();
+                    out.extend_from_slice(&sets);
+                }
                 _ => {}
             }
         }
@@ -509,6 +517,50 @@ fn csi_query(seq: &[u8]) -> bool {
             matches!(first, b"11" | b"13" | b"14" | b"15" | b"16" | b"18" | b"19" | b"20" | b"21")
         }
         _ => false,
+    }
+}
+
+/// A color OSC's sets and resets, without its queries, which the holder
+/// answers.
+fn color_sets(n: i64, body: &[u8], st: &[u8]) -> Vec<u8> {
+    let params: Vec<&[u8]> = body.split(|&c| c == b';').skip(1).collect();
+    let osc = |n: i64, rest: &[u8]| {
+        let mut o = format!("\x1b]{n}").into_bytes();
+        if !rest.is_empty() {
+            o.push(b';');
+            o.extend_from_slice(rest);
+        }
+        o.extend_from_slice(st);
+        o
+    };
+    match n {
+        // 4;index;spec;index;spec...
+        4 => {
+            let sets: Vec<&[u8]> = params.chunks(2).filter(|p| p.len() == 2 && p[1] != b"?").flat_map(|p| [p[0], p[1]]).collect();
+            if sets.is_empty() {
+                return Vec::new();
+            }
+            osc(4, &sets.join(&b';'))
+        }
+        // Each spec is for the next color on: 10;fg;bg sets both.
+        10..=12 => {
+            let mut out = Vec::new();
+            for (target, spec) in (n..=12).zip(params) {
+                if spec != b"?" {
+                    out.extend_from_slice(&osc(target, spec));
+                }
+            }
+            out
+        }
+        // key=value;key=?...
+        21 => {
+            let sets: Vec<&[u8]> = params.into_iter().filter(|p| !p.ends_with(b"=?")).collect();
+            if sets.is_empty() {
+                return Vec::new();
+            }
+            osc(21, &sets.join(&b';'))
+        }
+        _ => osc(n, &body[body.iter().position(|&c| c == b';').map_or(body.len(), |i| i + 1)..]),
     }
 }
 

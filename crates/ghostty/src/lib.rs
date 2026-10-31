@@ -93,6 +93,19 @@ pub struct Callbacks {
     pub color_scheme: Option<Box<dyn FnMut() -> Option<bool>>>,
 }
 
+/// A color's red, green and blue.
+pub type Rgb = [u8; 3];
+
+/// A terminal's colors. Foreground, background and cursor are None when
+/// there is no such color.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Colors {
+    pub foreground: Option<Rgb>,
+    pub background: Option<Rgb>,
+    pub cursor: Option<Rgb>,
+    pub palette: [Rgb; 256],
+}
+
 /// Options for a new terminal.
 #[derive(Default)]
 pub struct Options {
@@ -224,6 +237,39 @@ impl Terminal {
     /// Reports a DEC private (ansi false) or ANSI mode.
     pub fn mode(&self, number: u16, ansi: bool) -> bool {
         unsafe { ffi::osewa_term_mode(self.t, number, ansi) }
+    }
+
+    /// The colors in effect: what programs set (OSC 4, 10, 11, 12), over
+    /// the defaults.
+    pub fn colors(&self) -> Colors {
+        self.read_colors(false)
+    }
+
+    /// The default colors, as set_default_colors left them; the palette is
+    /// the built-in one where none was set.
+    pub fn default_colors(&self) -> Colors {
+        self.read_colors(true)
+    }
+
+    fn read_colors(&self, defaults: bool) -> Colors {
+        let (mut d, mut p) = ([0i32; 3], [0u8; 768]);
+        unsafe { ffi::osewa_term_colors(self.t, defaults, d.as_mut_ptr(), p.as_mut_ptr()) };
+        let rgb = |v: i32| (v >= 0).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+        let mut palette = [[0u8; 3]; 256];
+        for (i, c) in palette.iter_mut().enumerate() {
+            c.copy_from_slice(&p[3 * i..3 * i + 3]);
+        }
+        Colors { foreground: rgb(d[0]), background: rgb(d[1]), cursor: rgb(d[2]), palette }
+    }
+
+    /// Sets the colors the terminal has where programs set none, and
+    /// answers color queries with; None clears one. Palette entries that
+    /// programs set stay.
+    pub fn set_default_colors(&mut self, c: &Colors) -> Result<()> {
+        let int = |c: Option<Rgb>| c.map_or(-1, |[r, g, b]| (r as i32) << 16 | (g as i32) << 8 | b as i32);
+        let d = [int(c.foreground), int(c.background), int(c.cursor)];
+        let p: Vec<u8> = c.palette.iter().flatten().copied().collect();
+        check(unsafe { ffi::osewa_term_set_colors(self.t, d.as_ptr(), p.as_ptr()) }, "set_colors")
     }
 
     /// The pointer shape the program asked for (OSC 22), as its CSS name;

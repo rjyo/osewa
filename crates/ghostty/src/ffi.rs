@@ -39,6 +39,8 @@ extern "C" {
     pub fn osewa_term_title(t: Term, ptr: *mut *const u8) -> usize;
     pub fn osewa_term_mode(t: Term, number: u16, ansi: bool) -> bool;
     pub fn osewa_term_mouse_shape(t: Term) -> i32;
+    pub fn osewa_term_colors(t: Term, defaults: bool, dyn_: *mut i32, palette: *mut u8);
+    pub fn osewa_term_set_colors(t: Term, dyn_: *const i32, palette: *const u8) -> i32;
     pub fn osewa_snapshot_alloc(t: Term, ptr: *mut *mut u8, len: *mut usize) -> i32;
     pub fn osewa_free(ptr: *mut u8, len: usize);
     pub fn osewa_snapshot_encode(t: Term, ud: *mut c_void) -> i32;

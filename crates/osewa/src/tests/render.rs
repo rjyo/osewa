@@ -550,6 +550,44 @@ fn ui_images_scaled_scrolled_partly_off() {
     assert_eq!((p.row, p.grid, (p.cols, p.rows), p.source), (0, (2, 2), (2, 2), (0, 20, 2, 20)), "{p:?}");
 }
 
+/// Colors programs set reach the local terminal live and on a fresh
+/// attach, over the local terminal's own, never the mirror's defaults.
+#[test]
+fn ui_program_colors() {
+    let mut h = Harness::new();
+    let mut d = h.mirror.default_colors();
+    d.background = Some([9, 9, 9]);
+    h.mirror.set_default_colors(&d).unwrap();
+    h.output("\x1b]11;#102030\x1b\\\x1b]4;3;#010203\x1b\\a");
+    assert_eq!((h.local.colors().background, h.local.colors().palette[3]), (Some([0x10, 0x20, 0x30]), [1, 2, 3]));
+    h.local = term(20, 4);
+    h.u = Ui::new(Box::new(h.out.clone()), true, Predictor::new(PredictorConfig::default()));
+    h.u.ready(&h.mirror);
+    h.sync();
+    assert_eq!(h.local.colors(), {
+        let mut want = term(20, 4).colors();
+        want.background = Some([0x10, 0x20, 0x30]);
+        want.palette[3] = [1, 2, 3];
+        want
+    });
+    h.output("\x1b]111\x1b\\\x1b]104\x1b\\b");
+    assert_eq!(h.local.colors(), term(20, 4).colors(), "resets");
+    // The mirror's defaults (another terminal's) never reach this one.
+    resnap(&mut h);
+    assert_eq!(h.local.colors(), term(20, 4).colors(), "after a resnapshot");
+    h.matches();
+}
+
+fn resnap(h: &mut Harness) {
+    let snap = h.mirror.snapshot().unwrap();
+    let mut dec = osewa_ghostty::Decoder::new().unwrap();
+    dec.feed(&snap);
+    h.mirror = dec.ready(Default::default()).unwrap();
+    dec.finish().unwrap();
+    h.u.ready(&h.mirror);
+    h.sync();
+}
+
 /// The local terminal's pointer follows the program's (OSC 22), set once
 /// per change and again on a fresh attach.
 #[test]

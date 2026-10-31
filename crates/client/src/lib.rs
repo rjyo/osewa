@@ -53,7 +53,7 @@ pub use channel::{Exec, ExecOptions, ExecStderr, ExecStdin, ExecStdout, Forward,
 pub use conn::{Conn, CreateOptions};
 pub use link::Link;
 pub use rt::{block_on, sleep, timeout};
-pub use session::{AttachOptions, InputMode, Renderer, RendererError, Session};
+pub use session::{AttachOptions, InputMode, Renderer, RendererError, Session, TermColors};
 
 /// The libghostty commit whose snapshots this build decodes, as in
 /// `osewa_ghostty::COMMIT` and scripts/libghostty.sh. Kept here so the

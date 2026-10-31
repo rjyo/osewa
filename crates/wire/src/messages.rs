@@ -80,6 +80,7 @@ pub const METHOD_DETACH: &str = "session.detach";
 pub const METHOD_OWN: &str = "session.own";
 pub const METHOD_RESIZE: &str = "session.resize";
 pub const METHOD_COLOR_SCHEME: &str = "session.color_scheme";
+pub const METHOD_COLORS: &str = "session.colors";
 pub const METHOD_KILL: &str = "session.kill";
 pub const METHOD_FORWARD_OPEN: &str = "forward.open";
 pub const METHOD_EXEC_START: &str = "exec.start";
@@ -113,6 +114,16 @@ pub struct Request {
     /// session.color_scheme: "light" or "dark"
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color_scheme: String,
+    /// session.colors: "#rrggbb", or empty when unknown; the palette has
+    /// 256 entries or none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub foreground: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub background: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cursor: String,
+    #[serde(default, deserialize_with = "null_vec", skip_serializing_if = "Vec::is_empty")]
+    pub palette: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub epoch: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -337,6 +348,21 @@ impl EventMsg {
     pub fn kind(kind: &str) -> EventMsg {
         EventMsg { kind: kind.into(), ..Default::default() }
     }
+}
+
+/// A color as session.colors has it: "#rrggbb".
+pub fn rgb_hex([r, g, b]: [u8; 3]) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Parses "#rrggbb"; None for anything else.
+pub fn parse_rgb_hex(s: &str) -> Option<[u8; 3]> {
+    let h = s.strip_prefix('#')?;
+    if h.len() != 6 || !h.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let v = u32::from_str_radix(h, 16).ok()?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
 /// Encodes an event body.

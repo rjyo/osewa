@@ -659,6 +659,7 @@ impl Session {
             wire::METHOD_OWN => self.own(cid, &req, &mut resp),
             wire::METHOD_RESIZE => self.resize_req(cid, &req),
             wire::METHOD_COLOR_SCHEME => self.color_scheme_req(cid, &req),
+            wire::METHOD_COLORS => self.colors_req(cid, &req),
             wire::METHOD_KILL => self.kill(&req),
             m => Err((wire::ERR_BAD_REQUEST, format!("unknown method {}", wire::quote(m)))),
         };
@@ -811,6 +812,40 @@ impl Session {
             core.input_wake.notify_one();
         }
         Ok(())
+    }
+
+    /// Takes the owner's terminal colors as the defaults, which programs'
+    /// color queries (OSC 4, 10, 11, 12) are answered with. What the owner
+    /// didn't say stays as it was.
+    fn colors_req(&mut self, cid: u64, req: &wire::Request) -> Result<(), (&'static str, String)> {
+        let owner = self.core.owner.clone();
+        let c = self.conns.get_mut(&cid).ok_or((wire::ERR_INTERNAL, String::new()))?;
+        let client = c.client.clone();
+        if c.stream_for(req.stream).is_none() {
+            return Err((wire::ERR_BAD_REQUEST, format!("stream {} is not attached", req.stream)));
+        }
+        if !req.palette.is_empty() && req.palette.len() != 256 {
+            return Err((wire::ERR_BAD_REQUEST, format!("palette of {} colors: want 256", req.palette.len())));
+        }
+        let color = |s: &str| match s {
+            "" => Ok(None),
+            s => wire::parse_rgb_hex(s).map(Some).ok_or((wire::ERR_BAD_REQUEST, format!("bad color {}", wire::quote(s)))),
+        };
+        let mut d = self.core.term.default_colors();
+        for (slot, s) in [(&mut d.foreground, &req.foreground), (&mut d.background, &req.background), (&mut d.cursor, &req.cursor)] {
+            if let Some(c) = color(s)? {
+                *slot = Some(c);
+            }
+        }
+        for (slot, s) in d.palette.iter_mut().zip(&req.palette) {
+            if let Some(c) = color(s)? {
+                *slot = c;
+            }
+        }
+        if client.is_empty() || client != owner {
+            return Err((wire::ERR_NOT_OWNER, "not the owner".into()));
+        }
+        self.core.term.set_default_colors(&d).map_err(|e| (wire::ERR_INTERNAL, e.to_string()))
     }
 
     fn resize_req(&mut self, cid: u64, req: &wire::Request) -> Result<(), (&'static str, String)> {

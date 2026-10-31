@@ -12,6 +12,7 @@ use osewa_wire as wire;
 use tokio::sync::Notify;
 
 use crate::cli::Ctx;
+use crate::attach::Report;
 use crate::commands::owner_name;
 use crate::render::*;
 use crate::status::status_text;
@@ -74,6 +75,8 @@ pub(crate) struct Ui {
     sent: SentImages,
     /// The pointer shape the local terminal was last given (OSC 22).
     pointer: &'static str,
+    /// The local terminal may have colors a program set.
+    colored: bool,
 }
 
 impl Ui {
@@ -99,6 +102,7 @@ impl Ui {
             ticker_wakes: 0,
             sent: SentImages::new(),
             pointer: "text",
+            colored: false,
         }
     }
 
@@ -141,6 +145,9 @@ impl Ui {
         self.filter.reset(&tail_style(t));
         (self.real_x, self.real_y) = t.cursor();
         self.sync_pointer(t);
+        let (colors, colored) = colors_redraw(t, self.colored || std::mem::take(&mut self.filter.passed_colors));
+        self.colored = colored;
+        self.write(&colors);
         if self.filter.graphics {
             // A new mirror: its generations aren't the old one's.
             self.sent.values_mut().for_each(|g| *g = None);
@@ -196,6 +203,7 @@ impl Ui {
             self.displaced = false;
         }
         self.sync_pointer(t);
+        self.colored |= std::mem::take(&mut self.filter.passed_colors);
         self.pred.check(t);
         self.paint_buffered(t);
         if !self.status_note.is_empty() {
@@ -357,8 +365,8 @@ pub(crate) fn viewer_notice(owner: &str, self_id: &str) -> String {
 pub(crate) trait InputHandler {
     fn send(&self, text: &str);
     fn take(&self);
-    /// The local terminal reported its color scheme, dark when true.
-    fn color_scheme(&self, dark: bool);
+    /// What the local terminal reported about itself.
+    fn reports(&self, reports: &[Report]);
     fn flush(&self, ctx: &Ctx);
 }
 
@@ -372,8 +380,16 @@ pub(crate) struct Attached {
     pub id: String,
     /// Wakes the ticker (attach.rs) when predictions start pending.
     pub wake: Arc<Notify>,
-    /// The local terminal's last color scheme report, dark when true.
-    scheme: Arc<Mutex<Option<bool>>>,
+    /// What the local terminal said of its appearance.
+    look: Arc<Mutex<Look>>,
+}
+
+/// The local terminal's appearance, from its reports.
+#[derive(Default, Clone, PartialEq)]
+struct Look {
+    /// Dark when true.
+    scheme: Option<bool>,
+    colors: osewa_client::TermColors,
 }
 
 fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
@@ -395,7 +411,7 @@ impl Attached {
             on_event: Some(Box::new(move |e, live| lock(&u4).event(e, live))),
         });
         lock(&ui).later = Some(Later { m: m.clone(), ui: Arc::downgrade(&ui) });
-        Attached { ui, m, s: Arc::default(), id, wake: Arc::default(), scheme: Arc::default() }
+        Attached { ui, m, s: Arc::default(), id, wake: Arc::default(), look: Arc::default() }
     }
 
     fn session(&self) -> Option<Session> {
@@ -437,14 +453,19 @@ impl Attached {
         });
     }
 
-    /// Tells the holder the local terminal's color scheme, once it is known
-    /// and this client owns the session.
-    pub async fn send_color_scheme(&self) {
-        let dark = *self.scheme.lock().unwrap();
-        if let (Some(dark), Some(s)) = (dark, self.session()) {
-            if s.owner() == self.id {
-                let _ = osewa_client::timeout(Duration::from_secs(5), s.color_scheme(dark)).await;
-            }
+    /// Tells the holder the local terminal's appearance, as far as it is
+    /// known, when this client owns the session.
+    pub async fn send_appearance(&self) {
+        let look = self.look.lock().unwrap().clone();
+        let Some(s) = self.session() else { return };
+        if s.owner() != self.id {
+            return;
+        }
+        if let Some(dark) = look.scheme {
+            let _ = osewa_client::timeout(Duration::from_secs(5), s.color_scheme(dark)).await;
+        }
+        if look.colors != osewa_client::TermColors::default() {
+            let _ = osewa_client::timeout(Duration::from_secs(5), s.colors(&look.colors)).await;
         }
     }
 
@@ -482,7 +503,7 @@ impl InputHandler for Attached {
         let Some(s) = self.session() else { return };
         let msg = match osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.own())) {
             Some(Ok(())) => {
-                osewa_client::block_on(self.send_color_scheme());
+                osewa_client::block_on(self.send_appearance());
                 " you own this session now ".to_string()
             }
             Some(Err(e)) => format!(" taking over failed: {e} "),
@@ -495,10 +516,23 @@ impl InputHandler for Attached {
         });
     }
 
-    fn color_scheme(&self, dark: bool) {
-        let old = self.scheme.lock().unwrap().replace(dark);
-        if old != Some(dark) {
-            osewa_client::block_on(self.send_color_scheme());
+    fn reports(&self, reports: &[Report]) {
+        let changed = {
+            let mut look = self.look.lock().unwrap();
+            let old = look.clone();
+            for r in reports {
+                match *r {
+                    Report::Scheme(dark) => look.scheme = Some(dark),
+                    Report::Foreground(c) => look.colors.foreground = Some(c),
+                    Report::Background(c) => look.colors.background = Some(c),
+                    Report::Cursor(c) => look.colors.cursor = Some(c),
+                    Report::Palette(i, c) => look.colors.palette[i as usize] = Some(c),
+                }
+            }
+            *look != old
+        };
+        if changed {
+            osewa_client::block_on(self.send_appearance());
         }
     }
 

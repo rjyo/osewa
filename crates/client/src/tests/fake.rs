@@ -38,6 +38,8 @@ pub(crate) struct FakeSession {
     pub owner: String,
     /// The owner's last session.color_scheme.
     pub color_scheme: String,
+    /// The owner's last session.colors.
+    pub colors: Option<wire::Request>,
     pub last_seq: HashMap<String, u64>,
     pub applied: Vec<wire::Input>,
     pub dupes: usize,
@@ -513,6 +515,7 @@ fn new_session(cols: usize, rows: usize) -> FakeSession {
         acked: 0,
         ack_gens: Vec::new(),
         color_scheme: String::new(),
+        colors: None,
         streams: HashMap::new(),
     }
 }
@@ -968,6 +971,18 @@ fn request(fi: &Arc<FakeInner>, st: &mut FState, cid: u64, req: wire::Request) -
                     r.error = wire::ERR_NOT_OWNER.into();
                 } else {
                     s.color_scheme = req.color_scheme.clone();
+                }
+            }
+        },
+        wire::METHOD_COLORS => match st.conns[&cid].streams.get(&req.stream).cloned() {
+            None => r.error = wire::ERR_NOT_FOUND.into(),
+            Some(sid) => {
+                let client = st.conns[&cid].client_id.clone();
+                let s = st.sessions.get_mut(&sid).unwrap();
+                if s.owner != client {
+                    r.error = wire::ERR_NOT_OWNER.into();
+                } else {
+                    s.colors = Some(req.clone());
                 }
             }
         },

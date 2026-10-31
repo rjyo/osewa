@@ -425,6 +425,32 @@ fn color_scheme_reports() {
     }
 }
 
+/// Default colors answer queries; what programs set goes over them, keeps
+/// through new defaults, and through a snapshot.
+#[test]
+fn colors() {
+    let replies = Rc::new(RefCell::new(Vec::new()));
+    let r = replies.clone();
+    let mut t = new_term(20, 5, Callbacks { write_pty: Some(Box::new(move |b| r.borrow_mut().extend_from_slice(b))), ..Default::default() });
+    assert_eq!((t.colors().foreground, t.colors().background), (None, None));
+    t.write(b"\x1b]11;?\x1b\\");
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "", "answered with no background");
+    let mut d = t.default_colors();
+    d.background = Some([0x10, 0x20, 0x30]);
+    d.foreground = Some([0xee, 0xee, 0xee]);
+    d.palette[1] = [0xcc, 0, 0];
+    t.set_default_colors(&d).unwrap();
+    t.write(b"\x1b]11;?\x1b\\\x1b]4;1;?\x1b\\");
+    assert_eq!(String::from_utf8_lossy(&replies.borrow()), "\x1b]11;rgb:1010/2020/3030\x1b\\\x1b]4;1;rgb:cccc/0000/0000\x1b\\");
+    t.write(b"\x1b]10;#ff0000\x1b\\\x1b]4;2;#00ff00\x1b\\");
+    assert_eq!((t.colors().foreground, t.default_colors().foreground), (Some([0xff, 0, 0]), Some([0xee, 0xee, 0xee])));
+    d.palette[2] = [1, 2, 3];
+    t.set_default_colors(&d).unwrap();
+    assert_eq!((t.colors().palette[2], t.default_colors().palette[2]), ([0, 0xff, 0], [1, 2, 3]), "a program's color was replaced");
+    let back = restore(&t.snapshot().unwrap(), Callbacks::default()).unwrap();
+    assert_eq!(back.colors(), t.colors(), "colors lost in a snapshot");
+}
+
 #[test]
 fn pointer_shapes() {
     let mut t = new_term(20, 5, Callbacks::default());

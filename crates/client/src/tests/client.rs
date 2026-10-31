@@ -334,6 +334,14 @@ fn detach_own_resize() {
         run(a.color_scheme(dark)).unwrap();
         assert_eq!(f.with(&id, |s| s.color_scheme.clone()), want);
     }
+    let mut colors = crate::TermColors { background: Some([0, 0x10, 0xff]), ..Default::default() };
+    run(a.colors(&colors)).unwrap();
+    let got = f.with(&id, |s| s.colors.clone()).unwrap();
+    assert_eq!((got.foreground.as_str(), got.background.as_str(), got.palette.len()), ("", "#0010ff", 0));
+    colors.palette[3] = Some([1, 2, 3]);
+    run(a.colors(&colors)).unwrap();
+    let got = f.with(&id, |s| s.colors.clone()).unwrap();
+    assert_eq!((got.palette.len(), got.palette[3].as_str(), got.palette[4].as_str()), (256, "#010203", ""));
     run(a.detach()).unwrap();
     wait_for("done", a.done());
     assert!(a.err().is_none(), "{:?}", a.err());
