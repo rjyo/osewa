@@ -148,6 +148,14 @@ extern "C" fn osewa_rs_placement(ud: *mut c_void, v: *const u32, z: i32, col: i3
 }
 
 impl Terminal {
+    /// Moves animated images (Kitty frames) on to the frame due at now_ms,
+    /// on a clock that only moves forward. While one plays, when the next
+    /// frame is due.
+    pub fn animate(&mut self, now_ms: u64) -> Option<u64> {
+        let mut next = 0;
+        unsafe { ffi::osewa_term_animate(self.t, now_ms, &mut next) }.then_some(next)
+    }
+
     /// Every placement of the active screen's images.
     pub fn placements(&self) -> Vec<Placement> {
         let mut out: Vec<Placement> = Vec::new();

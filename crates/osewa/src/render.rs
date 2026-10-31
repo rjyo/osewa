@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use osewa_ghostty::{Format, PixelFormat, Placement, Terminal};
+use osewa_ghostty::{Format, Image, PixelFormat, Placement, Terminal};
 use osewa_mirror::{CellState, Prediction};
 
 /// Starts the screen over before the mirror's VT dump.
@@ -176,9 +176,19 @@ pub(crate) fn notice_draw(t: &Terminal, msg: &str, style: &[u8]) -> Vec<u8> {
 }
 
 /// What the local terminal holds of each mirror image: the mirror
-/// generation of the pixels it was sent, or None for pixels sent while an
-/// earlier mirror was current, whose generations mean nothing to this one.
-pub(crate) type SentImages = HashMap<u32, Option<u64>>;
+/// hash of the pixels it was sent. A hash, not the mirror's generation:
+/// generations mean nothing across the mirrors snapshots make, and an image
+/// sent again replaces the local terminal's, its animation frames with it.
+pub(crate) type SentImages = HashMap<u32, u64>;
+
+/// What identifies an image's pixels for SentImages.
+pub(crate) fn pixels_hash(img: &Image) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let px = img.pixels?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (img.width, img.height, img.format as u8, px).hash(&mut h);
+    Some(h.finish())
+}
 
 /// Base64 bytes per graphics command; the protocol's suggested chunk size.
 const IMAGE_CHUNK: usize = 4096;
@@ -277,8 +287,8 @@ fn place(t: &Terminal, p: &Placement) -> Option<Vec<u8>> {
 fn send_image(t: &Terminal, id: u32, sent: &mut SentImages, out: &mut Vec<u8>) -> bool {
     use base64::Engine as _;
     let Some(img) = t.image(id) else { return false };
-    let Some(px) = img.pixels else { return sent.contains_key(&id) };
-    if sent.get(&id) == Some(&Some(img.generation)) {
+    let (Some(px), Some(hash)) = (img.pixels, pixels_hash(&img)) else { return sent.contains_key(&id) };
+    if sent.get(&id) == Some(&hash) {
         return true;
     }
     // Kitty takes 24 and 32-bit pixels only.
@@ -297,7 +307,7 @@ fn send_image(t: &Terminal, id: u32, sent: &mut SentImages, out: &mut Vec<u8>) -
         out.extend_from_slice(c);
         out.extend_from_slice(b"\x1b\\");
     }
-    sent.insert(id, Some(img.generation));
+    sent.insert(id, hash);
     true
 }
 

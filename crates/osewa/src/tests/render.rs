@@ -550,6 +550,33 @@ fn ui_images_scaled_scrolled_partly_off() {
     assert_eq!((p.row, p.grid, (p.cols, p.rows), p.source), (0, (2, 2), (2, 2), (0, 20, 2, 20)), "{p:?}");
 }
 
+/// Animated images pass live: the local terminal gets every frame and the
+/// command to play them, and plays them itself.
+#[test]
+fn ui_images_animate_live() {
+    let mut h = image_harness(true);
+    // A red 1x1 image, a green second frame, played in a loop.
+    h.output("\x1b_Ga=T,f=24,s=1,v=1,i=8;/wAA\x1b\\\x1b_Ga=f,i=8,f=24,s=1,v=1,z=50;AP8A\x1b\\\x1b_Ga=a,i=8,s=3,v=1\x1b\\");
+    let px = |t: &Terminal| t.image(8).and_then(|i| i.pixels).map(|p| p[..3].to_vec());
+    assert_eq!(px(&h.local), Some(vec![255, 0, 0]));
+    let play = |h: &mut Harness, from: u64| {
+        let mut seen = Vec::new();
+        for ms in (from..=from + 500).step_by(10) {
+            h.local.animate(ms);
+            seen.extend(px(&h.local));
+        }
+        seen.contains(&vec![0, 255, 0])
+    };
+    assert!(play(&mut h, 0), "the second frame never showed");
+    // Snapshots redraw it without sending it again, which would replace
+    // the animation with one still frame.
+    for (from, history) in [(1000, false), (2000, true)] {
+        resnapshot(&mut h, history);
+        assert_eq!(placed(&h.local), placed(&h.mirror));
+        assert!(play(&mut h, from), "no longer animated after a snapshot (history {history})");
+    }
+}
+
 /// Colors programs set reach the local terminal live and on a fresh
 /// attach, over the local terminal's own, never the mirror's defaults.
 #[test]

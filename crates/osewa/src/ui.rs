@@ -149,8 +149,6 @@ impl Ui {
         self.colored = colored;
         self.write(&colors);
         if self.filter.graphics {
-            // A new mirror: its generations aren't the old one's.
-            self.sent.values_mut().for_each(|g| *g = None);
             let draw = images_draw(t, &mut self.sent);
             self.write(&draw);
         }
@@ -192,8 +190,8 @@ impl Ui {
         let (saw, ids) = self.filter.take_graphics();
         if self.filter.graphics {
             for id in ids {
-                if let Some(img) = t.image(id) {
-                    self.sent.insert(id, Some(img.generation));
+                if let Some(hash) = t.image(id).as_ref().and_then(pixels_hash) {
+                    self.sent.insert(id, hash);
                 }
             }
         } else if saw {

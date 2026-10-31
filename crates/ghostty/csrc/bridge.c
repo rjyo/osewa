@@ -234,6 +234,20 @@ int osewa_term_set_colors(GhosttyTerminal t, const int32_t dyn[3],
   return r;
 }
 
+// Advances animated images to now_ms; true with next_ms set while one is
+// playing.
+bool osewa_term_animate(GhosttyTerminal t, uint64_t now_ms,
+                        uint64_t *next_ms) {
+  GhosttyKittyGraphics g = NULL;
+  if (ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &g) !=
+          GHOSTTY_SUCCESS ||
+      g == NULL) {
+    return false;
+  }
+  return ghostty_kitty_graphics_animation_tick(g, now_ms, next_ms) ==
+         GHOSTTY_SUCCESS;
+}
+
 int osewa_term_mouse_shape(GhosttyTerminal t) {
   GhosttyMouseShape v = GHOSTTY_MOUSE_SHAPE_TEXT;
   ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &v);
