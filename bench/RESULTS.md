@@ -29,23 +29,25 @@ caps a 50 Mbit/s download near 1.4 MB/s.
 ## Real world: Thailand to Tokyo
 
 From one Mac mini Pro in Thailand to another in Tokyo, over Tailscale (about
-125 ms round trip), osewa connects four times faster than ssh, and over QUIC
-it echoes keys during a download 48 ms sooner.
+125 ms round trip), osewa connects four times faster than ssh and six times
+faster than mosh. During a download it echoes keys in 132 ms, against ssh's
+258 and mosh's 152.
 
-| Median of 5 runs | osewa QUIC | osewa WebSocket | ssh |
-| --- | ---: | ---: | ---: |
-| Connect + run a command | **387 ms** | 629 ms | 1,577 ms |
-| Echo p50, idle | **126 ms** | **126 ms** | 131 ms |
-| Echo p50 / p95 during a download | **139 / 176 ms** | 194 / 240 ms | 187 / 222 ms |
-| Download alone | 8.96 MB/s | 9.11 MB/s | **10.97 MB/s** |
-| Download while typing | **10.75 MB/s** | 9.53 MB/s | 10.48 MB/s |
-| Fresh 50 MB download, connect included (6 runs) | **7.43 MB/s** | | 6.97 MB/s |
+| Median of 5 runs | osewa QUIC | osewa WebSocket | ssh | mosh |
+| --- | ---: | ---: | ---: | ---: |
+| Connect + run a command | **379 ms** | 630 ms | 1,582 ms | 2,324 ms |
+| Echo p50, idle | **122 ms** | 125 ms | 132 ms | 138 ms |
+| Echo p50 / p95 during a download | 132 / **158 ms** | **131** / 233 ms | 258 / 331 ms | 152 / 190 ms |
+| Download alone | **9.70 MB/s** | 9.69 MB/s | 5.36 MB/s | — |
+| Download while typing | 7.27 MB/s | **9.01 MB/s** | 6.94 MB/s | 6.48 MB/s |
 
-This path is fast and its buffers are shallow, so ssh's queue stays short:
-the gap is far smaller than on the simulated cellular and slow links above.
-Over the TLS WebSocket, osewa's echo during a download is no better than
-ssh's. The path swings from run to run (ssh's own echo during a download
-ranged 176–315 ms), so read differences under about 20 ms as noise.
+Echo is timed with prediction off, so it is the real round trip of a key.
+mosh carries only the terminal, so its download ran over a separate ssh
+connection on the same path, as a mosh user's would. The path swings from
+run to run (ssh's echo during a download ranged 176–301 ms across the five
+runs), so read differences under about 20 ms as noise. Runs of 2026-10-31
+with `osewa-bench vs` (raw output in
+[real-world-2026-10-31.txt](real-world-2026-10-31.txt)).
 
 ## Resource use
 

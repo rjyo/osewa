@@ -1,0 +1,13 @@
+| median of 5 run(s) | osewa QUIC | osewa WebSocket | ssh | mosh |
+|---|---:|---:|---:|---:|
+| connect + run p50 ms | 379 | 630 | 1582 | 2324 |
+| echo idle p50 / p95 ms | 122 / 128 | 125 / 131 | 132 / 143 | 138 / 147 |
+| echo during a download p50 / p95 ms | 132 / 158 | 131 / 233 | 258 / 331 | 152 / 190 |
+| download alone MB/s | 9.70 | 9.69 | 5.36 | — |
+| download during the echo MB/s | 7.27 | 9.01 | 6.94 | 6.48 |
+
+per run, echo during a download p50 ms:
+- osewa QUIC: 136 125 132 143 126
+- osewa WebSocket: 131 128 129 145 163
+- ssh: 188 301 176 258 280
+- mosh: 144 152 143 153 153
