@@ -105,12 +105,11 @@ shell, so wrap commands in `sh -c '...'`.
 
 Updated 2026-10-31 night at 814be1a; STATUS.md has the numbers.
 
-1. **Re-measure the real path** (mini-jp) with tonight's build: the WS
-   echo-under-download loss there (Rust 298-315 vs Go 187-190 ms) is the
-   one the TCP path bound (crates/server/src/path.rs, macOS via
-   TCP_CONNECTION_INFO) is meant to fix; it won every Docker link
-   (fiber 131 vs 185, cellular 73 vs 132 ms p50). Not run: ssh needed the
-   1Password agent.
+1. **Real path WS echo under download** (mini-jp), re-measured
+   2026-10-31 day: Rust median 194 vs Go 183 ms over five passes each
+   (was 298-315 vs 187-190), inside the path's spread (ssh 176-356).
+   Not shown to beat Go; rerun at a quiet hour with more passes.
+   STATUS.md has the table.
 2. **Download meanwhile on the slow link** (0.06 vs Go 0.10 MB/s), the
    price of that bound at 1 Mbit/s with 1% loss (few packets in flight,
    so losses end in RTOs). Try a packet floor (say 10 x MSS) rather than

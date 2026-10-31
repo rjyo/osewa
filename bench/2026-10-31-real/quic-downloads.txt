@@ -1,0 +1,6 @@
+1 go 7.52 rust 7.89 ssh 7.05
+2 go 7.36 rust 7.86 ssh 7.58
+3 go 2.65 rust 7.88 ssh 6.89
+4 go 1.61 rust 6.80 ssh 5.22
+5 go 5.08 rust 7.00 ssh 7.43
+6 go 2.88 rust 6.76 ssh 5.19

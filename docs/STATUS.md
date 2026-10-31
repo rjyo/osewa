@@ -94,6 +94,34 @@ unexplained). Connect + run within noise except the slow link's WS cell
 (1147 vs 832 ms, one run; 540-625 in five earlier runs tonight). Every
 echo-under-download cell beats ssh (>15 s on the slow link).
 
+### Real path (mini-jp, 122 ms, 2026-10-31 day, main 3a814b3)
+
+Same rig as below (Go server on :7322, Rust beside it on :7323, Go
+vsssh -quic for both). Five Go passes, five Rust passes at HEAD, two of
+the pre-tonight Rust build (317b014) alternated with HEAD; raw lines in
+bench/2026-10-31-real/. p50 per pass, WS / QUIC:
+
+| | Go | Rust HEAD | Rust 317b014 | ssh (all passes) |
+| --- | --- | --- | --- | --- |
+| WS echo under download | 183 174 217 203 179 (median 183) | 211 175 194 263 138 (median 194) | 167 305 (last night 298 315) | 176-356 |
+| QUIC echo under download | 133 130 131 130 128 | 139 179 176 134 128 | 131 129 | |
+| WS / QUIC download meanwhile MB/s, median | 8.76 / 3.82 | 9.53 / 10.75 | 9.08 / 6.45 | |
+| connect + run ms | 629-644 / 382-392 | 628-649 / 382-387 | 619-630 / 382-383 | 1547-1598 |
+
+Six fresh 50 MB QUIC downloads each, alternating (MB/s): Go 7.52 7.36
+2.65 1.61 5.08 2.88 (median 3.98), Rust 7.89 7.86 7.88 6.80 7.00 6.76
+(median 7.43, 6 of 6 >= 90% of ssh), ssh 7.05 7.58 6.89 5.22 7.43 5.19
+(median 6.97).
+
+The path swings run to run (ssh's own echo p50 176-356 ms). WS echo
+under download is no longer a clear loss: median 194 vs Go 183 ms
+(+11, within the spread; the target <= Go is not shown). The pre-tonight
+build's last-night 298-315 recurred once (305) but also gave 167, so the
+fix is likely but not proven by these runs. The QUIC 176-179 ms passes
+were noise: alternated with the old build, HEAD gave 134 and 128. Rust
+moves more bulk meanwhile on both carriers, and QUIC downloads are
+steady where quic-go's dropped to 1.6-2.9 MB/s tonight.
+
 ### Real path (mini-jp, 122 ms, 2026-10-31, before tonight's changes)
 
 Go server (launchd, :7322) and the Rust server (beside it on :7323,
@@ -146,11 +174,9 @@ slow keystrokes are the ones whose screen is 70-134 KB before deflate.
   typing-time path bound keeps ~9 packets in flight at 1 Mbit/s, so a
   1% loss often has too few later packets for fast retransmit. Knob:
   path::TYPING_QUEUE (10 ms); a 25 ms run didn't do better.
-- **Real path not re-measured**: tonight's changes (path bound on macOS
-  via TCP_CONNECTION_INFO, dense deflate) target the WS echo-under-
-  download loss there (298-315 vs Go 187-190 ms), but ssh to mini-jp
-  needed the 1Password agent, and staging a binary through osewa exec was
-  not permitted unattended.
+- **Real path WS echo under download**: re-measured (above), median
+  194 vs Go 183 ms, within the path's run-to-run spread; more passes or
+  a quieter hour would settle whether it beats Go.
 - Reattach +5-17 ms, keystroke p95 noise-level, busy Wi-Fi download
   alone (above).
 - Aims not met: idle host RSS 14.3 (<= 10), log tail host CPU 302 ms/MB
