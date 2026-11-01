@@ -1,0 +1,57 @@
+---
+import "../styles/global.css";
+
+const title = "osewa — the terminal protocol that never drops";
+const description =
+  "Persistent remote terminals over QUIC and TLS WebSocket. Like ssh, but the session survives the network. Like mosh, but it forwards ports, runs commands and works where UDP is blocked.";
+const url = "https://osewa.dev/";
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={url} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#F4F4F1" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={url} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body style="font-family: 'Inter Tight', system-ui, sans-serif; color: #111111">
+    <slot />
+    <script>
+      // Toggles: a button sets one key ("udp", "mode"); elements tagged
+      // data-when="key:value" show only for the current value.
+      for (const b of document.querySelectorAll<HTMLButtonElement>("[data-set]")) {
+        b.addEventListener("click", () => {
+          const [key, val] = b.dataset.set!.split(":");
+          for (const o of document.querySelectorAll<HTMLButtonElement>(`[data-set^="${key}:"]`)) {
+            o.setAttribute("aria-pressed", String(o === b));
+          }
+          for (const el of document.querySelectorAll<HTMLElement>(`[data-when^="${key}:"]`)) {
+            el.hidden = el.dataset.when !== `${key}:${val}`;
+          }
+        });
+      }
+      // Replay: re-inserting the bars restarts their CSS animations.
+      const bars = document.getElementById("replay-bars");
+      document.querySelector("[data-replay]")?.addEventListener("click", () => {
+        if (!bars) return;
+        const fresh = bars.cloneNode(true);
+        bars.replaceWith(fresh);
+        (fresh as HTMLElement).id = "replay-bars";
+      });
+    </script>
+  </body>
+</html>

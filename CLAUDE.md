@@ -20,6 +20,7 @@ libghostty-vt. Wire protocol v0: `docs/PROTOCOL.md` is the wire contract,
 | `crates/flag/`, `crates/paths/` | Command-line flags and durations; per-user directories |
 | `crates/bench/` | `osewa-bench`, the e2e benchmarks' helper |
 | `crates/osewa/` | The single `osewa` binary |
+| `site/` | osewa.dev: a static Astro site, served by Cloudflare Workers static assets (Bun) |
 
 ## Rules
 

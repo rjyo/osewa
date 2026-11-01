@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "osewa-dev",
+  "compatibility_date": "2026-10-01",
+  // Static assets only, no Worker script.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "osewa.dev", "custom_domain": true }]
+}

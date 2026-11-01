@@ -1,0 +1,19 @@
+{
+  "name": "osewa-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun astro dev",
+    "build": "bun --bun astro check && bun --bun astro build",
+    "preview": "bun run build && wrangler dev",
+    "deploy": "bun run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.12",
+    "astro": "^7.4.4",
+    "typescript": "^6"
+  },
+  "devDependencies": {
+    "wrangler": "^4.156.0"
+  }
+}
