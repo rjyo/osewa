@@ -51,7 +51,19 @@ details summary::-webkit-details-marker{display:none}
 .hl{opacity:0;animation:hl .01s linear forwards}
 .hl1{animation-delay:1.6s}.hl2{animation-delay:1.68s}.hl3{animation-delay:1.76s}.hl4{animation-delay:1.84s}
 @keyframes hl{to{opacity:1}}
+/* Nav logo: the paw is its own path, turned on the elbow by the script (a
+   pendulum: hovering feeds it, leaving lets it die down). "osewa" flies out
+   letter by letter when the paw first swings right. Letters are hidden only
+   when the script runs, so the word is always there without it. */
+.neko{overflow:visible}
+.neko-paw{transform-box:view-box;transform-origin:82px 61px}
+.neko-word{display:inline-flex}
+.neko-ch{display:inline-block}
+.js .neko-word:not(.out) .neko-ch{opacity:0}
+.neko-word.out .neko-ch{animation:neko-fly .55s cubic-bezier(.3,1.5,.5,1) both;animation-delay:calc(var(--i) * 70ms)}
+@keyframes neko-fly{from{opacity:0;transform:translate(-26px,8px) rotate(-14deg) scale(.4)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion: reduce){
+.neko-word.out .neko-ch{animation:none}
 .ty{animation:none;width:7ch}.ty-cur{animation:none;opacity:0}.hl{animation:none;opacity:1}
 .ag1,.ag2{animation:none;opacity:0}.ag3{animation:none;opacity:1}.ln-pass,.ln-ans,.ln-drop{animation:none}.ln-pass{left:calc(100% - 12px)}.ln-ans{left:calc(50% - 12px)}.ln-drop{left:calc(50% - 12px)}
 .cyc1,.cyc2{animation:none;opacity:0}.cyc3{animation:none;opacity:1}
@@ -63,3 +75,68 @@ details summary::-webkit-details-marker{display:none}
 .tg{background:#FFFFFF;color:#111111}
 .tg[aria-pressed="true"]{background:#111111;color:#F4F4F1}
 [hidden]{display:none !important}
+
+/* ---- Mobile header: a menu button opens the nav as a list. ---- */
+.nav-btn{display:none;align-items:center;gap:10px;min-height:44px;padding:0 4px;border:0;background:none;color:#111111;font-family:var(--mono);font-size:13px;cursor:pointer}
+.nav-btn-icon{position:relative;width:18px;height:12px}
+.nav-btn-icon span{position:absolute;left:0;right:0;height:2px;background:currentColor;transition:transform .2s,top .2s}
+.nav-btn-icon span:first-child{top:1px}.nav-btn-icon span:last-child{top:9px}
+.site-header[data-open] .nav-btn-icon span:first-child{top:5px;transform:rotate(45deg)}
+.site-header[data-open] .nav-btn-icon span:last-child{top:5px;transform:rotate(-45deg)}
+
+/* ---- Phones. Inline styles carry the desktop layout, hence !important. ---- */
+@media (max-width: 720px){
+.site-header{position:sticky;top:0;z-index:10}
+html{scroll-padding-top:64px}
+.site-header>div{padding:8px 20px !important;flex-wrap:nowrap !important}
+.nav-btn{display:inline-flex}
+.nav-links{display:none !important}
+.site-header[data-open] .nav-links{display:flex !important;position:absolute;left:0;right:0;top:100%;flex-direction:column;align-items:stretch !important;gap:0 !important;background:#F4F4F1;border-bottom:1px solid #111111;padding:4px 20px 12px;font-size:15px !important}
+.site-header[data-open] .nav-links a{padding:14px 0 !important;border-bottom:1px solid #D3D3CE}
+.site-header[data-open] .nav-links a:last-child{border-bottom:0}
+
+/* §1: stacked era cards, rules between instead of beside. */
+.eras>div{padding:20px 0 !important;border-right:0 !important;border-bottom:1px solid #D3D3CE}
+.eras>div:last-child{padding:20px !important;border-bottom:0}
+
+/* Echo chart: the label goes above its bars. */
+.echo-row{grid-template-columns:minmax(0,1fr) 56px !important;gap:6px 12px !important}
+.echo-row>:first-child{grid-column:1 / -1}
+.echo-axis>:first-child{display:none}
+
+/* Axes keep only their ends. */
+.axis>span:not(:first-child):not(:last-child){display:none}
+
+/* Charts in the dark section: narrower label and value columns. */
+.row-80{grid-template-columns:84px minmax(0,1fr) 68px !important}
+.row-96{grid-template-columns:84px minmax(0,1fr) 84px !important}
+.row-150{grid-template-columns:84px minmax(0,1fr) 108px !important}
+
+/* Roadmap: a vertical list instead of a sideways track. */
+.road{min-width:0 !important;grid-template-columns:minmax(0,1fr) !important;row-gap:28px !important}
+.road>*{grid-column:auto !important;margin-right:0 !important}
+.road>:not(:nth-last-child(-n+2)){padding-right:0 !important}
+
+/* How it works 01: smaller boxes, labels on two lines. */
+.rbox{flex-basis:52px !important;font-size:11px}
+.rlabel{flex-direction:column;gap:0 !important}
+
+/* How it works 02: laptop, link and host stacked, the link vertical. */
+.sess{flex-direction:column;align-items:stretch !important}
+.sess>div{flex:0 0 auto !important}
+.sess-link{height:52px !important}
+.sess-link .lnk{left:50% !important;right:auto !important;top:0 !important;bottom:0;width:2px;height:auto !important}
+.sess-link span{left:calc(50% + 14px) !important;top:16px !important;transform:none !important}
+
+/* Footer command: small enough to fit beside its copy button. */
+.ft-cmd{font-size:12px;padding:12px !important}
+.ft-copy{min-width:56px !important;padding:0 10px !important}
+
+/* Sequences table: one card per sequence. */
+table.seq{min-width:0 !important}
+table.seq thead{display:none}
+table.seq tr{display:block;padding:14px 0;border-bottom:1px solid #D3D3CE}
+table.seq th,table.seq td{display:block;padding:2px 0 !important;border:0 !important;white-space:normal !important}
+table.seq th{font-size:15px !important;padding-bottom:6px !important}
+table.seq td::before{content:attr(data-label);display:block;font-family:var(--mono);font-size:11px;color:#5B5B57;margin-top:6px}
+}

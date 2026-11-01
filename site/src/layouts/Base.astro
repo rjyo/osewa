@@ -14,6 +14,7 @@ const url = "https://osewa.dev/";
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <script is:inline>document.documentElement.classList.add("js")</script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
@@ -42,6 +43,78 @@ const url = "https://osewa.dev/";
           for (const el of document.querySelectorAll<HTMLElement>(`[data-when^="${key}:"]`)) {
             el.hidden = el.dataset.when !== `${key}:${val}`;
           }
+        });
+      }
+      // Mobile menu: the button opens the nav; picking a link closes it.
+      const header = document.querySelector<HTMLElement>(".site-header");
+      const menu = document.querySelector<HTMLButtonElement>(".nav-btn");
+      const menuText = menu?.querySelector(".nav-btn-text");
+      const setMenu = (open: boolean) => {
+        if (!header || !menu) return;
+        header.toggleAttribute("data-open", open);
+        menu.setAttribute("aria-expanded", String(open));
+        if (menuText) menuText.textContent = open ? "close" : "menu";
+      };
+      menu?.addEventListener("click", () => setMenu(!header?.hasAttribute("data-open")));
+      for (const a of document.querySelectorAll(".nav-links a")) a.addEventListener("click", () => setMenu(false));
+      // Logo: the paw is a pendulum, angle = A·sin(phase). The phase always
+      // advances, so the motion never jumps; only the swing A changes.
+      // Hovering feeds A up to its full swing, leaving lets it decay, and the
+      // page load gives it one push. The word flies out the first time the
+      // paw reaches its right-hand peak.
+      const neko = document.querySelector<HTMLElement>(".neko-link");
+      const paw = neko?.querySelector<SVGElement>(".neko-paw");
+      const word = neko?.querySelector<HTMLElement>(".neko-word");
+      const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!neko || !paw || !word || still) {
+        word?.classList.add("out");
+      } else {
+        const FULL = 12; // degrees
+        const PERIOD = 1.4; // seconds per back-and-forth
+        const GROW = 0.25; // time constant while fed
+        const FADE = 0.6; // time constant while dying down
+        let amp = 0, phase = 0, feed = true, hovering = false, last = 0, raf = 0;
+        let pushUntil = performance.now() + 1300; // the load push
+        const frame = (now: number) => {
+          const dt = Math.min(0.05, (now - last) / 1000);
+          last = now;
+          feed = hovering || now < pushUntil;
+          amp = feed ? amp + (FULL - amp) * (1 - Math.exp(-dt / GROW)) : amp * Math.exp(-dt / FADE);
+          const before = phase;
+          phase += (2 * Math.PI * dt) / PERIOD;
+          // First pass through the right-hand peak (phase = π/2).
+          if (before < Math.PI / 2 && phase >= Math.PI / 2) word.classList.add("out");
+          paw.style.transform = `rotate(${amp * Math.sin(phase)}deg)`;
+          if (!feed && amp < 0.05) {
+            amp = 0;
+            paw.style.transform = "";
+            raf = 0;
+            return;
+          }
+          raf = requestAnimationFrame(frame);
+        };
+        const start = () => {
+          if (raf) return;
+          last = performance.now();
+          raf = requestAnimationFrame(frame);
+        };
+        neko.addEventListener("mouseenter", () => {
+          hovering = true;
+          start();
+        });
+        neko.addEventListener("mouseleave", () => (hovering = false));
+        start();
+      }
+      // Copy buttons.
+      for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(btn.dataset.copy!);
+            btn.textContent = "copied";
+          } catch {
+            btn.textContent = "select it";
+          }
+          setTimeout(() => (btn.textContent = "copy"), 1600);
         });
       }
       // Replay: re-inserting the bars restarts their CSS animations.
