@@ -18,6 +18,7 @@ libghostty-vt. Wire protocol v0: `docs/PROTOCOL.md` is the wire contract,
 | `crates/client/` | Client library (no libghostty): connect, attach, resume, channels, Link, hosts.json, install, login |
 | `crates/mirror/` | libghostty mirror terminal (a client Renderer) and echo prediction |
 | `crates/vt/` | Draws an attached session for a local terminal: the mirror re-rendered, predictions, notices (CLI and FFI) |
+| `crates/ffi/` | The C API (`include/osewa.h`) apps embed: one session as VT bytes for the app's terminal; `Osewa.xcframework` on iOS |
 | `crates/flag/`, `crates/paths/` | Command-line flags and durations; per-user directories |
 | `crates/bench/` | `osewa-bench`, the e2e benchmarks' helper |
 | `crates/osewa/` | The single `osewa` binary |

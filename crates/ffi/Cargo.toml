@@ -1,0 +1,30 @@
+[package]
+name = "osewa-ffi"
+description = "The C API (include/osewa.h) an app embeds osewa through: one session drawn as VT bytes for the app's own terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "osewa_ffi"
+# cdylib: Osewa.framework on iOS (scripts/build-ios-framework.sh), a
+# dynamic library so its libghostty stays private beside the app's own.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-auth.workspace = true
+# No ssh to run in an app: without install and login.
+osewa-client = { path = "../client", default-features = false }
+osewa-mirror.workspace = true
+osewa-vt.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+tokio = { version = "1", features = ["sync", "macros"] }
+
+[dev-dependencies]
+osewa-server.workspace = true
+osewa-holder.workspace = true
+osewa-ghostty.workspace = true
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
