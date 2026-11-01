@@ -9,12 +9,11 @@ mod cli;
 mod commands;
 mod daemon;
 mod service;
-mod render;
-mod status;
 mod tty;
 mod ui;
 mod update;
-mod vtfilter;
+
+use osewa_vt::{status, vtfilter};
 
 #[cfg(test)]
 mod tests;

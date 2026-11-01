@@ -37,17 +37,7 @@ fn process_client_id() -> &'static str {
     ID.get_or_init(new_client_id)
 }
 
-/// The device part of a client id ("laptop-0a1b" is "laptop"), printable.
-pub(crate) fn owner_name(id: &str) -> String {
-    if id.is_empty() {
-        return "nobody".into();
-    }
-    let id = match id.rfind('-') {
-        Some(i) if i > 0 => &id[..i],
-        _ => id,
-    };
-    printable(id)
-}
+pub(crate) use osewa_vt::owner_name;
 
 impl Env {
     pub(crate) fn client_id(&self) -> String {

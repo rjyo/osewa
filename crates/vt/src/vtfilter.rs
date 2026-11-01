@@ -23,8 +23,8 @@
 /// (predictions, notices) never lands inside one, and it tracks the current
 /// SGR style so such drawing can restore it.
 #[derive(Default, Clone)]
-pub(crate) struct QueryFilter {
-    pub(crate) state: FState,
+pub struct QueryFilter {
+    pub state: FState,
     /// The sequence so far, while it is being decided.
     buf: Vec<u8>,
     /// The string sequence's introducer: ] P _ ^ X
@@ -35,12 +35,12 @@ pub(crate) struct QueryFilter {
     /// The previous byte in a string was ESC.
     str_esc: bool,
     /// A UTF-8 character still missing bytes.
-    pub(crate) rune: Vec<u8>,
+    pub rune: Vec<u8>,
     /// Every SGR sequence since the last reset: replayed after "\x1b[0m", it
     /// restores the remote's current style.
     sgr: Vec<u8>,
     /// Passes Kitty graphics commands.
-    pub(crate) graphics: bool,
+    pub graphics: bool,
     /// A graphics command ended, passed or not, since take_graphics.
     saw_graphics: bool,
     /// The string being read is a graphics command.
@@ -55,7 +55,7 @@ pub(crate) struct QueryFilter {
     drop_chunks: bool,
     /// A color set or reset (OSC 4, 10-12, 21, 104, 110-112) passed since
     /// the UI last cleared it.
-    pub(crate) passed_colors: bool,
+    pub passed_colors: bool,
 }
 
 /// Bounds the tracked style; a program that never resets loses exactness
@@ -63,7 +63,7 @@ pub(crate) struct QueryFilter {
 const SGR_MAX: usize = 512;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum FState {
+pub enum FState {
     #[default]
     Ground,
     Esc,
@@ -450,7 +450,7 @@ fn is_control(c: char) -> bool {
 
 /// Removes control characters (C0, DEL, C1) from text. Bytes that aren't
 /// UTF-8 stay as they are, as the terminal would see them.
-pub(crate) fn strip_controls(mut text: &[u8]) -> Vec<u8> {
+pub fn strip_controls(mut text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     while !text.is_empty() {
         let (n, ch) = decode_rune(text);
@@ -479,14 +479,14 @@ fn decode_rune(b: &[u8]) -> (usize, Option<char>) {
 }
 
 /// printable line by line, keeping the line breaks.
-pub(crate) fn printable_lines(s: &str) -> String {
+pub fn printable_lines(s: &str) -> String {
     s.split('\n').map(printable).collect::<Vec<_>>().join("\n")
 }
 
 /// Replaces control characters in a remote string (a title, a client id, an
 /// error message) before it is printed, so it can't drive the local
 /// terminal.
-pub(crate) fn printable(s: &str) -> String {
+pub fn printable(s: &str) -> String {
     s.chars().map(|c| if is_control(c) { '?' } else { c }).collect()
 }
 

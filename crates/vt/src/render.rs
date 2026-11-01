@@ -12,7 +12,7 @@ use osewa_ghostty::{Format, Image, PixelFormat, Placement, Terminal};
 use osewa_mirror::{CellState, Prediction};
 
 /// Starts the screen over before the mirror's VT dump.
-pub(crate) const REDRAW: &[u8] = b"\x1b[H\x1b[2J\x1b[3J";
+pub const REDRAW: &[u8] = b"\x1b[H\x1b[2J\x1b[3J";
 
 /// Turns off modes a skipped stretch of output may have left on; the
 /// redraw's preamble turns back on the ones still set.
@@ -69,14 +69,14 @@ fn csi2_all(b: &[u8], end: u8) -> Vec<(usize, usize)> {
 }
 
 /// A VT format cut into preamble, rows and tail.
-pub(crate) struct VtParts<'a> {
+pub struct VtParts<'a> {
     pub pre: &'a [u8],
     pub rows: Vec<&'a [u8]>,
     pub tail: &'a [u8],
 }
 
 /// Splits a VT format into preamble, rows and tail.
-pub(crate) fn vt_parts(vt: &[u8]) -> Option<VtParts<'_>> {
+pub fn vt_parts(vt: &[u8]) -> Option<VtParts<'_>> {
     let i = find(vt, HOME)?;
     let (pre, body) = (&vt[..i], &vt[i + HOME.len()..]);
     let (t, _) = *csi2_all(body, b'H').last()?;
@@ -100,7 +100,7 @@ pub(crate) fn vt_parts(vt: &[u8]) -> Option<VtParts<'_>> {
 /// Draws the whole mirror, scrollback included, on a fresh attach. The VT
 /// format leaves out the palette: it is libghostty's default, not the
 /// remote program's choice, and would recolor the user's terminal.
-pub(crate) fn attach_redraw(t: &Terminal) -> Vec<u8> {
+pub fn attach_redraw(t: &Terminal) -> Vec<u8> {
     let mut out = REDRAW.to_vec();
     out.extend_from_slice(&vt(t));
     out
@@ -112,7 +112,7 @@ pub(crate) fn attach_redraw(t: &Terminal) -> Vec<u8> {
 /// remote set can't scroll them; both come back afterwards. Each row is
 /// erased rather than the screen: erasing the screen deletes the images on
 /// it, which the mirror still has.
-pub(crate) fn screen_redraw(t: &Terminal) -> Vec<u8> {
+pub fn screen_redraw(t: &Terminal) -> Vec<u8> {
     let v = vt(t);
     let Some(VtParts { pre, rows, tail }) = vt_parts(&v) else { return Vec::new() };
     let rows = &rows[t.scrollback_rows().min(rows.len())..];
@@ -133,7 +133,7 @@ pub(crate) fn screen_redraw(t: &Terminal) -> Vec<u8> {
 
 /// The SGR sequences at the end of a VT format: the style the redraw leaves
 /// in effect.
-pub(crate) fn tail_style(t: &Terminal) -> Vec<u8> {
+pub fn tail_style(t: &Terminal) -> Vec<u8> {
     let v = vt(t);
     let Some(VtParts { tail, .. }) = vt_parts(&v) else { return Vec::new() };
     let (_, e) = csi2_all(tail, b'H')[0];
@@ -141,14 +141,14 @@ pub(crate) fn tail_style(t: &Terminal) -> Vec<u8> {
 }
 
 /// CUP to the mirror's cursor.
-pub(crate) fn cursor_to(t: &Terminal) -> Vec<u8> {
+pub fn cursor_to(t: &Terminal) -> Vec<u8> {
     let (x, y) = t.cursor();
     format!("\x1b[{};{}H", y + 1, x + 1).into_bytes()
 }
 
 /// Draws tentative predictions in the remote's current style, underlined,
 /// then restores that style. style is QueryFilter::style().
-pub(crate) fn overlay_draw(preds: &[Prediction], style: &[u8]) -> Vec<u8> {
+pub fn overlay_draw(preds: &[Prediction], style: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     for p in preds {
         if p.state != CellState::Tentative {
@@ -164,7 +164,7 @@ pub(crate) fn overlay_draw(preds: &[Prediction], style: &[u8]) -> Vec<u8> {
 
 /// Shows msg in reverse video on the bottom row, then restores style and
 /// cursor. The caller repaints the screen later to take it away.
-pub(crate) fn notice_draw(t: &Terminal, msg: &str, style: &[u8]) -> Vec<u8> {
+pub fn notice_draw(t: &Terminal, msg: &str, style: &[u8]) -> Vec<u8> {
     let (cols, rows) = t.size();
     // Short of the last column, where the cursor would wait to wrap.
     let keep = cols.saturating_sub(1);
@@ -179,10 +179,10 @@ pub(crate) fn notice_draw(t: &Terminal, msg: &str, style: &[u8]) -> Vec<u8> {
 /// hash of the pixels it was sent. A hash, not the mirror's generation:
 /// generations mean nothing across the mirrors snapshots make, and an image
 /// sent again replaces the local terminal's, its animation frames with it.
-pub(crate) type SentImages = HashMap<u32, u64>;
+pub type SentImages = HashMap<u32, u64>;
 
 /// What identifies an image's pixels for SentImages.
-pub(crate) fn pixels_hash(img: &Image) -> Option<u64> {
+pub fn pixels_hash(img: &Image) -> Option<u64> {
     use std::hash::{Hash, Hasher};
     let px = img.pixels?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -198,7 +198,7 @@ const IMAGE_CHUNK: usize = 4096;
 /// pixels sent first unless the local terminal has them (sent). An image
 /// whose pixels are still pending, and were never sent, waits for the next
 /// call. Leaves the cursor at the mirror's.
-pub(crate) fn images_draw(t: &Terminal, sent: &mut SentImages) -> Vec<u8> {
+pub fn images_draw(t: &Terminal, sent: &mut SentImages) -> Vec<u8> {
     let mut out = b"\x1b_Ga=d,d=a,q=2\x1b\\".to_vec();
     let mut placed = false;
     for p in t.placements() {
@@ -315,7 +315,7 @@ fn send_image(t: &Terminal, id: u32, sent: &mut SentImages, out: &mut Vec<u8>) -
 /// local terminal, after resetting it to its own: the mirror's defaults
 /// are another terminal's. Nothing when there are none and none were
 /// passed before (set).
-pub(crate) fn colors_redraw(t: &Terminal, set: bool) -> (Vec<u8>, bool) {
+pub fn colors_redraw(t: &Terminal, set: bool) -> (Vec<u8>, bool) {
     let (now, d) = (t.colors(), t.default_colors());
     let mut sets = Vec::new();
     for (n, c, dc) in [(10, now.foreground, d.foreground), (11, now.background, d.background), (12, now.cursor, d.cursor)] {
@@ -337,11 +337,11 @@ pub(crate) fn colors_redraw(t: &Terminal, set: bool) -> (Vec<u8>, bool) {
 }
 
 /// Puts the local terminal's colors back to its own.
-pub(crate) const COLORS_RESET: &[u8] = b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
+pub const COLORS_RESET: &[u8] = b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
 
 /// OSC 22 that sets the local terminal's pointer shape; "text" is the
 /// shape a terminal starts with, so it resets instead.
-pub(crate) fn pointer_set(shape: &str) -> Vec<u8> {
+pub fn pointer_set(shape: &str) -> Vec<u8> {
     let shape = if shape == "text" { "" } else { shape };
     format!("\x1b]22;{shape}\x1b\\").into_bytes()
 }
@@ -349,7 +349,7 @@ pub(crate) fn pointer_set(shape: &str) -> Vec<u8> {
 /// A desktop notification on the local terminal: OSC 777 with a title,
 /// OSC 9 without, which more terminals take. Neither may carry controls,
 /// nor the title a ';'.
-pub(crate) fn notify_set(title: &str, body: &str) -> Vec<u8> {
+pub fn notify_set(title: &str, body: &str) -> Vec<u8> {
     let body = String::from_utf8_lossy(&crate::vtfilter::strip_controls(body.as_bytes())).into_owned();
     let title = String::from_utf8_lossy(&crate::vtfilter::strip_controls(title.as_bytes())).replace(';', ",");
     if title.is_empty() {
@@ -361,7 +361,7 @@ pub(crate) fn notify_set(title: &str, body: &str) -> Vec<u8> {
 
 /// OSC 52 that puts data on the local clipboard. The remote's selection
 /// target isn't carried, so it is always the clipboard.
-pub(crate) fn clipboard_set(data: &[u8]) -> Vec<u8> {
+pub fn clipboard_set(data: &[u8]) -> Vec<u8> {
     use base64::Engine as _;
     let mut out = b"\x1b]52;c;".to_vec();
     out.extend_from_slice(base64::engine::general_purpose::STANDARD.encode(data).as_bytes());
@@ -370,7 +370,7 @@ pub(crate) fn clipboard_set(data: &[u8]) -> Vec<u8> {
 }
 
 /// Redraws the screen and modes from a snapshot taken mid-session.
-pub(crate) fn snapshot_redraw(t: &Terminal) -> Vec<u8> {
+pub fn snapshot_redraw(t: &Terminal) -> Vec<u8> {
     let v = vt(t);
     let Some(VtParts { pre, .. }) = vt_parts(&v) else {
         let mut out = REDRAW.to_vec();

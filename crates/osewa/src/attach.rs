@@ -11,7 +11,9 @@ use osewa_mirror::{parse_predict_mode, Predictor, PredictorConfig};
 use crate::cli::{bounded, interrupted, Ctx, Env, Error, Flags, Kind, Result};
 use crate::commands::pick_session;
 use crate::tty;
-use crate::ui::{viewer_notice, Attached, InputHandler, Ui};
+use crate::ui::InputHandler;
+pub(crate) use osewa_vt::{split_utf8, ticker, Report};
+use osewa_vt::{viewer_notice, Attached, Ui};
 
 /// Undoes modes the remote program may have left on our terminal (alt
 /// screen, hidden cursor, mouse and focus reporting, bracketed paste, kitty
@@ -194,26 +196,6 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
     r
 }
 
-/// Checks predictions for timeouts while attached. It sleeps until the
-/// oldest prediction's deadline, or until typing makes one, never on a
-/// period: a laptop or phone attached all day should not wake for nothing.
-pub(crate) async fn ticker(a: Attached, done: impl std::future::Future<Output = ()>) {
-    tokio::pin!(done);
-    loop {
-        match a.next_tick() {
-            Some(at) => tokio::select! {
-                _ = tokio::time::sleep_until(at.into()) => a.tick(),
-                _ = a.wake.notified() => {}
-                _ = &mut done => return,
-            },
-            None => tokio::select! {
-                _ = a.wake.notified() => {}
-                _ = &mut done => return,
-            },
-        }
-    }
-}
-
 /// Forwards terminal size changes. It runs off the main loop so a request
 /// on a dying connection can't block detach or reconnect, and it always
 /// sends the latest size.
@@ -270,22 +252,6 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
             input = rest;
         }
     }
-}
-
-/// What the local terminal said about itself, answering ask_appearance
-/// and clipboard reads.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Report {
-    /// An OSC 52 reply: what the clipboard holds.
-    Clipboard(Vec<u8>),
-    /// Dark when true (CSI ? 997 ; 1|2 n).
-    Scheme(bool),
-    /// OSC 10, 11 and 12 replies.
-    Foreground([u8; 3]),
-    Background([u8; 3]),
-    Cursor([u8; 3]),
-    /// OSC 4 replies.
-    Palette(u8, [u8; 3]),
 }
 
 /// Takes the local terminal's reports out of what is typed. A report cut
@@ -481,27 +447,4 @@ impl Escaper {
         }
         (out, EscAction::None, &[])
     }
-}
-
-/// Holds back an incomplete trailing character, since a read can end in the
-/// middle of one and text input travels as a JSON string.
-pub(crate) fn split_utf8(b: &[u8]) -> (&[u8], &[u8]) {
-    let lo = b.len().saturating_sub(4);
-    for i in (lo..b.len()).rev() {
-        // A rune start: not a continuation byte.
-        if b[i] & 0xc0 != 0x80 {
-            let need = match b[i] {
-                0x00..=0x7f => 1,
-                0xc0..=0xdf => 2,
-                0xe0..=0xef => 3,
-                0xf0..=0xf7 => 4,
-                _ => 1, // invalid: never completes
-            };
-            if b.len() - i < need {
-                return (&b[..i], &b[i..]);
-            }
-            break;
-        }
-    }
-    (b, &[])
 }

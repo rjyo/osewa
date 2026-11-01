@@ -1,0 +1,17 @@
+[package]
+name = "osewa-vt"
+description = "Draws an attached session for a local terminal: the mirror's VT, echo predictions over it, notices"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+osewa-wire.workspace = true
+osewa-ghostty.workspace = true
+osewa-client.workspace = true
+osewa-mirror.workspace = true
+base64.workspace = true
+tokio = { version = "1", features = ["sync", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }

@@ -17,6 +17,7 @@ osewa-server.workspace = true
 osewa-auth.workspace = true
 osewa-client.workspace = true
 osewa-mirror.workspace = true
+osewa-vt.workspace = true
 osewa-paths.workspace = true
 libc.workspace = true
 base64.workspace = true

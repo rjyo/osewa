@@ -13,10 +13,8 @@ mod daemon;
 mod incompat;
 mod live;
 mod main_test;
-mod render;
 mod security;
 mod status;
-mod vtfilter;
 
 /// A private temporary directory, short enough for Unix socket paths.
 pub(crate) struct TempDir(pub PathBuf);

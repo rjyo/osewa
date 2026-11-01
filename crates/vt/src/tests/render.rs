@@ -227,7 +227,7 @@ fn ui_later_snapshots_redraw_only_the_screen() {
 #[test]
 fn owner_name() {
     for (input, want) in [("", "nobody"), ("laptop-0a1b2c", "laptop"), ("my-mac-ff00", "my-mac"), ("plain", "plain")] {
-        assert_eq!(crate::commands::owner_name(input), want, "{input:?}");
+        assert_eq!(crate::owner_name(input), want, "{input:?}");
     }
 }
 

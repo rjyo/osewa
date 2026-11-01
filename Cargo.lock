@@ -482,6 +482,7 @@ dependencies = [
  "osewa-mirror",
  "osewa-paths",
  "osewa-server",
+ "osewa-vt",
  "osewa-wire",
  "rand 0.8.8",
  "ring",
@@ -641,6 +642,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-rustls",
+]
+
+[[package]]
+name = "osewa-vt"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "osewa-client",
+ "osewa-ghostty",
+ "osewa-mirror",
+ "osewa-wire",
+ "tokio",
 ]
 
 [[package]]
