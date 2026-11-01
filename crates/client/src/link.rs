@@ -5,13 +5,14 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::Notify;
 
 use crate::conn::Conn;
-use crate::rt::{self, Changed, Latch};
+use crate::rt::{self, Changed, Latch, Watch};
 use crate::session::{AttachOptions, Session, SessionInner};
 use crate::{Config, Error, Result};
 
@@ -37,6 +38,9 @@ pub struct Link(Arc<LinkInner>);
 
 pub(crate) struct LinkInner {
     cfg: Config,
+    /// The QUIC port the server last advertised, which later dials race
+    /// the WebSocket on; 0 for none yet.
+    quic_port: AtomicU16,
     dial: DialFn,
     st: Mutex<LState>,
     changed: Changed,
@@ -44,6 +48,21 @@ pub(crate) struct LinkInner {
     kick: Notify,
     cancel: Latch,
     done: Latch,
+}
+
+/// Where a [`Link`] stands, as [`Link::state`] reads it.
+#[derive(Debug, Clone, Default)]
+pub struct LinkState {
+    /// A connection is up (it may be suspect).
+    pub up: bool,
+    /// A connection has ever been up.
+    pub connected: bool,
+    /// The connection's carrier while up: "quic" or "ws".
+    pub carrier: Option<&'static str>,
+    /// The last dial's error, while down.
+    pub err: Option<Error>,
+    /// Why the link stopped for good: closed, or an incompatible server.
+    pub fin: Option<Error>,
 }
 
 struct LState {
@@ -69,6 +88,7 @@ impl Link {
 
     pub(crate) fn with_dial(cfg: Config, dial: DialFn) -> Link {
         let l = Arc::new(LinkInner {
+            quic_port: AtomicU16::new(cfg.quic_port),
             cfg,
             dial,
             st: Mutex::new(LState { conn: None, err: None, fin: None, connected: false, sessions: HashMap::new() }),
@@ -123,6 +143,29 @@ impl Link {
     /// Reports whether a connection has ever been up.
     pub fn connected(&self) -> bool {
         self.0.lock().connected
+    }
+
+    /// Where the link stands now.
+    pub fn state(&self) -> LinkState {
+        let st = self.0.lock();
+        let conn = st.conn.as_ref().filter(|c| !c.is_done() && st.fin.is_none());
+        LinkState { up: conn.is_some(), connected: st.connected, carrier: conn.map(|c| c.carrier()), err: st.err.clone(), fin: st.fin.clone() }
+    }
+
+    /// Hears every change of [`Link::state`]: a connection up or lost, a
+    /// dial failing, the link stopping.
+    pub fn watch(&self) -> Watch {
+        self.0.changed.public()
+    }
+
+    /// Checks the connection now (a ping, [`Conn::check`]) rather than at
+    /// the next keepalive, for when the network may have changed under
+    /// it; one found dead is replaced at once.
+    pub fn check(&self) {
+        let c = self.0.lock().conn.clone();
+        if let Some(c) = c {
+            c.check();
+        }
     }
 
     /// Attaches to session id on the current connection. The link resumes
@@ -180,6 +223,11 @@ impl Link {
     }
 
     #[cfg(test)]
+    pub(crate) fn quic_port(&self) -> u16 {
+        self.0.quic_port.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
     pub(crate) fn session_count(&self) -> usize {
         self.0.lock().sessions.len()
     }
@@ -223,7 +271,9 @@ impl LinkInner {
                 }
                 wait = (wait * 2).clamp(BACKOFF_MIN, BACKOFF_MAX);
                 let deadline = tokio::time::Instant::now() + ATTEMPT_TIMEOUT;
-                let r = match tokio::time::timeout_at(deadline, (self.dial)(self.cfg.clone())).await {
+                let mut cfg = self.cfg.clone();
+                cfg.quic_port = self.quic_port.load(Ordering::Relaxed);
+                let r = match tokio::time::timeout_at(deadline, (self.dial)(cfg)).await {
                     Err(_) => Err(timed_out()),
                     Ok(Err(e)) => Err(e),
                     Ok(Ok(nc)) => {
@@ -238,7 +288,12 @@ impl LinkInner {
                             Ok(r) => r,
                         };
                         match w {
-                            Ok(_) => Ok((nc, resumed)),
+                            Ok(w) => {
+                                if let Some(q) = w.carriers.iter().find(|c| c.carrier == "quic" && c.port > 0) {
+                                    self.quic_port.store(u16::try_from(q.port).unwrap_or(0), Ordering::Relaxed);
+                                }
+                                Ok((nc, resumed))
+                            }
                             Err(e) => {
                                 nc.close_now();
                                 let _ = resumed.await;
@@ -300,6 +355,11 @@ impl LinkInner {
                 _ = self.kick.notified() => {}
                 _ = async { match retry { Some(d) => tokio::time::sleep(d).await, None => std::future::pending().await } } => {}
                 _ = self.cancel.wait() => return,
+            }
+            // Watchers see a lost connection now, not at the next dial's
+            // outcome.
+            if c.is_done() {
+                self.changed.notify();
             }
         }
     }

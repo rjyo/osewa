@@ -43,7 +43,9 @@ mod session;
 mod trace;
 
 pub mod hosts;
+#[cfg(feature = "process")]
 pub mod install;
+#[cfg(feature = "process")]
 pub mod login;
 
 #[cfg(test)]
@@ -51,8 +53,8 @@ mod tests;
 
 pub use channel::{Exec, ExecOptions, ExecStderr, ExecStdin, ExecStdout, Forward, Output};
 pub use conn::{Conn, CreateOptions};
-pub use link::Link;
-pub use rt::{block_on, sleep, timeout};
+pub use link::{Link, LinkState};
+pub use rt::{block_on, sleep, timeout, Watch};
 pub use session::{AttachOptions, InputMode, Renderer, RendererError, Session, TermColors};
 
 /// The libghostty commit whose snapshots this build decodes, as in
@@ -138,6 +140,9 @@ pub enum Error {
     /// format 1 is only stable within one libghostty commit. Retrying
     /// can't help.
     Incompatible { server_commit: String, client_commit: String, server_snapshot: i32, client_snapshot: i32 },
+    /// The server speaks another protocol version, as it or its WELCOME
+    /// said. Retrying can't help either.
+    Protocol(String),
     /// The session can no longer be resumed.
     Ended(Option<String>),
     /// The Link was closed.
@@ -171,7 +176,7 @@ impl Error {
     }
 
     pub fn is_incompatible(&self) -> bool {
-        self.any(&|e| matches!(e, Error::Incompatible { .. }))
+        self.any(&|e| matches!(e, Error::Incompatible { .. } | Error::Protocol(_)))
     }
 
     pub fn is_ended(&self) -> bool {
@@ -205,6 +210,7 @@ impl fmt::Display for Error {
                 f,
                 "osewa: incompatible libghostty: server {server_commit} (snapshot v{server_snapshot}), client {client_commit} (snapshot v{client_snapshot})"
             ),
+            Error::Protocol(why) => write!(f, "osewa: incompatible protocol: {why}"),
             Error::Ended(None) => f.write_str("osewa: session ended"),
             Error::Ended(Some(why)) => write!(f, "osewa: session ended: {why}"),
             Error::LinkClosed => f.write_str("osewa: link closed"),

@@ -175,6 +175,24 @@ impl Changed {
     pub fn watch(&self) -> Watcher {
         Watcher(self.0.subscribe())
     }
+
+    pub fn public(&self) -> Watch {
+        Watch(self.0.subscribe())
+    }
+}
+
+/// Hears a handle's changes ([`crate::Link::watch`],
+/// [`crate::Session::watch`]), on any executor: take it, read the state,
+/// then wait for the next change and read again. Changes in between are
+/// coalesced, never lost.
+pub struct Watch(watch::Receiver<u64>);
+
+impl Watch {
+    /// Waits for a change since the last call (or since the Watch was
+    /// taken). False once the handle is gone and nothing will change.
+    pub async fn changed(&mut self) -> bool {
+        self.0.changed().await.is_ok()
+    }
 }
 
 impl Watcher {

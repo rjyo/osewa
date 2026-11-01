@@ -92,6 +92,8 @@ pub(crate) struct Inner {
     suspect: Latch,
     /// Asks keepalive to watch for an answer to input just sent.
     probe: Notify,
+    /// Pings at once, as a keepalive tick (check).
+    check: Notify,
     /// When everything queued before it had been handed to the transport,
     /// so a ping sent after it follows that input on the ordered main
     /// stream.
@@ -268,6 +270,7 @@ impl Conn {
             cancel: Latch::default(),
             suspect: Latch::default(),
             probe: Notify::new(),
+            check: Notify::new(),
             pings: AtomicU64::new(0),
             written: Mutex::new(Instant::now()),
             close: close_tx,
@@ -436,7 +439,7 @@ impl Conn {
             let b = match b {
                 Ok(b) => b,
                 Err(e) => {
-                    self.enqueue(Inbound::Err(Error::closed(e)));
+                    self.enqueue(Inbound::Err(read_error(e.to_string())));
                     return;
                 }
             };
@@ -753,6 +756,7 @@ impl Conn {
             let probe = tokio::select! {
                 _ = self.0.cancel.wait() => return,
                 _ = tick.tick() => false,
+                _ = self.0.check.notified() => false,
                 _ = self.0.probe.notified() => true,
             };
             let wait = (rtt * 3).max(SUSPECT_MIN);
@@ -855,6 +859,13 @@ impl Conn {
                 _ = tokio::time::sleep_until((sent + grace).into()) => {}
             }
         }
+    }
+
+    /// Pings now rather than at the next keepalive, so a connection the
+    /// network dropped under it (a phone waking, a new Wi-Fi) turns
+    /// suspect within a few round trips instead of a ping interval.
+    pub fn check(&self) {
+        self.0.check.notify_one();
     }
 
     /// Has keepalive watch input just sent for its INPUT_ACK.
@@ -1005,13 +1016,24 @@ fn credit_for(st: &mut State, stream: u32) -> Option<&mut Credit> {
     Some(st.credits.entry(stream).or_default())
 }
 
+/// Why reading failed. A server refuses another protocol version by
+/// closing with why (server/src/client.rs: "protocol N, server speaks M")
+/// before any WELCOME, so only the reason can tell it from a lost
+/// connection, which a retry would fix.
+pub(crate) fn read_error(why: String) -> Error {
+    if why.contains("protocol ") && why.contains(", server speaks ") {
+        return Error::Protocol(why);
+    }
+    Error::closed(why)
+}
+
 fn check_welcome(f: &wire::Frame) -> Result<wire::Welcome> {
     if f.ty != wire::TYPE_WELCOME {
         return Err(Error::Other(format!("osewa: expected WELCOME, got 0x{:02x}", f.ty)));
     }
     let w: wire::Welcome = f.decode().map_err(|e| Error::Other(e.to_string()))?;
     if w.version != wire::VERSION {
-        return Err(Error::Other(format!("osewa: server speaks protocol {}, want {}", w.version, wire::VERSION)));
+        return Err(Error::Protocol(format!("server speaks {}, client {}", w.version, wire::VERSION)));
     }
     if w.snapshot_version != SNAPSHOT_VERSION || w.ghostty != GHOSTTY_COMMIT {
         return Err(Error::Incompatible {

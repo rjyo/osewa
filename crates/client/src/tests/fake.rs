@@ -118,6 +118,10 @@ pub(crate) struct FState {
     next_conn: u64,
     /// WELCOME's ghostty commit.
     pub commit: String,
+    /// WELCOME's protocol version, when not this build's.
+    pub version: Option<i32>,
+    /// The QUIC port WELCOME advertises; 0 for none.
+    pub quic_port: i64,
     /// Withhold INPUT_ACK.
     pub no_ack: bool,
     /// Queue post-attach INPUT_ACKs until release_base.
@@ -663,13 +667,14 @@ async fn serve_conn(fi: Arc<FakeInner>, ws: WsConn) {
     }
     let mut actions = {
         let mut st = fi.lock();
+        let carriers = if st.quic_port > 0 { vec![wire::Carrier { carrier: "quic".into(), port: st.quic_port, ..Default::default() }] } else { Vec::new() };
         let w = wire::Welcome {
-            version: wire::VERSION,
+            version: st.version.unwrap_or(wire::VERSION),
+            carriers,
             server: "fake".into(),
             snapshot_version: crate::SNAPSHOT_VERSION,
             ghostty: st.commit.clone(),
             features: st.features.clone(),
-            ..Default::default()
         };
         send(&mut st.conns, cid, wire::json(wire::TYPE_WELCOME, 0, &w));
         match first {

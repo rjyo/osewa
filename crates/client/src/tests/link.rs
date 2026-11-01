@@ -260,3 +260,93 @@ fn link_attach_not_resumed_meanwhile() {
     sleep(Duration::from_millis(400));
     assert_eq!(f.lock().attaches.len(), 1, "attaches");
 }
+
+/// Watchers hear the link go up, lose its connection and come back, and
+/// state says which carrier it is on.
+#[test]
+fn link_state_watch() {
+    let f = Fake::new();
+    let l = new_link(f.config("a"));
+    let mut w = l.watch();
+    let up = |l: &Link| l.state().up;
+    while !up(&l) {
+        assert!(run(w.changed()), "link gone");
+    }
+    let st = l.state();
+    assert!(st.connected && st.carrier == Some("ws") && st.err.is_none() && st.fin.is_none(), "{st:?}");
+    let c1 = run(l.conn()).unwrap();
+    f.drop_all();
+    // Down, then up on a new connection, each heard.
+    let mut saw_down = false;
+    loop {
+        assert!(run(w.changed()), "link gone");
+        let st = l.state();
+        saw_down |= !st.up;
+        if st.up && run(l.conn()).unwrap() != c1 {
+            break;
+        }
+    }
+    assert!(saw_down || run(l.conn()).unwrap() != c1, "no change heard");
+}
+
+/// A server of another protocol version stops the link with an
+/// incompatible error, as another libghostty does, instead of being
+/// retried forever.
+#[test]
+fn link_protocol_mismatch_stops() {
+    let f = Fake::new();
+    f.set(|st| st.version = Some(99));
+    let l = new_link(f.config("a"));
+    let mut w = l.watch();
+    while l.state().fin.is_none() {
+        assert!(run(w.changed()), "link gone");
+    }
+    let fin = l.state().fin.unwrap();
+    assert!(fin.is_incompatible() && fin.to_string().contains("protocol"), "fin = {fin}");
+}
+
+/// A server that refuses our protocol version closes before WELCOME with
+/// why; that is incompatible, while other closes stay retryable.
+#[test]
+fn server_version_refusal_is_incompatible() {
+    let refused = crate::conn::read_error("received close frame: status = 1008 and reason = \"protocol 1, server speaks 0\"".into());
+    assert!(refused.is_incompatible(), "{refused}");
+    let lost = crate::conn::read_error("connection reset by peer".into());
+    assert!(lost.is_closed() && !lost.is_incompatible(), "{lost}");
+}
+
+/// The QUIC port a server advertises is what the link's later dials race
+/// the WebSocket on.
+#[test]
+fn link_learns_quic_port() {
+    let f = Fake::new();
+    f.set(|st| st.quic_port = 4433);
+    let l = new_link(f.config("a"));
+    run(l.conn()).unwrap();
+    eventually("quic port", || l.quic_port() == 4433);
+}
+
+/// check pings at once: a connection that no longer answers turns suspect
+/// well before the keepalive interval.
+#[test]
+fn link_check_pings_now() {
+    let f = Fake::new();
+    let mut cfg = f.config("a");
+    cfg.knobs.ping = Some(Duration::from_secs(60));
+    let l = new_link(cfg);
+    let c1 = run(l.conn()).unwrap();
+    let mut stall = f.stall();
+    // The fake checks the stall between reads; one frame gets it there.
+    let _ = run_for(Duration::from_millis(200), c1.list());
+    let t0 = Instant::now();
+    l.check();
+    let gone = run_for(Duration::from_secs(4), async {
+        tokio::select! {
+            _ = c1.suspect() => {}
+            _ = c1.done() => {}
+        }
+    });
+    stall.release();
+    assert!(gone.is_some(), "check didn't ping");
+    assert!(t0.elapsed() < Duration::from_secs(3), "suspect only after {:?}", t0.elapsed());
+}

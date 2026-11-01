@@ -322,6 +322,7 @@ impl SessionInner {
                     return;
                 }
                 st.conn = Some(c.clone());
+                s.changed.notify();
                 st.stream = stream;
                 st.in_ready = false;
                 st.await_base = true;
@@ -386,6 +387,7 @@ impl SessionInner {
             flags.lock().unwrap().0 = true;
             if st.conn.as_ref() == Some(c) && st.stream == stream {
                 st.conn = None;
+                self.changed.notify();
             }
         }
         if !matches!(e, Error::Response { .. }) {
@@ -903,6 +905,13 @@ impl Session {
     /// The session's owner as last reported.
     pub fn owner(&self) -> String {
         self.0.lock().owner.clone()
+    }
+
+    /// Hears the session's changes: attached on a connection or off it,
+    /// input acked, owner, ended. Read the state ([`Session::connected`],
+    /// [`Session::is_done`] ...) after each.
+    pub fn watch(&self) -> crate::Watch {
+        self.0.changed.public()
     }
 
     /// Reports whether the session is attached on a live connection.
