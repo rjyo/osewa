@@ -42,7 +42,17 @@ details summary::-webkit-details-marker{display:none}
 @keyframes ln-pass{0%{left:0;opacity:1}80%{left:calc(100% - 12px);opacity:1}100%{left:calc(100% - 12px);opacity:0}}
 @keyframes ln-ans{0%{left:0}40%{left:calc(50% - 12px)}50%{left:calc(50% - 12px)}90%{left:0}100%{left:0}}
 @keyframes ln-drop{0%{left:0;opacity:1}40%{left:calc(50% - 12px);opacity:1}55%{left:calc(50% - 12px);opacity:0}100%{left:calc(50% - 12px);opacity:0}}
+/* Hero: type "history", press enter, print. Plays once. */
+.hl0,.hl{white-space:pre}
+.ty{width:0;animation:ty .7s steps(7,end) .6s forwards}
+@keyframes ty{to{width:7ch}}
+.ty-cur{animation:ty-cur 1.5s steps(1,end) forwards}
+@keyframes ty-cur{0%{opacity:1}20%{opacity:0}40%{opacity:1}60%{opacity:0}80%{opacity:1}99%{opacity:1}100%{opacity:0}}
+.hl{opacity:0;animation:hl .01s linear forwards}
+.hl1{animation-delay:1.6s}.hl2{animation-delay:1.68s}.hl3{animation-delay:1.76s}.hl4{animation-delay:1.84s}
+@keyframes hl{to{opacity:1}}
 @media (prefers-reduced-motion: reduce){
+.ty{animation:none;width:7ch}.ty-cur{animation:none;opacity:0}.hl{animation:none;opacity:1}
 .ag1,.ag2{animation:none;opacity:0}.ag3{animation:none;opacity:1}.ln-pass,.ln-ans,.ln-drop{animation:none}.ln-pass{left:calc(100% - 12px)}.ln-ans{left:calc(50% - 12px)}.ln-drop{left:calc(50% - 12px)}
 .cyc1,.cyc2{animation:none;opacity:0}.cyc3{animation:none;opacity:1}
 .lnk,.pulse,.flow,.q-go,.w-go,.q-stall,.x-in,.key-slow,.key-fast,.grow,.rt-o,.rt-m,.rt-s,.rt-x{animation:none}
