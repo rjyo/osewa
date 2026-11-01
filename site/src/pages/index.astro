@@ -1,680 +1,636 @@
 ---
-// Ported from the Design canvas board; this file is now the source.
-// Chart data lives in src/data/bench.js, the figures in README.md and
-// bench/RESULTS.md.
+// The home page: each section is a level in a corridor. A canvas draws the
+// corridor with its own projection; the cards are flat HTML that the camera
+// only scales and fades, so the browser never depth-sorts 3D layers.
+// The long-form page lives at /paper. Figures come from src/data/bench.js.
 import Base from "../layouts/Base.astro";
-import { echoRows, tokyoConnect, tokyoEcho, resources } from "../data/bench.js";
+import Pips from "../components/Pips.astro";
+import { echoRows, tokyoConnect, resources } from "../data/bench.js";
+
+const num = (s: string) => parseFloat(s.replace(/,/g, ""));
+const pct = (v: number, max: number) => `${Math.min(100, (v / max) * 100).toFixed(1)}%`;
+// ssh never echoed on the 1 Mbit/s link, so its bar runs the full scale.
+const echo = echoRows.map((r) => ({
+  ...r,
+  ow: pct(num(r.o), 2000),
+  sw: Number.isNaN(num(r.s)) ? "100%" : pct(num(r.s), 2000),
+}));
+const tokyo = tokyoConnect.map((r) => ({
+  ...r,
+  w: pct(num(r.v), 2000),
+  fill: r.name === "osewa QUIC" ? "var(--redD)" : "#6E6E69",
+}));
+const cost = resources.map((c) => {
+  const vals = c.rows.map((r) => num(r.v));
+  const max = Math.max(...vals);
+  const min = Math.min(...vals);
+  return { ...c, rows: c.rows.map((r, i) => ({ ...r, w: pct(vals[i], max), fill: vals[i] === min ? "var(--red)" : "var(--gray)" })) };
+});
+
+// What search engines read as the product; keep it to facts the page states.
+const schema = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://osewa.dev/#site",
+      name: "osewa",
+      url: "https://osewa.dev/",
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "osewa",
+      url: "https://osewa.dev/",
+      description:
+        "Faster than ssh, survives like mosh, never garbles. A persistent remote terminal over QUIC or TLS WebSocket, built for long-running coding agents.",
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "macOS, Linux",
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      isAccessibleForFree: true,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      sameAs: ["https://github.com/rjyo/osewa"],
+      image: "https://osewa.dev/og.jpg?v=2",
+    },
+  ],
+};
 ---
-<Base>
-<div style="background: #F4F4F1; color: #111111; font-family: var(--sans)">
+<Base schema={schema}>
+<style is:global>
+:root {
+  --red: #E0393E; --redD: #FF6A4D; --paper: #F4F4F1; --white: #FFFFFF; --ink: #111111; --gray: #8F8F89;
+  --env: #F4F4F1; --fg: #111111; --grid: rgba(17,17,17,.13);
+}
+* { box-sizing: border-box; }
+html.js { scroll-snap-type: y mandatory; }
+body { margin: 0; background: var(--env); color: var(--fg); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+.spacer > div { height: 100vh; scroll-snap-align: start; }
 
-<header class="site-header" style="border-bottom: 1px solid #111111; background: #F4F4F1">
-<div style="max-width: 1200px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px">
-<a href="#" class="neko-link" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #111111; min-height: 44px">
-<svg class="neko" width="32" height="32" viewBox="0 0 100 100" aria-hidden="true"><path fill="#E0393E" d="M31 0.1C31.4 0 31.4 0 31.8 0C34.8 0.4 39 4.6 43.3 11.5C44.5 13.4 44.7 13.7 45.3 13.7C45.79 13.8 45.9 13.7 47.49 12.29L47.6 12.2C51.5 8.4 54.6 6.5 56.6 6.6C59.1 6.7 61.1 12.2 62.1 21.3C62.2 23.1 62.2 23.1 63.1 24.4C64.8 26.9 65.8 29.4 67 33.6C67.7 36.2 67.9 36.5 69.5 37.3C72.1 38.7 72.6 39.5 72.5 43.1C72.4 48.9 69.2 55.3 65.2 57.6C61.7 59.5 59.6 60.4 56 61.3C54 61.9 53.6 61.9 52.8 61.9C51 61.8 49.3 62 47.7 62.7C47.3 62.9 47.2 62.9 46.5 63C37.3 63.8 27.9 62.8 20.4 60.1L18 59.3C16.6 59 15 58.2 14.5 57.6C10.2 52.6 9 45.2 11.2 37.6C11.8 35.8 12.1 34.9 13.4 32.1C14.7 29.2 15 28.3 15.7 25.7C16.6 22.5 16.9 21.2 17.5 19.5C20 12 23.1 6.5 27.2 2.5C28.9 0.9 29.9 0.2 31 0.1ZM72.6 54.77V61H91.14C90.63 68.58 88.57 74.11 84.6 79.5C82.9 81.7 81.4 83.3 79 85.3C77.94 86.25 77.45 86.67 77.28 87.2C77.14 87.66 77.26 88.19 77.49 89.24L77.5 89.3C78.2 92.5 78.4 95.3 78.1 96.1C77.8 96.7 77.2 96.9 75 97.3C63.8 99.4 44.9 100 28.7 98.8C11 97.4 3.4 94.5 2.6 88.8C1.6 82.1 4.6 74 10.6 66.8C12 65.1 12.1 65.1 13.7 66.1C19.1 69.9 29.9 72.5 39.9 72.4L41.1 72.3V73.1C41.3 78.1 44.9 82.4 49.8 83.4C58 85 64.9 77.2 62.3 69.3C62.09 68.82 62.03 68.67 62.07 68.62C62.09 68.6 62.14 68.6 62.2 68.6C65 67.5 66.1 66.2 66.2 64C66.3 63.1 66.2 63.4 68.3 61.2C70.3 59.1 70.7 58.6 71.5 57C71.92 56.24 72.28 55.5 72.6 54.77ZM51 63.3C54.9 62.9 58.7 65 60.4 68.6C63.2 74.1 59.9 80.7 53.9 82L53.86 82.01C53.68 82.04 53.59 82.06 53.55 82.02C53.5 81.98 53.52 81.87 53.55 81.64C53.57 81.55 53.58 81.44 53.6 81.3C54 79.7 54.3 77.5 54.3 76.1C54.3 75.7 54.3 75.7 54.5 75.6C56.4 74.6 55.3 71.5 53.2 71.9C51.3 72.2 50.8 74.7 52.4 75.6C53 75.9 52.8 79.1 52.2 81.9C52.1 82.3 50.9 82.2 49.2 81.7C39.4 78.8 40.9 64.3 51 63.3ZM33.8 4.8C32.4 4.1 31.3 5.2 30.3 8.2C29.2 11.6 28.7 15.5 28.7 20.6C28.7 20.95 28.7 21.25 28.69 21.51C28.69 22.45 28.68 22.87 28.83 22.94C28.96 22.99 29.17 22.82 29.57 22.52C29.69 22.43 29.84 22.32 30 22.2C33.5 19.6 37.6 17.6 40.9 16.9C41.9 16.6 41.9 16.5 40.9 14.4C38.4 9.6 35.5 5.6 33.8 4.8ZM54.4 30.6C51.3 29.9 47.9 31.5 45.9 34.5C45 35.8 45.2 36.2 46.4 35.5C50.7 32.8 54.8 32.8 58.8 35.4C59.9 36.2 60.2 36 59.6 34.8C58.5 32.6 56.6 31.1 54.4 30.6ZM57.9 10.8C57.1 10.3 55.7 12.6 54.5 16.2C54.22 17.03 54.1 17.4 54.23 17.63C54.33 17.82 54.61 17.92 55.1 18.1C56.3 18.6 57.3 19.2 58.7 20.1C58.8 20.17 58.89 20.23 58.98 20.29C59.52 20.67 59.82 20.88 59.97 20.8C60.14 20.71 60.09 20.19 59.96 19.04C59.94 18.88 59.92 18.7 59.9 18.5C59.5 14.9 58.6 11.3 57.9 10.8Z"></path><path class="neko-paw" fill="#E0393E" d="M86.9 26.7C93.1 25.9 98.4 30.4 98.4 36.2C98.4 40 96.9 42.2 93.1 43.7C90.7 44.7 90.5 45.2 91 50.5C91.43 56.25 91.34 60.99 90.68 65.11C89.14 68.36 85.83 70.6 82 70.6C76.7 70.6 72.4 66.3 72.4 61C72.4 60.33 72.47 59.67 72.6 59.04V54.77C73.96 51.62 74.48 48.41 74.8 42.9C75.1 37.6 75.5 35.5 76.8 33.2C79.1 29.2 82.2 27.2 86.9 26.7Z"></path></svg>
-<span class="neko-word" aria-label="osewa" style="font-size: 22px; font-weight: 700; letter-spacing: -0.04em"><span class="neko-ch" style="--i: 0">o</span><span class="neko-ch" style="--i: 1">s</span><span class="neko-ch" style="--i: 2">e</span><span class="neko-ch" style="--i: 3">w</span><span class="neko-ch" style="--i: 4">a</span></span>
-</a>
-<button type="button" class="nav-btn" aria-expanded="false" aria-controls="nav-links"><span class="nav-btn-icon" aria-hidden="true"><span></span><span></span></span><span class="nav-btn-text">menu</span></button>
-<nav id="nav-links" class="nav-links" aria-label="Main" style="display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; font-family: var(--mono); font-size: 13px">
-<a href="#why" style="text-decoration: none; padding: 12px 0">why</a>
-<a href="#bench" style="text-decoration: none; padding: 12px 0">benchmarks</a>
-<a href="#start" style="text-decoration: none; padding: 12px 0">quick start</a>
-<a href="#roadmap" style="text-decoration: none; padding: 12px 0">roadmap</a>
-<a href="#how" class="nav-extra" style="text-decoration: none; padding: 12px 0">how it works</a>
-<a href="#agents" class="nav-extra" style="text-decoration: none; padding: 12px 0">agents</a>
-<a href="https://github.com/rjyo/osewa" style="text-decoration: none; padding: 12px 0">github ↗</a>
-</nav>
-</div>
-</header>
+/* ---------- stage ----------
+   The corridor is drawn on a canvas with our own projection. Cards are flat DOM,
+   only scaled and faded, so the browser never has to depth-sort 3D layers. */
+#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#cards { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+#cards .level { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; }
+#cards .level.on { pointer-events: auto; }
 
-<section style="max-width: 1200px; margin: 0 auto; padding: 72px 24px 64px; display: flex; flex-direction: column; gap: 48px">
-<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-family: var(--mono); font-size: 12px; color: #5B5B57; text-transform: uppercase; letter-spacing: 0.06em">
-<span>Wire protocol v0 · open source</span><a href="#security" style="color: inherit; text-decoration: none">TLS 1.3 · Ed25519 keys on both ends · port 7322</a>
-</div>
-<h1 style="margin: 0; font-size: clamp(48px, 8vw, 100px); line-height: 0.95; font-weight: 600; letter-spacing: -0.05em; max-width: 1050px">The terminal protocol that never drops<span style="color: #E0393E">.</span></h1>
-<div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: stretch; border-top: 1px solid #111111; padding-top: 32px">
-<div style="flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 28px">
-<p style="margin: 0; font-size: clamp(22px, 2.4vw, 28px); line-height: 1.35; font-weight: 500; letter-spacing: -0.02em; color: #111111">Faster than ssh.<br />Survives like mosh.<br />Never garbles.</p>
-<div style="display: flex; flex-wrap: wrap; gap: 12px">
-<a href="#start" style="display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 24px; background: #111111; color: #F4F4F1; font-weight: 600; font-size: 16px; text-decoration: none">Get started <span style="color: #FF6A4D">→</span></a>
-<a href="https://github.com/rjyo/osewa" style="display: inline-flex; align-items: center; min-height: 52px; padding: 0 24px; border: 1px solid #111111; color: #111111; font-weight: 500; font-size: 16px; text-decoration: none">Star on GitHub</a>
-<a href="#bench" style="display: inline-flex; align-items: center; min-height: 52px; padding: 0 8px; color: #111111; font-weight: 500; font-size: 16px">Benchmarks</a>
-</div>
-</div>
+.level { width: min(1000px, 92vw); transform: translate(-50%, -50%); background: var(--card, var(--white)); color: var(--cfg, var(--ink));
+  border: 2px solid var(--ink); box-shadow: 10px 10px 0 var(--ink); padding: clamp(20px, 3.4vw, 44px); }
+.level.dark { --card: #111; --cfg: #F4F4F1; border-color: #F4F4F1; box-shadow: 10px 10px 0 var(--red); }
+.level:not(.on) { pointer-events: none; }
+.eyebrow { font: 600 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--red); margin-bottom: 14px; display: flex; gap: 14px; flex-wrap: wrap; }
+.eyebrow .dim { color: var(--gray); }
+h1 { margin: 0; font-size: clamp(36px, 5vw, 68px); line-height: .95; font-weight: 600; letter-spacing: -.05em; }
+h2 { margin: 0 0 18px; font-size: clamp(28px, 3.8vw, 46px); line-height: 1.02; font-weight: 600; letter-spacing: -.04em; max-width: 900px; }
+p { line-height: 1.5; margin: 0; }
+.red { color: var(--red); }
+.row { display: flex; gap: 20px; flex-wrap: wrap; }
+.btn { font: 600 14px var(--mono); padding: 12px 18px; border: 2px solid var(--ink); background: var(--white); color: var(--ink); text-decoration: none; display: inline-block; }
+.btn.p { background: var(--red); border-color: var(--red); color: #fff; }
+.btn:hover { color: var(--ink); background: var(--paper); } .btn.p:hover { color: #fff; background: #B8262C; border-color: #B8262C; }
+.hud a, .hint a, .eyebrow a { color: inherit; text-decoration: none; } .hud a:hover, .hint a:hover, .eyebrow a:hover { color: var(--red); }
+.hud .paper { border-bottom: 2px solid var(--red); padding-bottom: 1px; }
+.term { background: #111; color: #F4F4F1; font: 14px/1.75 var(--mono); padding: 18px 22px; border-radius: 4px; }
+.term .pr { color: var(--redD); } .term .cm { color: #6E6E69; }
+.blink { animation: blink 1s steps(1) infinite; } @keyframes blink { 50% { opacity: 0; } }
 
-<div role="img" aria-label="Shell history: ssh in 1995, mosh in 2012, osewa in 2026" style="flex: 1 1 520px; min-width: 0; background: #111111; color: #F4F4F1; padding: 32px 36px; display: flex; flex-direction: column; justify-content: center; font-family: var(--mono); font-size: clamp(16px, 1.6vw, 20px); line-height: 1.9; overflow-x: auto">
-<div class="hl0"><span style="color: #FF8A73">$</span> <span class="ty" style="display: inline-block; overflow: hidden; vertical-align: bottom">history</span><span class="ty-cur" style="display: inline-block; width: 0.55em; height: 1.05em; background: #FF6A4D; vertical-align: -0.18em"></span></div>
-<div class="hl hl1" style="color: #5E5E59">  1995  ssh devbox</div>
-<div class="hl hl2" style="color: #8C8C86">  2012  mosh devbox</div>
-<div class="hl hl3" style="color: #F4F4F1">  2026  osewa attach devbox</div>
-<div class="hl hl4"><span style="color: #FF8A73">$</span> <span class="pulse" style="display: inline-block; width: 0.55em; height: 1.05em; background: #FF6A4D; vertical-align: -0.18em"></span></div>
-</div>
-</div>
-</section>
+/* level-specific */
+.press { margin-top: 28px; font: 600 13px var(--mono); letter-spacing: .2em; }
+.hist div { opacity: 0; } .on .hist div { animation: in .01s forwards; }
+.on .hist div:nth-child(2) { animation-delay: .5s } .on .hist div:nth-child(3) { animation-delay: 1s } .on .hist div:nth-child(4) { animation-delay: 1.5s } .on .hist div:nth-child(5) { animation-delay: 2s }
+@keyframes in { to { opacity: 1; } }
 
-<section aria-label="Headline numbers" style="border-top: 1px solid #111111; border-bottom: 1px solid #111111; background: #FFFFFF">
-<div class="kpis" style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr))">
-<div style="padding: 28px 24px; border-right: 1px solid #D3D3CE; display: flex; flex-direction: column; gap: 6px">
-<div style="font-size: 52px; font-weight: 600; letter-spacing: -0.04em; line-height: 1">12<span style="font-size: 28px">×</span></div>
-<div style="font-size: 15px; line-height: 1.45; color: #4A4A46">faster key echo than ssh during a download on cellular</div>
-</div>
-<div style="padding: 28px 24px; border-right: 1px solid #D3D3CE; display: flex; flex-direction: column; gap: 6px">
-<div style="font-size: 52px; font-weight: 600; letter-spacing: -0.04em; line-height: 1">0.4<span style="font-size: 28px"> s</span></div>
-<div style="font-size: 15px; line-height: 1.45; color: #4A4A46">to resume after sleep or an IP change (mosh 1.1 s, ssh dies)</div>
-</div>
-<div style="padding: 28px 24px; border-right: 1px solid #D3D3CE; display: flex; flex-direction: column; gap: 6px">
-<div style="font-size: 52px; font-weight: 600; letter-spacing: -0.04em; line-height: 1">4<span style="font-size: 28px">×</span></div>
-<div style="font-size: 15px; line-height: 1.45; color: #4A4A46">faster than ssh to connect and run a command, Thailand → Tokyo</div>
-</div>
-<div style="padding: 28px 24px; display: flex; flex-direction: column; gap: 6px">
-<div style="font-size: 52px; font-weight: 600; letter-spacing: -0.04em; line-height: 1">14.3<span style="font-size: 28px"> MB</span></div>
-<div style="font-size: 15px; line-height: 1.45; color: #4A4A46">memory per idle session on the host, half of ssh's</div>
-</div>
-</div>
-</section>
+.chars { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 8px; }
+.char { border: 2px solid var(--ink); padding: 18px; position: relative; background: var(--paper); }
+.char.sel { border-color: var(--red); box-shadow: 0 0 0 3px var(--red) inset; background: #fff; }
+.char.sel::after { content: "P1"; position: absolute; top: -12px; right: 14px; background: var(--red); color: #fff; font: 700 12px var(--mono); padding: 2px 8px; }
+.char h3 { margin: 0; font: 700 22px var(--mono); display: flex; justify-content: space-between; }
+.char h3 span { color: var(--gray); font-weight: 500; font-size: 14px; }
+.char p { font-size: 14px; margin: 10px 0 14px; color: #44443F; }
+.stat { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; font: 600 11px var(--mono); letter-spacing: .06em; margin-top: 6px; }
+.pips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+.pips i { height: 10px; background: #DDDDD6; transform: scaleY(.3); transition: transform .3s, background .3s; }
+.on .pips i.f { background: var(--ink); transform: none; }
+.on .sel .pips i.f { background: var(--red); }
 
-<section id="why" style="background: #F4F4F1">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 48px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§1 Why now</div>
-<h2 style="flex: 1 1 520px; margin: 0; font-size: clamp(34px, 4.5vw, 52px); line-height: 1.02; font-weight: 600; letter-spacing: -0.04em">ssh and mosh were built for networks we no longer have.</h2>
-</div>
-<p style="margin: 0; font-size: 18px; line-height: 1.6; color: #2A2A28; max-width: 820px">Bandwidth is no longer the hard part. Soon almost anywhere will have at least Starlink, and even that carries tens of Mbit/s. What hurts now is latency, deep buffers, switching networks and blocked UDP. And on the other end there's often a coding agent, redrawing a full-screen TUI for hours while you check in from a laptop or a phone.</p>
+.bars { display: grid; gap: 18px; margin-top: 6px; }
+.brow { display: grid; grid-template-columns: 150px 1fr 90px; gap: 16px; align-items: center; }
+.brow .name { font-weight: 600; } .brow .cond { font: 12px var(--mono); color: var(--gray); }
+.track { display: grid; gap: 5px; font: 12px var(--mono); }
+.bw { display: flex; align-items: center; gap: 8px; white-space: nowrap; font: 12px var(--mono); }
+.bar { flex: none; height: 18px; width: 0; transition: width 1.1s cubic-bezier(.2,.8,.2,1); display: flex; align-items: center; }
+.combo { font: 800 30px var(--mono); color: var(--red); text-align: right; transform: scale(0); transition: transform .4s cubic-bezier(.3,1.6,.5,1) .9s; }
+.on .combo { transform: none; }
+.combo small { display: block; font-size: 10px; letter-spacing: .14em; color: var(--gray); font-weight: 600; }
 
-<div class="eras" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); border-top: 1px solid #111111">
-<div style="padding: 24px 24px 28px 0; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #D3D3CE">
-<div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 26px; font-weight: 600; letter-spacing: -0.03em">ssh</span><span style="font-family: var(--mono); font-size: 13px; color: #5B5B57">1995</span></div>
-<div style="font-size: 15px; line-height: 1.5; color: #2A2A28">Built for one steady wired link. The session is its TCP connection, so it dies when the network changes, and under load each key waits behind the download.</div>
-</div>
-<div style="padding: 24px 24px 28px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #D3D3CE">
-<div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 26px; font-weight: 600; letter-spacing: -0.03em">mosh</span><span style="font-family: var(--mono); font-size: 13px; color: #5B5B57">2012</span></div>
-<div style="font-size: 15px; line-height: 1.5; color: #2A2A28">Bet on saving scarce bandwidth with its own emulator. When that emulator reads output differently from your terminal you get garbled text, and it's UDP only, with no forwards and no scrollback.</div>
-</div>
-<div style="padding: 24px 24px 28px; display: flex; flex-direction: column; gap: 10px; background: #111111; color: #F4F4F1">
-<div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 26px; font-weight: 600; letter-spacing: -0.03em">osewa</span><span style="font-family: var(--mono); font-size: 13px; color: #FF8A73">2026</span></div>
-<div style="font-size: 15px; line-height: 1.5; color: #E4E4DF">Built for plenty of bandwidth with bad latency and queues. The session lives on the host with Ghostty's terminal engine, and forwards and exec share the same connection, over QUIC or TCP.</div>
-</div>
-</div>
+.mini { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; }
+.mini h4 { margin: 0 0 2px; font-size: 15px; } .mini .note { font: 11px var(--mono); color: var(--gray); margin-bottom: 8px; }
+.mrow { display: grid; grid-template-columns: 50px 1fr; gap: 8px; font: 12px var(--mono); align-items: center; margin: 4px 0; }
 
-<div style="overflow-x: auto; border-top: 1px solid #111111">
-<table style="width: 100%; min-width: 760px; border-collapse: collapse; font-size: 15px">
-<caption style="text-align: left; padding: 14px 0; font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: #5B5B57">Side by side</caption>
-<thead><tr style="text-align: left; font-family: var(--mono); font-size: 12px; color: #5B5B57">
-<th scope="col" style="padding: 12px 16px 12px 0; font-weight: 400; border-bottom: 1px solid #111111; width: 22%"></th>
-<th scope="col" style="padding: 12px 16px; font-weight: 400; border-bottom: 1px solid #111111">ssh</th>
-<th scope="col" style="padding: 12px 16px; font-weight: 400; border-bottom: 1px solid #111111">mosh</th>
-<th scope="col" style="padding: 12px 16px; font-weight: 600; border-bottom: 1px solid #111111; color: #111111; background: #FFFFFF">osewa</th>
-</tr></thead>
-<tbody>
-<tr><th scope="row" style="text-align: left; padding: 14px 16px 14px 0; font-weight: 500; border-bottom: 1px solid #D3D3CE">Session</th><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Dies with the TCP connection</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Survives roaming</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; background: #FFFFFF">Lives on the host: survives roaming, sleep and server restarts</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 14px 16px 14px 0; font-weight: 500; border-bottom: 1px solid #D3D3CE">Transport</th><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">TCP</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">UDP only</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; background: #FFFFFF">QUIC, falling back to TLS over TCP</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 14px 16px 14px 0; font-weight: 500; border-bottom: 1px solid #D3D3CE">Screen on the host</th><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">None, bytes are replayed</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Its own emulator, no scrollback</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; background: #FFFFFF">libghostty-vt, Ghostty's terminal engine</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 14px 16px 14px 0; font-weight: 500; border-bottom: 1px solid #D3D3CE">Beyond the shell</th><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Port forwards, exec</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Terminal only</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; background: #FFFFFF">Port forwards and exec on the same connection</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 14px 16px 14px 0; font-weight: 500; border-bottom: 1px solid #D3D3CE">Kitty protocols</th><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Passed through</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">No</td><td style="padding: 14px 16px; border-bottom: 1px solid #D3D3CE; background: #FFFFFF">Keyboard; graphics with animation, kept on the host and redrawn on reconnect; clipboard reads and paste events</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 14px 16px 14px 0; font-weight: 500; border-bottom: 1px solid #111111">Modern OSC</th><td style="padding: 14px 16px; border-bottom: 1px solid #111111; color: #4A4A46">Passed through</td><td style="padding: 14px 16px; border-bottom: 1px solid #111111; color: #4A4A46">Few</td><td style="padding: 14px 16px; border-bottom: 1px solid #111111; background: #FFFFFF">Yes: hyperlinks, cwd, prompt marks, agent status (OSC 7501)</td></tr>
-</tbody>
-</table>
-</div>
-</div>
-</section>
+.map { position: relative; margin: 30px 0 10px; }
+.map .line { position: absolute; left: 3%; right: 3%; top: 21px; height: 4px; background: repeating-linear-gradient(90deg, var(--ink) 0 10px, transparent 10px 18px); }
+.map .done { position: absolute; left: 3%; top: 21px; height: 4px; background: var(--red); width: 0; transition: width 1.4s ease .2s; }
+.on .map .done { width: 47%; }
+.nodes { display: grid; grid-template-columns: repeat(7, 1fr); position: relative; }
+.node { text-align: center; font: 11px var(--mono); padding: 0 4px; }
+.node .dot { width: 46px; height: 46px; margin: 0 auto 10px; border: 3px solid var(--ink); background: #fff; display: grid; place-items: center; font: 700 14px var(--mono); }
+.node.ok .dot { background: var(--ink); color: #fff; }
+.node.here .dot { background: var(--red); border-color: var(--red); color: #fff; animation: bob 1s ease-in-out infinite; }
+.node b { display: block; font: 600 13px var(--sans); margin-top: 2px; }
+@keyframes bob { 50% { transform: translateY(-6px); } }
+.here-tag { color: var(--red); font-weight: 700; }
 
-<section id="bench" style="background: #FFFFFF">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 64px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§2 Benchmarks</div>
-<h2 style="flex: 1 1 520px; margin: 0; font-size: clamp(34px, 4.5vw, 52px); line-height: 1.02; font-weight: 600; letter-spacing: -0.04em">On a bad network, keys echo 8–100× faster than ssh.</h2>
-</div>
+.how { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.how div { border-top: 3px solid var(--ink); padding-top: 12px; }
+.how .k { font: 600 11px var(--mono); color: var(--red); letter-spacing: .12em; }
+.how h3 { margin: 6px 0 8px; font-size: 19px; letter-spacing: -.02em; }
+.how p { font-size: 14px; color: #44443F; }
 
-<div style="display: flex; flex-direction: column; gap: 20px">
-<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: baseline">
-<h3 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Key echo while a download runs on the same connection</h3>
-<div style="display: flex; gap: 18px; font-family: var(--mono); font-size: 12px; color: #4A4A46">
-<span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; background: #E0393E"></span>osewa · best</span>
-<span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 12px; height: 12px; background: #8F8F89"></span>ssh</span>
-</div>
-</div>
-<div style="display: flex; flex-direction: column; gap: 22px">
-{echoRows.map((r) => (<Fragment>
-<div class="echo-row" style="display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 64px; gap: 8px 20px; align-items: center">
-<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; font-weight: 500">{r.name}</span><span style="font-family: var(--mono); font-size: 12px; color: #5B5B57">{r.cond}</span></div>
-<div style="display: flex; flex-direction: column; gap: 4px">
-<div style="display: flex; align-items: center; gap: 8px" title={`osewa ${r.o}`}><div class="grow" style={`height: 18px; width: ${r.ow}; min-width: 4px; background: #E0393E; border-radius: 0 4px 4px 0`}></div><span style="font-family: var(--mono); font-size: 13px; white-space: nowrap">{r.o}</span></div>
-<div style="display: flex; align-items: center; gap: 8px" title={`ssh ${r.s}`}><div class="grow" style={`height: 18px; width: ${r.sw}; background: ${r.sFill}; border-radius: 0 4px 4px 0`}></div><span style="font-family: var(--mono); font-size: 13px; white-space: nowrap; color: #4A4A46">{r.s}</span></div>
-</div>
-<div style="font-family: var(--mono); font-size: 18px; font-weight: 500; color: #B8262C; text-align: right">{r.x}</div>
-</div>
-</Fragment>))}
-<div class="echo-row echo-axis" style="display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 64px; gap: 20px; font-family: var(--mono); font-size: 11px; color: #5B5B57">
-<span></span>
-<div class="axis" style="display: flex; justify-content: space-between; border-top: 1px solid #D3D3CE; padding-top: 6px"><span>0</span><span>500</span><span>1,000</span><span>1,500</span><span>2,000 ms</span></div>
-<span></span>
-</div>
-</div>
-</div>
+.race { margin-top: 22px; font: 12px var(--mono); display: grid; gap: 8px; }
+.lane { display: grid; grid-template-columns: 170px 1fr; align-items: center; gap: 12px; }
+.lane .t { height: 6px; background: #E6E6E0; position: relative; }
+.lane .t i { position: absolute; left: 0; top: -5px; width: 16px; height: 16px; background: var(--red); }
+.on .lane.q .t i { animation: run 1.2s cubic-bezier(.4,0,.2,1) .2s forwards; }
+.on .lane.w .t i { background: var(--gray); animation: run 1.6s cubic-bezier(.4,0,.2,1) .5s forwards; }
+@keyframes run { to { left: calc(100% - 16px); } }
 
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 48px">
+.status { display: inline-grid; gap: 4px; border: 2px solid var(--ink); padding: 14px 18px; font: 13px var(--mono); background: var(--paper); margin: 8px 0 22px; }
+.status .s { color: var(--red); font-weight: 700; }
+.end { margin-top: 10px; padding-top: 20px; border-top: 2px dashed var(--ink); display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.end .big { font: 800 clamp(22px, 3vw, 34px) var(--mono); letter-spacing: .04em; }
 
-<div style="display: flex; flex-direction: column; gap: 18px">
-<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: baseline">
-<h3 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Back after an IP change</h3>
-<button type="button" data-replay style="min-height: 44px; padding: 0 14px; border: 1px solid #111111; background: #FFFFFF; font-family: var(--mono); font-size: 12px; cursor: pointer">↻ replay in real time</button>
-</div>
-<p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4A4A46">Client moved to a new IP after 5 s offline. Time from the network coming back to a working session.</p>
-<div id="replay-bars" style="display: contents">
-<div style="display: flex; flex-direction: column; gap: 12px; font-family: var(--mono); font-size: 13px">
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; align-items: center"><span>osewa</span><div style="height: 18px; background: #F4F4F1"><div class="rt-o" style="height: 18px; width: 20%; background: #E0393E; border-radius: 0 4px 4px 0"></div></div><span>0.4 s</span></div>
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; align-items: center"><span>mosh</span><div style="height: 18px; background: #F4F4F1"><div class="rt-m" style="height: 18px; width: 55%; background: #8F8F89; border-radius: 0 4px 4px 0"></div></div><span>1.1 s</span></div>
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; align-items: center"><span>ssh</span><div style="height: 18px; background: #F4F4F1; display: flex; align-items: center"><div class="rt-s" style="height: 18px; width: 6%; background: #8F8F89"></div><span class="rt-x" style="margin-left: 8px; color: #B8262C">✕ session gone</span></div><span style="color: #B8262C">never</span></div>
-</div>
-</div>
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; font-family: var(--mono); font-size: 11px; color: #5B5B57"><span></span><div class="axis" style="display: flex; justify-content: space-between; border-top: 1px solid #D3D3CE; padding-top: 6px"><span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0 s</span></div><span></span></div>
-</div>
+/* ---------- HUD ---------- */
+.hud { position: fixed; z-index: 10; font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--fg); }
+.hud.tl { left: 20px; top: 16px; display: flex; align-items: center; gap: 14px; }
+.hud.tl .lv { border: 2px solid var(--fg); padding: 6px 10px; }
+.hud.tl .lv b { color: var(--red); }
+.hud.tr { right: 20px; top: 20px; display: flex; gap: 18px; align-items: center; }
+.sig { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; } .sig i { width: 3px; background: var(--red); }
+.idx { position: fixed; z-index: 10; left: 20px; top: 50%; transform: translateY(-50%); display: grid; gap: 4px; }
+.idx .hl { position: absolute; left: 0; right: 0; top: 0; background: var(--fg); pointer-events: none; z-index: 0; transition: transform .22s cubic-bezier(.3,.7,.3,1); }
+.idx button { all: unset; cursor: pointer; font: 600 11px var(--mono); letter-spacing: .1em; position: relative; z-index: 1; color: color-mix(in srgb, var(--fg) 45%, transparent); display: grid; grid-template-columns: 16px 26px auto; gap: 6px; padding: 4px 6px; text-transform: uppercase; }
+.idx button:hover { color: var(--fg); }
+.idx button.v { color: color-mix(in srgb, var(--fg) 72%, transparent); }
+.idx button.cur { color: var(--env); }
+.idx button .ck { color: var(--red); display: grid; place-items: center; }
+.idx button .ck svg { display: block; }
+.bot { position: fixed; z-index: 10; left: 20px; right: 20px; bottom: 16px; display: grid; gap: 8px; }
+/* The bottom bar repeats the side index, so it only shows where that is hidden. */
+.segs { display: none; gap: 3px; position: relative; }
+.segs button { all: unset; cursor: pointer; height: 14px; position: relative; }
+.segs button::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.segs button.v::after { background: color-mix(in srgb, var(--fg) 45%, transparent); }
+.segs .fill { position: absolute; bottom: 0; height: 3px; left: 0; background: var(--red); pointer-events: none; transition: transform .22s cubic-bezier(.3,.7,.3,1); }
+.runner { position: absolute; bottom: 2px; width: 22px; height: 22px; transition: none; }
+.hint { display: flex; justify-content: space-between; font: 600 10px var(--mono); letter-spacing: .12em; color: var(--fg); opacity: .45; text-transform: uppercase; }
+.neko, .runner { overflow: visible; }
+.neko-paw { transform-box: view-box; transform-origin: 82px 61px; }
+.wave .neko-paw { animation: wave .9s ease-in-out; }
+@keyframes wave { 20%, 60% { transform: rotate(-24deg); } 40%, 80% { transform: rotate(8deg); } }
+.banner { position: fixed; z-index: 11; left: 50%; top: 70px; transform: translate(-50%, -20px); opacity: 0; transition: .35s; pointer-events: none;
+  background: var(--ink); color: #fff; font: 700 14px var(--mono); letter-spacing: .16em; padding: 10px 18px; white-space: nowrap; display: flex; align-items: center; gap: 10px; }
+.banner svg { display: block; flex: none; }
+.banner.show { opacity: 1; transform: translate(-50%, 0); }
+.banner .c { color: var(--redD); }
+@media (max-width: 1280px) { .idx { display: none; } .segs { display: grid; } }
+@media (max-width: 860px) {
+  .idx, .hud.tr .keys { display: none; }
+  .brow { grid-template-columns: 1fr; gap: 6px; } .combo { text-align: left; }
+  .nodes { grid-template-columns: repeat(4, 1fr); row-gap: 16px; } .map .line, .map .done { display: none; }
+  .lane { grid-template-columns: 1fr; }
+}
+/* Phones: the banner and the card already name the level. */
+@media (max-width: 600px) {
+  .hud .word, .hud .nm, .hud .proto { display: none; }
+  .hud.tl { gap: 10px; left: calc(16px + env(safe-area-inset-left, 0px)); }
+  .hud.tr { right: calc(16px + env(safe-area-inset-right, 0px)); }
+  .bot { left: 16px; right: 16px; }
+}
+/* Without JS there is no camera: the levels are a plain page. */
+html:not(.js) #stage, html:not(.js) .hud, html:not(.js) .idx, html:not(.js) .bot, html:not(.js) .spacer, html:not(.js) .banner, html:not(.js) .press { display: none; }
+html:not(.js) #cards { position: static; display: grid; gap: 48px; padding: 48px 16px; overflow: visible; pointer-events: auto; }
+html:not(.js) #cards .level { position: static; transform: none; margin: 0 auto; pointer-events: auto; }
+html:not(.js) .hist div { opacity: 1; }
+html:not(.js) .pips i.f { background: var(--ink); transform: none; }
+html:not(.js) .bar { width: calc(var(--w) * .78); }
+html:not(.js) .combo { transform: none; }
+</style>
 
-<div style="display: flex; flex-direction: column; gap: 18px">
-<h3 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Connect and run a command, 120 ms away</h3>
-<p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4A4A46">QUIC's 1-RTT handshake and a pinned device key, against ssh's key exchange and auth round trips.</p>
-<div style="display: flex; flex-direction: column; gap: 12px; font-family: var(--mono); font-size: 13px">
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; align-items: center"><span>osewa</span><div style="height: 18px"><div class="grow" style="height: 18px; width: 23.8%; background: #E0393E; border-radius: 0 4px 4px 0"></div></div><span>388 ms</span></div>
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; align-items: center"><span>ssh</span><div style="height: 18px"><div class="grow" style="height: 18px; width: 100%; background: #8F8F89; border-radius: 0 4px 4px 0"></div></div><span>1,630 ms</span></div>
-</div>
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; gap: 12px; font-family: var(--mono); font-size: 11px; color: #5B5B57"><span></span><div class="axis" style="display: flex; justify-content: space-between; border-top: 1px solid #D3D3CE; padding-top: 6px"><span>0</span><span>400</span><span>800</span><span>1,200</span><span>1,600 ms</span></div><span></span></div>
-</div>
-</div>
+<canvas id="stage" aria-hidden="true"></canvas>
+<div id="cards">
 
-<div style="display: flex; flex-direction: column; gap: 12px">
-<h3 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Every lab result</h3>
-<div style="overflow-x: auto">
-<table style="width: 100%; min-width: 760px; border-collapse: collapse; font-size: 15px">
-<thead><tr style="font-family: var(--mono); font-size: 12px; color: #5B5B57; text-align: left">
-<th scope="col" style="padding: 10px 16px 10px 0; font-weight: 400; border-bottom: 1px solid #111111"></th>
-<th scope="col" style="padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #111111; color: #111111">osewa</th>
-<th scope="col" style="padding: 10px 16px; font-weight: 400; border-bottom: 1px solid #111111">mosh</th>
-<th scope="col" style="padding: 10px 16px; font-weight: 400; border-bottom: 1px solid #111111">ssh</th>
-</tr></thead>
-<tbody>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Transport</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE">QUIC + TLS WebSocket, raced</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">UDP only (SSP)</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">TCP</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Survives sleep / IP change</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE">Yes, resumes in <strong>0.4 s</strong></td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Yes, 1.1 s</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">No</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Echo p50 during a download, cellular (60 ms, deep buffer)</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE"><strong>138 ms</strong></td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">—</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">1,714 ms</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Echo p50 during a download, Wi-Fi (20 ms, 1% loss)</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE"><strong>44 ms</strong></td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">—</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">374 ms</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Echo during a download, 1 Mbit/s (100 ms, 1% loss)</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE"><strong>154 ms</strong></td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">—</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">none within 15 s</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Connect + run a command, 120 ms RTT</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE"><strong>388 ms</strong></td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">—</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">1,630 ms</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Local echo prediction</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE">Yes</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Yes</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">No</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Port forwarding, exec</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE">Yes</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">No</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Yes</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #D3D3CE">Works with UDP blocked</th><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE">Yes, falls back to TCP</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">No</td><td style="padding: 12px 16px; border-bottom: 1px solid #D3D3CE; color: #4A4A46">Yes</td></tr>
-<tr><th scope="row" style="text-align: left; font-weight: 500; padding: 12px 16px 12px 0; border-bottom: 1px solid #111111">Bulk throughput</th><td style="padding: 12px 16px; border-bottom: 1px solid #111111">Equal to ssh; ahead on lossy Wi-Fi (0.99 vs 0.92 MB/s)</td><td style="padding: 12px 16px; border-bottom: 1px solid #111111; color: #4A4A46">—</td><td style="padding: 12px 16px; border-bottom: 1px solid #111111; color: #4A4A46">—</td></tr>
-</tbody>
-</table>
-</div>
-<p style="margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #5B5B57; max-width: 900px">osewa over QUIC, its default, from the full run of 2026-10-31. Same container and ports for every side, netem-shaped links. Over TLS WebSocket, echo during a download was faster still on cellular (73 ms) and at 1 Mbit/s (125 ms). Reproduce: make bench-vs · make bench-mosh.</p>
-</div>
-</div>
-</section>
+  <!-- 00 BOOT -->
+  <section class="level" id="boot" data-name="boot">
+    <div class="eyebrow"><span>Wire protocol v0 · open source</span><a class="dim" href="/paper#security">TLS 1.3 · Ed25519 keys on both ends · port 7322</a></div>
+    <div class="row" style="align-items: flex-end; justify-content: space-between; gap: 32px">
+      <div style="flex: 1 1 520px">
+        <h1>Faster than ssh,<br> survives like mosh,<br> never garbles<span class="red">.</span></h1>
+        <p style="font-size: 20px; margin: 22px 0 24px; max-width: 560px">The terminal protocol for the age of agents. Your agent runs for hours on the host; check in from a laptop or a phone, on any network.</p>
+        <div class="row" style="gap: 10px"><a class="btn p" href="#quick-start" data-go="5">Get started →</a><a class="btn" href="/paper">Read the paper</a><a class="btn" href="https://github.com/rjyo/osewa">Star on GitHub</a></div>
+      </div>
+      <div class="term hist" style="flex: 0 1 330px">
+        <div><span class="pr">$</span> history</div>
+        <div>  1995  ssh devbox</div>
+        <div>  2012  mosh devbox</div>
+        <div>  2026  osewa attach devbox</div>
+        <div><span class="pr">$</span> <span class="blink">▍</span></div>
+      </div>
+    </div>
+    <div class="press"><span class="blink">▼</span> PRESS ↓ OR SCROLL TO START</div>
+  </section>
 
-<section aria-labelledby="tokyo-h" style="background: #111111; color: #F4F4F1">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 48px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #FF8A73">§3 Real world</div>
-<div style="flex: 1 1 520px; display: flex; flex-direction: column; gap: 14px">
-<h2 id="tokyo-h" style="margin: 0; font-size: clamp(34px, 4.5vw, 52px); line-height: 1.02; font-weight: 600; letter-spacing: -0.04em">Thailand to Tokyo, over the public internet.</h2>
-<p style="margin: 0; font-size: 17px; line-height: 1.6; color: #C9C9C2">From a Mac in Thailand to a 1-vCPU Linode in Tokyo, about 100 ms away over the public internet. osewa connects four times faster than ssh and six times faster than mosh, downloads at three times ssh's speed, and during the download echoes keys in 102 ms, as fast as idle. ssh's take 145.</p>
-</div>
-</div>
+  <!-- 01 WHY -->
+  <section class="level" id="why" data-name="why now">
+    <div class="eyebrow"><span>§1 Why now</span><span class="dim">select your protocol</span></div>
+    <h2>ssh and mosh were built for networks we no longer have.</h2>
+    <div class="chars">
+      <div class="char"><h3>ssh <span>1995</span></h3><p>The session is its TCP connection: it dies when the network changes, and each key waits behind the download.</p>
+        <div class="stat">ROAMING<Pips v={1} /></div><div class="stat">ECHO / LOAD<Pips v={1} /></div><div class="stat">FIDELITY<Pips v={5} /></div></div>
+      <div class="char"><h3>mosh <span>2012</span></h3><p>Survives roaming, but its own emulator can garble your screen. UDP only, no forwards, no scrollback.</p>
+        <div class="stat">ROAMING<Pips v={4} /></div><div class="stat">ECHO / LOAD<Pips v={3} /></div><div class="stat">FIDELITY<Pips v={2} /></div></div>
+      <div class="char sel"><h3>osewa <span>2026</span></h3><p>The session lives on the host with Ghostty's engine. Forwards and exec share the connection, over QUIC or TCP.</p>
+        <div class="stat">ROAMING<Pips v={5} /></div><div class="stat">ECHO / LOAD<Pips v={5} /></div><div class="stat">FIDELITY<Pips v={5} /></div></div>
+    </div>
+  </section>
 
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 48px">
-<div style="display: flex; flex-direction: column; gap: 16px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600">Connect + run a command</h3>
-<div style="display: flex; flex-direction: column; gap: 10px; font-family: var(--mono); font-size: 13px">
-{tokyoConnect.map((t) => (<Fragment>
-<div class="row-80" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 80px; gap: 12px; align-items: center"><span style={`color: ${t.labelColor}`}>{t.name}</span><div style="height: 18px"><div class="grow" style={`height: 18px; width: ${t.w}; background: ${t.fill}; border-radius: 0 4px 4px 0`}></div></div><span style="text-align: right">{t.v}</span></div>
-</Fragment>))}
-</div>
-</div>
+  <!-- 02 BENCH -->
+  <section class="level" id="bench" data-name="benchmarks">
+    <div class="eyebrow"><span>§2 Benchmarks</span><span class="dim">key echo while a download runs</span></div>
+    <h2>On a bad network, keys echo 8–100× faster than ssh.</h2>
+    <div class="bars" id="echo">
+      {echo.map((r) => (
+        <div class="brow">
+          <div><div class="name">{r.name}</div><div class="cond">{r.cond}</div></div>
+          <div class="track">
+            <div class="bw"><div class="bar" data-w={r.ow} style={`--w: ${r.ow}; background: var(--red)`}></div><span>osewa {r.o}</span></div>
+            <div class="bw"><div class="bar" data-w={r.sw} style={`--w: ${r.sw}; background: var(--gray)`}></div><span>ssh {r.s}</span></div>
+          </div>
+          <div class="combo">{r.x}<small>COMBO</small></div>
+        </div>
+      ))}
+    </div>
+  </section>
 
-<div style="display: flex; flex-direction: column; gap: 16px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600">Key echo during a download, p50 → p95</h3>
-<div style="display: flex; flex-direction: column; gap: 10px; font-family: var(--mono); font-size: 13px">
-{tokyoEcho.map((t) => (<Fragment>
-<div class="row-96" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 96px; gap: 12px; align-items: center">
-<span style={`color: ${t.labelColor}`}>{t.name}</span>
-<div style="position: relative; height: 18px">
-<div style="position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: #2E2E2B"></div>
-<div style={`position: absolute; top: 50%; height: 4px; transform: translateY(-50%); left: ${t.l}; width: ${t.w}; background: ${t.fill}; opacity: .55`}></div>
-<div style={`position: absolute; top: 50%; left: ${t.l}; width: 16px; height: 16px; transform: translate(-50%, -50%); border-radius: 50%; background: ${t.fill}; box-shadow: 0 0 0 2px #111111`}></div>
-<div style={`position: absolute; top: 50%; left: ${t.r}; width: 16px; height: 16px; box-sizing: border-box; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid ${t.fill}; background: #111111`}></div>
-</div>
-<span style="text-align: right">{t.v}</span>
-</div>
-</Fragment>))}
-<div class="row-96" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 96px; gap: 12px; font-size: 11px; color: #A3A39D"><span></span><div class="axis" style="display: flex; justify-content: space-between; border-top: 1px solid #2E2E2B; padding-top: 6px"><span>90</span><span>125</span><span>160 ms</span></div><span></span></div>
-<div style="font-size: 12px; color: #A3A39D">● p50 · ○ p95 · differences under ~20 ms are path noise</div>
-</div>
-</div>
-</div>
+  <!-- 03 TOKYO -->
+  <section class="level dark" id="tokyo" data-name="tokyo" data-env="#111111">
+    <div class="eyebrow"><span>§3 World 2 · public internet</span><span class="dim">Thailand → Tokyo</span></div>
+    <h2>Thailand to Tokyo, over the public internet.</h2>
+    <p style="font: 12px var(--mono); color: #8F8F89; margin-bottom: 14px">CONNECT + RUN A COMMAND · LOWER WINS</p>
+    <div class="bars" id="tokyo" style="gap: 12px">
+      {tokyo.map((r) => (
+        <div class="brow" style="grid-template-columns: 120px 1fr">
+          <div class="name" style="font: 600 13px var(--mono)">{r.name}</div>
+          <div class="bw"><div class="bar" data-w={r.w} style={`--w: ${r.w}; background: ${r.fill}; height: 26px`}></div><span>{r.v}</span></div>
+        </div>
+      ))}
+    </div>
+  </section>
 
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 48px; align-items: start">
-<div style="display: flex; flex-direction: column; gap: 16px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600">Download, while typing / alone</h3>
-<div style="display: flex; flex-direction: column; gap: 12px; font-family: var(--mono); font-size: 13px">
-<div class="row-150" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center">
-<span style="color: #F4F4F1">osewa QUIC</span>
-<div style="display: flex; flex-direction: column; gap: 3px"><div class="grow" style="height: 6px; width: 99.2%; background: #FF6A4D; opacity: .45; border-radius: 0 3px 3px 0"></div><div class="grow" style="height: 16px; width: 76.4%; background: #FF6A4D; border-radius: 0 4px 4px 0"></div></div>
-<span style="text-align: right; white-space: nowrap">30.55 <span style="color: #A3A39D">/ 39.67</span></span>
-</div>
-<div class="row-150" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center">
-<span style="color: #C9C9C2">osewa WS</span>
-<div style="display: flex; flex-direction: column; gap: 3px"><div class="grow" style="height: 6px; width: 68.2%; background: #6E6E69; opacity: .45; border-radius: 0 3px 3px 0"></div><div class="grow" style="height: 16px; width: 68.2%; background: #6E6E69; border-radius: 0 4px 4px 0"></div></div>
-<span style="text-align: right; white-space: nowrap">27.28 <span style="color: #A3A39D">/ 27.26</span></span>
-</div>
-<div class="row-150" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center">
-<span style="color: #C9C9C2">ssh</span>
-<div style="display: flex; flex-direction: column; gap: 3px"><div class="grow" style="height: 6px; width: 29.9%; background: #6E6E69; opacity: .45; border-radius: 0 3px 3px 0"></div><div class="grow" style="height: 16px; width: 28.9%; background: #6E6E69; border-radius: 0 4px 4px 0"></div></div>
-<span style="text-align: right; white-space: nowrap">11.55 <span style="color: #A3A39D">/ 11.96</span></span>
-</div>
-<div class="row-150" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center">
-<span style="color: #C9C9C2">mosh*</span>
-<div style="display: flex; flex-direction: column; gap: 3px"><div style="height: 6px"></div><div class="grow" style="height: 16px; width: 38.6%; background: #6E6E69; border-radius: 0 4px 4px 0"></div></div>
-<span style="text-align: right; white-space: nowrap">15.45 <span style="color: #A3A39D">/ n/a</span></span>
-</div>
-<div class="row-150" style="display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; font-size: 11px; color: #A3A39D"><span></span><div class="axis" style="display: flex; justify-content: space-between; border-top: 1px solid #2E2E2B; padding-top: 6px"><span>0</span><span>10</span><span>20</span><span>30</span><span>40 MB/s</span></div><span></span></div>
-</div>
-<div style="display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--mono); font-size: 12px; color: #A3A39D"><span>thick: while typing</span><span>thin: alone</span><span>* mosh's download is a separate ssh connection</span></div>
-<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #C9C9C2">With a fast path, keeping keys ahead of bulk costs osewa nothing: it downloads at three times ssh's speed and still echoes keys as fast as idle.</p>
-</div>
-<div style="display: flex; flex-direction: column; gap: 16px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600">The setup</h3>
-<dl style="margin: 0; display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px 16px; font-size: 15px; line-height: 1.5">
-<dt style="font-family: var(--mono); font-size: 12px; color: #A3A39D; padding-top: 3px">Client</dt><dd style="margin: 0">Mac on a home line in Thailand</dd>
-<dt style="font-family: var(--mono); font-size: 12px; color: #A3A39D; padding-top: 3px">Host</dt><dd style="margin: 0">Linode Nanode in Tokyo: 1 vCPU, 1 GB, Ubuntu 24.04</dd>
-<dt style="font-family: var(--mono); font-size: 12px; color: #A3A39D; padding-top: 3px">Path</dt><dd style="margin: 0">The public internet, no VPN, about 100 ms round trip</dd>
-<dt style="font-family: var(--mono); font-size: 12px; color: #A3A39D; padding-top: 3px">Same rig</dt><dd style="margin: 0">Every tool on the same path in the same session, median of 5 runs. ssh and mosh used sshd on port 2222, since some fresh connections to port 22 got no answer on this path</dd>
-</dl>
-<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #C9C9C2">ssh's download swings a lot run to run here, so read the ssh and mosh download numbers as rough. osewa QUIC's download while typing ranged 15.8–39.9 MB/s across the runs; the WebSocket's held at 27 in every one.</p>
-</div>
-</div>
+  <!-- 04 COST -->
+  <section class="level" id="cost" data-name="cost" data-env="#F4F4F1">
+    <div class="eyebrow"><span>§4 Resources</span><span class="dim">the red bar is the winner, even when it's ssh</span></div>
+    <h2>Light when idle. Honest about the cost.</h2>
+    <div class="mini" id="cost">
+      {cost.map((c) => (
+        <div>
+          <h4>{c.title}</h4><div class="note">{c.note}</div>
+          {c.rows.map((r) => (
+            <div class="mrow"><span>{r.n}</span><div class="bw" style="min-width: 0"><div class="bar" data-w={r.w} style={`--w: ${r.w}; background: ${r.fill}; height: 16px`}></div><span>{r.v}</span></div></div>
+          ))}
+        </div>
+      ))}
+    </div>
+  </section>
 
-<div style="overflow-x: auto">
-<table style="width: 100%; min-width: 760px; border-collapse: collapse; font-size: 15px">
-<thead><tr style="font-family: var(--mono); font-size: 12px; color: #A3A39D">
-<th scope="col" style="text-align: left; padding: 10px 16px 10px 0; font-weight: 400; border-bottom: 1px solid #F4F4F1">Median of 5 runs</th>
-<th scope="col" style="text-align: right; padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #F4F4F1; color: #F4F4F1">osewa QUIC</th>
-<th scope="col" style="text-align: right; padding: 10px 16px; font-weight: 400; border-bottom: 1px solid #F4F4F1">osewa WebSocket</th>
-<th scope="col" style="text-align: right; padding: 10px 16px; font-weight: 400; border-bottom: 1px solid #F4F4F1">ssh</th>
-<th scope="col" style="text-align: right; padding: 10px 0 10px 16px; font-weight: 400; border-bottom: 1px solid #F4F4F1">mosh</th>
-</tr></thead>
-<tbody style="font-family: var(--mono); font-size: 14px">
-<tr><th scope="row" style="text-align: left; padding: 12px 16px 12px 0; font-family: var(--sans); font-weight: 500; border-bottom: 1px solid #2E2E2B">Connect + run a command</th><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #FF8A73; font-weight: 600">311 ms</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">511 ms</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">1,337 ms</td><td style="text-align: right; padding: 12px 0 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">1,993 ms</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 12px 16px 12px 0; font-family: var(--sans); font-weight: 500; border-bottom: 1px solid #2E2E2B">Echo p50, idle</th><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #FF8A73; font-weight: 600">99 ms</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">101 ms</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">110 ms</td><td style="text-align: right; padding: 12px 0 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">114 ms</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 12px 16px 12px 0; font-family: var(--sans); font-weight: 500; border-bottom: 1px solid #2E2E2B">Echo p50 / p95 during a download</th><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #FF8A73; font-weight: 600">102 / 105 ms</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">104 / 143 ms</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">145 / 150 ms</td><td style="text-align: right; padding: 12px 0 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">113 / 119 ms</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 12px 16px 12px 0; font-family: var(--sans); font-weight: 500; border-bottom: 1px solid #2E2E2B">Download alone</th><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #FF8A73; font-weight: 600">39.67 MB/s</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">27.26 MB/s</td><td style="text-align: right; padding: 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">11.96 MB/s</td><td style="text-align: right; padding: 12px 0 12px 16px; border-bottom: 1px solid #2E2E2B; color: #C9C9C2">n/a</td></tr>
-<tr><th scope="row" style="text-align: left; padding: 12px 16px 12px 0; font-family: var(--sans); font-weight: 500">Download while typing</th><td style="text-align: right; padding: 12px 16px; color: #FF8A73; font-weight: 600">30.55 MB/s</td><td style="text-align: right; padding: 12px 16px; color: #C9C9C2">27.28 MB/s</td><td style="text-align: right; padding: 12px 16px; color: #C9C9C2">11.55 MB/s</td><td style="text-align: right; padding: 12px 0 12px 16px; color: #C9C9C2">15.45 MB/s</td></tr>
-</tbody>
-</table>
-</div>
-<p style="margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #A3A39D; max-width: 900px">Echo is timed with prediction off, so it's the real round trip of a key. mosh carries only the terminal, so its download is a separate ssh connection beside the session, which is why it can beat ssh's own. Runs of 2026-10-31 with osewa-bench vs, server build 377ebff.</p>
-</div>
-</section>
+  <!-- 05 START -->
+  <section class="level" id="quick-start" data-name="quick start">
+    <div class="eyebrow"><span>§5 Quick start</span><span class="dim">Linux and macOS hosts</span></div>
+    <h2>ssh once. osewa after that.</h2>
+    <div class="term hist">
+      <div><span class="pr">$</span> osewa login --service me@devbox   <span class="cm"># install, enroll, run as a service</span></div>
+      <div><span class="pr">$</span> osewa attach devbox               <span class="cm"># attach to (or create) a session</span></div>
+      <div><span class="pr">$</span> osewa forward devbox 3000         <span class="cm"># forward localhost:3000</span></div>
+      <div><span class="pr">$</span> osewa exec devbox -- make test    <span class="cm"># run a command, no terminal</span></div>
+      <div><span class="pr">$</span> osewa update devbox               <span class="cm"># upgrade the host over osewa</span></div>
+    </div>
+  </section>
 
-<section aria-labelledby="res-h" style="background: #F4F4F1">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 40px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§4 Resource use</div>
-<div style="flex: 1 1 520px; display: flex; flex-direction: column; gap: 14px">
-<h2 id="res-h" style="margin: 0; font-size: clamp(30px, 4vw, 44px); line-height: 1.05; font-weight: 600; letter-spacing: -0.04em">Light when idle. Honest about the cost.</h2>
-<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4A4A46">osewa keeps the real screen, so it parses everything the program writes, where ssh just forwards bytes. That's host CPU on heavy output, and it's why a flood can't slow your program down.</p>
-</div>
-</div>
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 32px">
-{resources.map((m) => (<Fragment>
-<div style="display: flex; flex-direction: column; gap: 12px; border-top: 2px solid #111111; padding-top: 14px">
-<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; font-weight: 600">{m.title}</span><span style="font-family: var(--mono); font-size: 12px; color: #5B5B57">{m.note}</span></div>
-<div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px">
-{m.rows.map((r) => (<Fragment>
-<div style="display: grid; grid-template-columns: 48px minmax(0, 1fr) 70px; gap: 8px; align-items: center"><span>{r.n}</span><div style="height: 14px"><div class="grow" style={`height: 14px; width: ${r.w}; min-width: 3px; background: ${r.fill}; border-radius: 0 4px 4px 0`}></div></div><span style="text-align: right">{r.v}</span></div>
-</Fragment>))}
-</div>
-</div>
-</Fragment>))}
-</div>
-<p style="margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #5B5B57; max-width: 900px">Same container and run as the lab benchmarks, osewa over TLS WebSocket. An idle session uses under 0.1% CPU on both ends for all three. In a flood the program wrote 173 MB/s under osewa, 22 MB/s under mosh and 1.2 MB/s under ssh.</p>
-</div>
-</section>
+  <!-- 06 ROADMAP -->
+  <section class="level" id="roadmap" data-name="roadmap">
+    <div class="eyebrow"><span>§6 Roadmap</span><span class="dim">world map</span></div>
+    <h2>A transport any terminal can ride, then a mux on top.</h2>
+    <div class="map"><div class="line"></div><div class="done"></div>
+      <div class="nodes">
+        <div class="node ok"><div class="dot">✓</div>M0<b>Wire protocol v0</b></div>
+        <div class="node ok"><div class="dot">✓</div>M1<b>Sessions that survive</b></div>
+        <div class="node ok"><div class="dot">✓</div>M2<b>Agent-aware</b></div>
+        <div class="node here"><div class="dot">M3</div><span class="here-tag">YOU ARE HERE</span><b>The osewa CLI</b></div>
+        <div class="node"><div class="dot">M4</div>next<b>In the Moshi app</b></div>
+        <div class="node"><div class="dot">M5</div>later<b>Mux</b></div>
+        <div class="node"><div class="dot">M6</div>later<b>Every screen</b></div>
+      </div>
+    </div>
+  </section>
 
-<section id="start" style="background: #FFFFFF">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-wrap: wrap; gap: 40px">
-<div style="flex: 1 1 340px; display: flex; flex-direction: column; gap: 16px">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§5 Quick start</div>
-<h2 style="margin: 0; font-size: clamp(30px, 4vw, 44px); line-height: 1.05; font-weight: 600; letter-spacing: -0.04em">ssh once. osewa after that.</h2>
-<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4A4A46">osewa login uses ssh one time to install itself on the host and enroll your device with an Ed25519 key. From then on it runs on its own port, and even updates go over osewa. Linux and macOS hosts.</p>
-</div>
-<div style="flex: 1 1 560px; min-width: 0; background: #111111; color: #E9E9E4; font-family: var(--mono); font-size: 14px; line-height: 1.9; padding: 24px 28px; overflow-x: auto; white-space: pre">
-<div><span style="color: #FF8A73">$</span> osewa login --service me@devbox   <span style="color: #8C8C86"># install, enroll, run as a user service</span></div>
-<div><span style="color: #FF8A73">$</span> osewa attach devbox               <span style="color: #8C8C86"># attach to (or create) a session</span></div>
-<div><span style="color: #FF8A73">$</span> osewa forward devbox 3000         <span style="color: #8C8C86"># forward localhost:3000</span></div>
-<div><span style="color: #FF8A73">$</span> osewa exec devbox -- make test    <span style="color: #8C8C86"># run a command, no terminal</span></div>
-<div><span style="color: #FF8A73">$</span> osewa update devbox               <span style="color: #8C8C86"># upgrade the host over osewa</span></div>
-</div>
-</div>
-</section>
+  <!-- 07 HOW -->
+  <section class="level" id="how" data-name="how it works">
+    <div class="eyebrow"><span>§7 How it works</span></div>
+    <h2>Separate the session from the transport. Then make it hard to kill.</h2>
+    <div class="how">
+      <div><span class="k">01 · HYBRID CARRIER</span><h3>QUIC and TLS WebSocket, raced on every connect</h3><p>QUIC gets a 300 ms head start; if UDP is blocked, the WebSocket wins. Nothing to configure.</p></div>
+      <div><span class="k">02 · HOLDER</span><h3>Connections come and go. The session stays.</h3><p>One process per session on the host keeps the PTY, the screen and your unacked input.</p></div>
+      <div><span class="k">03 · FLIGHT CONTROL</span><h3>A download can't bury your echo</h3><p>Keystrokes go ahead of bulk, and a slow link gets the latest screen, not a backlog.</p></div>
+    </div>
+    <div class="race">
+      <div class="lane q"><span>QUIC · UDP · 1 RTT</span><div class="t"><i></i></div></div>
+      <div class="lane w"><span>TLS WS · TCP · +300 ms</span><div class="t"><i></i></div></div>
+    </div>
+  </section>
 
-<section id="roadmap" aria-labelledby="road-h" style="background: #F4F4F1">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 40px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§6 Roadmap</div>
-<h2 id="road-h" style="flex: 1 1 520px; margin: 0; font-size: clamp(30px, 4vw, 44px); line-height: 1.05; font-weight: 600; letter-spacing: -0.04em">A transport any terminal can ride, then a mux on top.</h2>
-</div>
-<div style="overflow-x: auto; padding-bottom: 4px">
-<div class="road" style="min-width: 1100px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 0; row-gap: 18px">
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div class="grow" style="position: absolute; left: 0; right: 0; top: 13px; height: 4px; background: #111111; animation-delay: 0.0s"></div><div style="position: relative; width: 30px; height: 30px; border-radius: 50%; background: #111111; color: #F4F4F1; display: flex; align-items: center; justify-content: center; font-size: 14px">✓</div></div>
-<div style="font-family: var(--mono); font-size: 11px">M0 · <span style="color: #4A4A46">shipped</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">Wire protocol v0</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">An open contract for frames, sessions and channels, in docs/PROTOCOL.md.</span>
-</div>
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div class="grow" style="position: absolute; left: 0; right: 0; top: 13px; height: 4px; background: #111111; animation-delay: 0.2s"></div><div style="position: relative; width: 30px; height: 30px; border-radius: 50%; background: #111111; color: #F4F4F1; display: flex; align-items: center; justify-content: center; font-size: 14px">✓</div></div>
-<div style="font-family: var(--mono); font-size: 11px">M1 · <span style="color: #4A4A46">shipped</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">Sessions that survive</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">QUIC with TLS WebSocket fallback, sessions held on the host, exactly-once input, keystrokes ahead of bulk, the latest screen on a slow link.</span>
-</div>
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div class="grow" style="position: absolute; left: 0; right: 0; top: 13px; height: 4px; background: #111111; animation-delay: 0.5s"></div><div style="position: relative; width: 30px; height: 30px; border-radius: 50%; background: #111111; color: #F4F4F1; display: flex; align-items: center; justify-content: center; font-size: 14px">✓</div></div>
-<div style="font-family: var(--mono); font-size: 11px">M2 · <span style="color: #4A4A46">shipped</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">Agent-aware</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">Status from the agent (OSC 7501), colour queries answered on the host, kitty keys and graphics.</span>
-</div>
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div style="position: absolute; left: 0; right: 0; top: 14px; height: 2px; background: repeating-linear-gradient(90deg, #5B5B57 0 6px, transparent 6px 12px)"></div><div class="grow" style="position: absolute; left: 0; width: 15px; top: 13px; height: 4px; background: #111111; animation-delay: .75s"></div><div style="position: relative; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center"><div class="pulse" style="position: absolute; inset: 0; border-radius: 50%; background: #E0393E; opacity: .3"></div><div style="width: 16px; height: 16px; border-radius: 50%; background: #E0393E; box-shadow: 0 0 0 3px #F4F4F1"></div></div></div>
-<div style="font-family: var(--mono); font-size: 11px">M3 · <span style="color: #B8262C; font-weight: 600">release · you are here</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">Release: the osewa CLI</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">One binary for macOS and Linux. <code style="font-family: var(--mono); font-size: 13px">osewa login</code> once over ssh, then attach, forward, exec and update over osewa.</span>
-</div>
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div style="position: absolute; left: 0; right: 0; top: 14px; height: 2px; background: repeating-linear-gradient(90deg, #A9A9A2 0 6px, transparent 6px 12px)"></div><div style="position: relative; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center"><div style="width: 16px; height: 16px; border-radius: 50%; border: 2px solid #5B5B57; background: #F4F4F1; box-sizing: border-box"></div></div></div>
-<div style="font-family: var(--mono); font-size: 11px">M4 · <span style="color: #111111; font-weight: 600">next</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">In the Moshi app</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">osewa as a transport in Moshi on iOS and Android, beside mosh. The first app to ride it: resume, forwarding, and no UDP needed.</span>
-</div>
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div style="position: absolute; left: 0; right: 0; top: 14px; height: 2px; background: repeating-linear-gradient(90deg, #A9A9A2 0 6px, transparent 6px 12px)"></div><div style="position: relative; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center"><div style="width: 16px; height: 16px; border-radius: 50%; border: 2px solid #5B5B57; background: #F4F4F1; box-sizing: border-box"></div></div></div>
-<div style="font-family: var(--mono); font-size: 11px">M5 · <span style="color: #5B5B57">later</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">Mux</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">Tabs, splits and workspaces held on the host, like tmux. Every pane is its own session with its own flow control.</span>
-</div>
-<div style="display: flex; flex-direction: column; gap: 14px; padding-right: 20px">
-<div style="position: relative; height: 30px"><div style="position: absolute; left: 0; width: 15px; top: 14px; height: 2px; background: repeating-linear-gradient(90deg, #A9A9A2 0 6px, transparent 6px 12px)"></div><div style="position: relative; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center"><div style="width: 16px; height: 16px; border-radius: 50%; border: 2px solid #5B5B57; background: #F4F4F1; box-sizing: border-box"></div></div></div>
-<div style="font-family: var(--mono); font-size: 11px">M6 · <span style="color: #5B5B57">later</span></div>
-<strong style="font-size: 18px; line-height: 1.2; letter-spacing: -0.01em">Every screen</strong>
-<span style="font-size: 14px; line-height: 1.5; color: #4A4A46">A terminal, a desktop app or a phone attaches to the same layout. One terminal engine between you and the program.</span>
-</div>
-<div style="grid-column: 1 / span 5; margin-right: 12px; background: #111111; color: #F4F4F1; padding: 12px 16px; display: flex; justify-content: space-between; align-items: baseline; font-family: var(--mono); font-size: 12px"><strong style="font-family: var(--sans); font-size: 16px">Transport</strong><span style="color: #FF8A73">usable on its own, today</span></div>
-<div style="grid-column: 6 / span 2; border: 1px dashed #5B5B57; padding: 11px 16px; display: flex; justify-content: space-between; align-items: baseline; font-family: var(--mono); font-size: 12px"><strong style="font-family: var(--sans); font-size: 16px">Mux</strong><span style="color: #5B5B57">one client of the same protocol</span></div>
-</div>
-</div>
-</div>
-</section>
-
-<section id="how" style="background: #FFFFFF">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 56px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§7 How it works</div>
-<h2 style="flex: 1 1 520px; margin: 0; font-size: clamp(34px, 4.5vw, 52px); line-height: 1.02; font-weight: 600; letter-spacing: -0.04em">Separate the session from the transport. Then make the transport hard to kill.</h2>
+  <!-- 08 AGENTS -->
+  <section class="level" id="agents" data-name="agents">
+    <div class="eyebrow"><span>§8 Agents</span><span class="dim">final level</span></div>
+    <h2>The agent keeps working. You check in when it needs you.</h2>
+    <div class="status">
+      <span>OSC 7501 · devbox:main</span>
+      <span>claude-code  <span class="s">● needs input</span>  · 2m ago</span>
+      <span style="color: var(--gray)">"Run migrations on staging? [y/n]"</span>
+    </div>
+    <div class="end">
+      <div class="big">ALL LEVELS CLEAR<span class="red">.</span></div>
+      <div class="row" style="gap: 10px"><a class="btn p" href="/paper">Read the paper →</a><a class="btn" href="#quick-start" data-go="5">Quick start</a><a class="btn" href="https://github.com/rjyo/osewa">GitHub ↗</a></div>
+    </div>
+  </section>
 </div>
 
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 24px">
-
-<div style="background: #FFFFFF; border: 1px solid #D3D3CE; padding: 28px; display: flex; flex-direction: column; gap: 20px">
-<div style="display: flex; flex-direction: column; gap: 8px">
-<div style="font-family: var(--mono); font-size: 12px; color: #5B5B57">01 · hybrid carrier</div>
-<h3 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em">QUIC and TLS WebSocket, raced on every connect</h3>
-<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #4A4A46">The same frames run on both. QUIC gets a 300 ms head start; if UDP is blocked, the WebSocket wins. Nothing to configure. Both are TLS 1.3 on port 7322 with the same pinned device keys, so the race picks a road, never a weaker lock.</p>
+<!-- HUD -->
+<div class="hud tl">
+  <svg class="neko" id="neko" width="30" height="30" viewBox="0 0 100 100" aria-hidden="true"><path fill="#E0393E" d="M31 0.1C31.4 0 31.4 0 31.8 0C34.8 0.4 39 4.6 43.3 11.5C44.5 13.4 44.7 13.7 45.3 13.7C45.79 13.8 45.9 13.7 47.49 12.29L47.6 12.2C51.5 8.4 54.6 6.5 56.6 6.6C59.1 6.7 61.1 12.2 62.1 21.3C62.2 23.1 62.2 23.1 63.1 24.4C64.8 26.9 65.8 29.4 67 33.6C67.7 36.2 67.9 36.5 69.5 37.3C72.1 38.7 72.6 39.5 72.5 43.1C72.4 48.9 69.2 55.3 65.2 57.6C61.7 59.5 59.6 60.4 56 61.3C54 61.9 53.6 61.9 52.8 61.9C51 61.8 49.3 62 47.7 62.7C47.3 62.9 47.2 62.9 46.5 63C37.3 63.8 27.9 62.8 20.4 60.1L18 59.3C16.6 59 15 58.2 14.5 57.6C10.2 52.6 9 45.2 11.2 37.6C11.8 35.8 12.1 34.9 13.4 32.1C14.7 29.2 15 28.3 15.7 25.7C16.6 22.5 16.9 21.2 17.5 19.5C20 12 23.1 6.5 27.2 2.5C28.9 0.9 29.9 0.2 31 0.1ZM72.6 54.77V61H91.14C90.63 68.58 88.57 74.11 84.6 79.5C82.9 81.7 81.4 83.3 79 85.3C77.94 86.25 77.45 86.67 77.28 87.2C77.14 87.66 77.26 88.19 77.49 89.24L77.5 89.3C78.2 92.5 78.4 95.3 78.1 96.1C77.8 96.7 77.2 96.9 75 97.3C63.8 99.4 44.9 100 28.7 98.8C11 97.4 3.4 94.5 2.6 88.8C1.6 82.1 4.6 74 10.6 66.8C12 65.1 12.1 65.1 13.7 66.1C19.1 69.9 29.9 72.5 39.9 72.4L41.1 72.3V73.1C41.3 78.1 44.9 82.4 49.8 83.4C58 85 64.9 77.2 62.3 69.3C62.09 68.82 62.03 68.67 62.07 68.62C62.09 68.6 62.14 68.6 62.2 68.6C65 67.5 66.1 66.2 66.2 64C66.3 63.1 66.2 63.4 68.3 61.2C70.3 59.1 70.7 58.6 71.5 57C71.92 56.24 72.28 55.5 72.6 54.77ZM51 63.3C54.9 62.9 58.7 65 60.4 68.6C63.2 74.1 59.9 80.7 53.9 82L53.86 82.01C53.68 82.04 53.59 82.06 53.55 82.02C53.5 81.98 53.52 81.87 53.55 81.64C53.57 81.55 53.58 81.44 53.6 81.3C54 79.7 54.3 77.5 54.3 76.1C54.3 75.7 54.3 75.7 54.5 75.6C56.4 74.6 55.3 71.5 53.2 71.9C51.3 72.2 50.8 74.7 52.4 75.6C53 75.9 52.8 79.1 52.2 81.9C52.1 82.3 50.9 82.2 49.2 81.7C39.4 78.8 40.9 64.3 51 63.3ZM33.8 4.8C32.4 4.1 31.3 5.2 30.3 8.2C29.2 11.6 28.7 15.5 28.7 20.6C28.7 20.95 28.7 21.25 28.69 21.51C28.69 22.45 28.68 22.87 28.83 22.94C28.96 22.99 29.17 22.82 29.57 22.52C29.69 22.43 29.84 22.32 30 22.2C33.5 19.6 37.6 17.6 40.9 16.9C41.9 16.6 41.9 16.5 40.9 14.4C38.4 9.6 35.5 5.6 33.8 4.8ZM54.4 30.6C51.3 29.9 47.9 31.5 45.9 34.5C45 35.8 45.2 36.2 46.4 35.5C50.7 32.8 54.8 32.8 58.8 35.4C59.9 36.2 60.2 36 59.6 34.8C58.5 32.6 56.6 31.1 54.4 30.6ZM57.9 10.8C57.1 10.3 55.7 12.6 54.5 16.2C54.22 17.03 54.1 17.4 54.23 17.63C54.33 17.82 54.61 17.92 55.1 18.1C56.3 18.6 57.3 19.2 58.7 20.1C58.8 20.17 58.89 20.23 58.98 20.29C59.52 20.67 59.82 20.88 59.97 20.8C60.14 20.71 60.09 20.19 59.96 19.04C59.94 18.88 59.92 18.7 59.9 18.5C59.5 14.9 58.6 11.3 57.9 10.8Z"></path><path class="neko-paw" fill="#E0393E" d="M86.9 26.7C93.1 25.9 98.4 30.4 98.4 36.2C98.4 40 96.9 42.2 93.1 43.7C90.7 44.7 90.5 45.2 91 50.5C91.43 56.25 91.34 60.99 90.68 65.11C89.14 68.36 85.83 70.6 82 70.6C76.7 70.6 72.4 66.3 72.4 61C72.4 60.33 72.47 59.67 72.6 59.04V54.77C73.96 51.62 74.48 48.41 74.8 42.9C75.1 37.6 75.5 35.5 76.8 33.2C79.1 29.2 82.2 27.2 86.9 26.7Z"></path></svg>
+  <span class="word" style="font-size: 15px; text-transform: none; letter-spacing: 0">osewa</span>
+  <span class="lv">LV <b id="lvn">00</b> / <span id="lvt">08</span><span class="nm"> · <span id="lvname">boot</span></span></span>
 </div>
-<div role="group" aria-label="Network" style="display: flex; gap: 8px; flex-wrap: wrap">
-<button type="button" class="tg" data-set="udp:open" aria-pressed="true" style="min-height: 44px; padding: 0 16px; border: 1px solid #111111; font-family: var(--mono); font-size: 13px; cursor: pointer">UDP open</button>
-<button type="button" class="tg" data-set="udp:blocked" aria-pressed="false" style="min-height: 44px; padding: 0 16px; border: 1px solid #111111; font-family: var(--mono); font-size: 13px; cursor: pointer">UDP blocked</button>
+<div class="hud tr">
+  <a class="paper" href="/paper">paper</a>
+  <span class="keys">↑↓ · W S · 1–9</span>
+  <span><span class="proto">QUIC </span><span id="ping">102</span> ms <span class="sig"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:12px"></i></span></span>
 </div>
-<div style="display: flex; align-items: stretch; gap: 14px; font-family: var(--mono); font-size: 12px">
-<div class="rbox" style="flex: 0 0 72px; border: 1px solid #111111; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px">client</div>
-<div style="flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 26px; min-width: 0">
-<div style="display: flex; flex-direction: column; gap: 6px">
-<div class="rlabel" style="display: flex; justify-content: space-between; gap: 8px"><span>QUIC · UDP</span><span style="color: #5B5B57">1 RTT</span></div>
-<div style="position: relative; height: 14px">
-<div style="position: absolute; left: 0; right: 0; top: 6px; height: 2px; background: #D3D3CE"></div>
-<div data-when="udp:open" style="display: contents"><div class="q-go" style="position: absolute; top: 0; width: 14px; height: 14px; border-radius: 50%; background: #E0393E"></div></div>
-<div data-when="udp:blocked" hidden style="display: contents"><div class="q-stall" style="position: absolute; top: 0; width: 14px; height: 14px; border-radius: 50%; background: #E0393E"></div><div class="x-in" style="position: absolute; left: calc(38% + 20px); top: -4px; font-size: 16px; color: #B8262C">✕ dropped</div></div>
-</div>
-</div>
-<div style="display: flex; flex-direction: column; gap: 6px">
-<div class="rlabel" style="display: flex; justify-content: space-between; gap: 8px"><span>TLS WebSocket · TCP</span><span style="color: #5B5B57">+300 ms</span></div>
-<div style="position: relative; height: 14px">
-<div style="position: absolute; left: 0; right: 0; top: 6px; height: 2px; background: #D3D3CE"></div>
-<div class="w-go" style="position: absolute; top: 0; width: 14px; height: 14px; border-radius: 50%; background: #55554F"></div>
-</div>
-</div>
-</div>
-<div class="rbox" style="flex: 0 0 72px; border: 1px solid #111111; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px">host</div>
-</div>
-<div style="font-family: var(--mono); font-size: 13px; padding: 12px 14px; background: #F4F4F1"><span data-when="udp:open">connected over QUIC in one round trip</span><span data-when="udp:blocked" hidden>UDP blocked → connected over TLS WebSocket, +300 ms</span></div>
+<nav class="idx" id="idx" aria-label="Levels"></nav>
+<div class="banner" id="banner"></div>
+<div class="bot">
+  <div class="segs" id="segs"><div class="fill" id="segfill"></div><svg class="runner" id="runner" viewBox="0 0 100 100"><path fill="#E0393E" d="M31 0.1C31.4 0 31.4 0 31.8 0C34.8 0.4 39 4.6 43.3 11.5C44.5 13.4 44.7 13.7 45.3 13.7C45.79 13.8 45.9 13.7 47.49 12.29L47.6 12.2C51.5 8.4 54.6 6.5 56.6 6.6C59.1 6.7 61.1 12.2 62.1 21.3C62.2 23.1 62.2 23.1 63.1 24.4C64.8 26.9 65.8 29.4 67 33.6C67.7 36.2 67.9 36.5 69.5 37.3C72.1 38.7 72.6 39.5 72.5 43.1C72.4 48.9 69.2 55.3 65.2 57.6C61.7 59.5 59.6 60.4 56 61.3C54 61.9 53.6 61.9 52.8 61.9C51 61.8 49.3 62 47.7 62.7C47.3 62.9 47.2 62.9 46.5 63C37.3 63.8 27.9 62.8 20.4 60.1L18 59.3C16.6 59 15 58.2 14.5 57.6C10.2 52.6 9 45.2 11.2 37.6C11.8 35.8 12.1 34.9 13.4 32.1C14.7 29.2 15 28.3 15.7 25.7C16.6 22.5 16.9 21.2 17.5 19.5C20 12 23.1 6.5 27.2 2.5C28.9 0.9 29.9 0.2 31 0.1ZM72.6 54.77V61H91.14C90.63 68.58 88.57 74.11 84.6 79.5C82.9 81.7 81.4 83.3 79 85.3C77.94 86.25 77.45 86.67 77.28 87.2C77.14 87.66 77.26 88.19 77.49 89.24L77.5 89.3C78.2 92.5 78.4 95.3 78.1 96.1C77.8 96.7 77.2 96.9 75 97.3C63.8 99.4 44.9 100 28.7 98.8C11 97.4 3.4 94.5 2.6 88.8C1.6 82.1 4.6 74 10.6 66.8C12 65.1 12.1 65.1 13.7 66.1C19.1 69.9 29.9 72.5 39.9 72.4L41.1 72.3V73.1C41.3 78.1 44.9 82.4 49.8 83.4C58 85 64.9 77.2 62.3 69.3C62.09 68.82 62.03 68.67 62.07 68.62C62.09 68.6 62.14 68.6 62.2 68.6C65 67.5 66.1 66.2 66.2 64C66.3 63.1 66.2 63.4 68.3 61.2C70.3 59.1 70.7 58.6 71.5 57C71.92 56.24 72.28 55.5 72.6 54.77ZM51 63.3C54.9 62.9 58.7 65 60.4 68.6C63.2 74.1 59.9 80.7 53.9 82L53.86 82.01C53.68 82.04 53.59 82.06 53.55 82.02C53.5 81.98 53.52 81.87 53.55 81.64C53.57 81.55 53.58 81.44 53.6 81.3C54 79.7 54.3 77.5 54.3 76.1C54.3 75.7 54.3 75.7 54.5 75.6C56.4 74.6 55.3 71.5 53.2 71.9C51.3 72.2 50.8 74.7 52.4 75.6C53 75.9 52.8 79.1 52.2 81.9C52.1 82.3 50.9 82.2 49.2 81.7C39.4 78.8 40.9 64.3 51 63.3ZM33.8 4.8C32.4 4.1 31.3 5.2 30.3 8.2C29.2 11.6 28.7 15.5 28.7 20.6C28.7 20.95 28.7 21.25 28.69 21.51C28.69 22.45 28.68 22.87 28.83 22.94C28.96 22.99 29.17 22.82 29.57 22.52C29.69 22.43 29.84 22.32 30 22.2C33.5 19.6 37.6 17.6 40.9 16.9C41.9 16.6 41.9 16.5 40.9 14.4C38.4 9.6 35.5 5.6 33.8 4.8ZM54.4 30.6C51.3 29.9 47.9 31.5 45.9 34.5C45 35.8 45.2 36.2 46.4 35.5C50.7 32.8 54.8 32.8 58.8 35.4C59.9 36.2 60.2 36 59.6 34.8C58.5 32.6 56.6 31.1 54.4 30.6ZM57.9 10.8C57.1 10.3 55.7 12.6 54.5 16.2C54.22 17.03 54.1 17.4 54.23 17.63C54.33 17.82 54.61 17.92 55.1 18.1C56.3 18.6 57.3 19.2 58.7 20.1C58.8 20.17 58.89 20.23 58.98 20.29C59.52 20.67 59.82 20.88 59.97 20.8C60.14 20.71 60.09 20.19 59.96 19.04C59.94 18.88 59.92 18.7 59.9 18.5C59.5 14.9 58.6 11.3 57.9 10.8Z"></path><path class="neko-paw" fill="#E0393E" d="M86.9 26.7C93.1 25.9 98.4 30.4 98.4 36.2C98.4 40 96.9 42.2 93.1 43.7C90.7 44.7 90.5 45.2 91 50.5C91.43 56.25 91.34 60.99 90.68 65.11C89.14 68.36 85.83 70.6 82 70.6C76.7 70.6 72.4 66.3 72.4 61C72.4 60.33 72.47 59.67 72.6 59.04V54.77C73.96 51.62 74.48 48.41 74.8 42.9C75.1 37.6 75.5 35.5 76.8 33.2C79.1 29.2 82.2 27.2 86.9 26.7Z"></path></svg></div>
+  <div class="hint"><span id="cleared">0 / 9 cleared</span><a href="/paper">the paper →</a></div>
 </div>
 
-<div style="background: #FFFFFF; border: 1px solid #D3D3CE; padding: 28px; display: flex; flex-direction: column; gap: 20px">
-<div style="display: flex; flex-direction: column; gap: 8px">
-<div style="font-family: var(--mono); font-size: 12px; color: #5B5B57">02 · the host keeps the real screen</div>
-<h3 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em">Connections come and go. The session stays.</h3>
-<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #4A4A46">Each terminal runs in its own process on the host and keeps the exact screen with libghostty-vt. Reconnecting sends one snapshot, not a replay. Pings spot a dead path in about a second, and unacked keys are resent.</p>
-</div>
-<div class="sess" style="display: flex; align-items: center; gap: 0; font-family: var(--mono); font-size: 12px; padding: 12px 0">
-<div style="flex: 0 0 120px; border: 1px solid #111111; padding: 12px; display: flex; flex-direction: column; gap: 4px; position: relative; min-height: 64px">
-<span>laptop</span>
-<span class="cyc1" style="position: absolute; left: 12px; top: 34px; color: #5B5B57">wi-fi</span>
-<span class="cyc2" style="position: absolute; left: 12px; top: 34px; color: #B8262C">asleep</span>
-<span class="cyc3" style="position: absolute; left: 12px; top: 34px; color: #5B5B57">5G</span>
-</div>
-<div class="sess-link" style="flex: 1 1 auto; position: relative; height: 40px; min-width: 60px">
-<div class="lnk" style="position: absolute; left: 0; right: 0; top: 19px; height: 2px; background: #111111"></div>
-<span class="cyc2" style="position: absolute; left: 50%; top: -2px; transform: translateX(-50%); color: #B8262C; white-space: nowrap">link lost</span>
-<span class="cyc3" style="position: absolute; left: 50%; top: -2px; transform: translateX(-50%); color: #5B5B57; white-space: nowrap">resumed 0.4 s</span>
-</div>
-<div style="flex: 0 0 170px; background: #111111; color: #F4F4F1; padding: 12px; display: flex; flex-direction: column; gap: 6px">
-<span>host · session</span>
-<span style="display: flex; align-items: center; gap: 6px; color: #9FE0A8"><span class="pulse" style="width: 8px; height: 8px; border-radius: 50%; background: #9FE0A8"></span>PTY alive</span>
-<span style="color: #C9C9C2">screen kept · 0 keys lost</span>
-</div>
-</div>
-<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: #D3D3CE; border: 1px solid #D3D3CE; font-size: 13px; text-align: center">
-<div style="background: #FFFFFF; padding: 12px 8px; display: flex; flex-direction: column; gap: 2px"><strong style="font-size: 18px">~1 s</strong><span style="color: #5B5B57">dead path detected</span></div>
-<div style="background: #FFFFFF; padding: 12px 8px; display: flex; flex-direction: column; gap: 2px"><strong style="font-size: 18px">500 ms</strong><span style="color: #5B5B57">between redial races</span></div>
-<div style="background: #FFFFFF; padding: 12px 8px; display: flex; flex-direction: column; gap: 2px"><strong style="font-size: 18px">exactly once</strong><span style="color: #5B5B57">every keystroke</span></div>
-</div>
-</div>
+<div class="spacer" id="spacer"></div>
 
-<div style="background: #FFFFFF; border: 1px solid #D3D3CE; padding: 28px; display: flex; flex-direction: column; gap: 20px; grid-column: 1 / -1">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 40px; align-items: flex-end; justify-content: space-between">
-<div style="display: flex; flex-direction: column; gap: 8px; max-width: 640px">
-<div style="font-family: var(--mono); font-size: 12px; color: #5B5B57">03 · keystrokes first</div>
-<h3 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em">A download can't bury your echo</h3>
-<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #4A4A46">Frames go out by priority: control, terminals, exec, then forwards. While you type, bulk is held to the path's bandwidth-delay product plus 40 ms of queue. Each forward gets its own QUIC stream, so a lost packet in a download never blocks a key.</p>
-</div>
-<div role="group" aria-label="Protocol" style="display: flex; gap: 8px">
-<button type="button" class="tg" data-set="mode:ssh" aria-pressed="true" style="min-height: 44px; padding: 0 16px; border: 1px solid #111111; font-family: var(--mono); font-size: 13px; cursor: pointer">ssh</button>
-<button type="button" class="tg" data-set="mode:osewa" aria-pressed="false" style="min-height: 44px; padding: 0 16px; border: 1px solid #111111; font-family: var(--mono); font-size: 13px; cursor: pointer">osewa</button>
-</div>
-</div>
-<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 20px">
-<div style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 10px; font-family: var(--mono); font-size: 12px">
-<div data-when="mode:osewa" hidden style="display: contents">
-<div style="display: flex; flex-direction: column; gap: 4px">
-<span style="color: #5B5B57">terminal stream · priority</span>
-<div style="position: relative; height: 26px; border: 1px solid #111111; overflow: hidden">
-<div class="key-fast" style="position: absolute; top: 3px; width: 18px; height: 18px; background: #E0393E; color: #FFFFFF; font-size: 11px; display: flex; align-items: center; justify-content: center">k</div>
-</div>
-</div>
-<div style="display: flex; flex-direction: column; gap: 4px">
-<span style="color: #5B5B57">download · its own stream, capped at BDP + 40 ms</span>
-<div style="position: relative; height: 26px; border: 1px solid #111111; overflow: hidden">
-<div class="flow" style="position: absolute; top: 3px; left: 0; width: 200%; display: flex; gap: 10px">
-<span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span>
-</div>
-</div>
-</div>
-</div>
-<div data-when="mode:ssh" style="display: contents">
-<div style="display: flex; flex-direction: column; gap: 4px">
-<span style="color: #5B5B57">one TCP stream · keys queue behind the download</span>
-<div style="position: relative; height: 26px; border: 1px solid #111111; overflow: hidden">
-<div class="flow" style="position: absolute; top: 3px; left: 0; width: 200%; display: flex; gap: 4px">
-<span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span><span style="flex: 0 0 36px; height: 18px; background: #A9A9A2"></span>
-</div>
-<div class="key-slow" style="position: absolute; top: 3px; width: 18px; height: 18px; background: #E0393E; color: #FFFFFF; font-size: 11px; display: flex; align-items: center; justify-content: center">k</div>
-</div>
-</div>
-<div style="height: 46px; display: flex; align-items: center; color: #5B5B57">deep buffer: the queue grows until each key waits behind it</div>
-</div>
-</div>
-<div style="flex: 0 0 220px; display: flex; flex-direction: column; gap: 4px; border-left: 2px solid #111111; padding-left: 18px">
-<span style="font-family: var(--mono); font-size: 12px; color: #5B5B57">echo p50, cellular, during a download</span>
-<span style="font-size: 44px; font-weight: 600; letter-spacing: -0.04em"><span data-when="mode:ssh">1,714 ms</span><span data-when="mode:osewa" hidden>138 ms</span></span>
-</div>
-</div>
-</div>
-</div>
-</div>
-</section>
+<script is:inline>
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const D = 1600;                       // distance between levels
+const P = 900;                        // focal length, like CSS perspective
+const NEAR = P - 30, FAR = 9000;
+const FLOOR = 430, WALL = 1400, CEIL = -970, GRID = 160;
+const levels = [...document.querySelectorAll('.level')];
+const N = levels.length;
+const pad = n => String(n).padStart(2, '0');
+levels.forEach((l, i) => { l.style.zIndex = N - i; l.fit = 1; });
 
-<section id="agents" aria-labelledby="agents-h" style="background: #F4F4F1">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-direction: column; gap: 48px">
-<div style="display: flex; flex-wrap: wrap; gap: 16px 56px; align-items: baseline">
-<div style="font-family: var(--mono); font-size: 13px; color: #B8262C">§8 Built for agents</div>
-<h2 id="agents-h" style="flex: 1 1 520px; margin: 0; font-size: clamp(30px, 4vw, 44px); line-height: 1.05; font-weight: 600; letter-spacing: -0.04em">The agent keeps working. You check in when it needs you.</h2>
-</div>
-<p style="margin: 0; font-size: 18px; line-height: 1.6; color: #2A2A28; max-width: 860px">A coding agent runs for hours in a full-screen TUI, and you check in from wherever you are. osewa keeps that screen on the host in libghostty-vt, so what the agent's terminal does reaches you whole on every reconnect. The host answers the agent's queries itself, so it never waits on a client that's asleep.</p>
+const motes = [];
+for (let k = 0; k < 160; k++) {
+  const x = (Math.random() * 2 - 1) * 1300, y = (Math.random() * 2 - 1) * 650, z = 600 - Math.random() * (N * D);
+  if (Math.abs(x) < 620 && Math.abs(y) < 440) continue;  // keep motes out of the card
+  motes.push({ x, y, z, red: Math.random() < .18 });
+}
 
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 32px">
+const cv = document.getElementById('stage'), g = cv.getContext('2d');
+let W = 0, H = 0;
+function size() {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 
-<div style="display: flex; flex-direction: column; gap: 14px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em">Status, from the agent to you (OSC 7501)</h3>
-<div style="background: #111111; color: #E9E9E4; font-family: var(--mono); font-size: 13px; line-height: 1.8; padding: 18px 20px; overflow-x: auto; white-space: pre">
-<div><span style="color: #FF8A73">$</span> osewa ls devbox</div>
-<div style="color: #8C8C86">ID     TITLE         IDLE  STATUS</div>
-<div style="position: relative">api    claude-code   2h    <span class="ag1" style="position: absolute; color: #E9E9E4">working 40%</span><span class="ag2" style="position: absolute; color: #FF8A73">blocked: permission — Apply?</span><span class="ag3" style="position: absolute; color: #9FE0A8">done</span>&nbsp;</div>
-<div>web    codex         14m   working</div>
-<div>logs   tail -f       3d    -</div>
-</div>
-<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #4A4A46">osewa keeps each session's status on the host. When you attach, a blocked or done agent shows a one-line notice. A new prompt (OSC 133) ends a working or blocked status.</p>
-</div>
+// Per-level environment colour.
+const envs = levels.map(l => l.dataset.env || (l.classList.contains('dark') ? '#111111' : '#F4F4F1'));
+const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 
-<div style="display: flex; flex-direction: column; gap: 14px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em">What the agent's output may do</h3>
-<div style="border: 1px solid #111111; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; font-family: var(--mono); font-size: 12px">
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 96px; gap: 10px; color: #5B5B57"><span>agent</span><span style="text-align: center">host</span><span style="text-align: right">your terminal</span></div>
+// HUD: index, segments.
+const idx = document.getElementById('idx'), segs = document.getElementById('segs'), spacer = document.getElementById('spacer');
+segs.style.gridTemplateColumns = `repeat(${N}, 1fr)`;
+const hl = document.createElement('span');
+hl.className = 'hl';
+idx.appendChild(hl);
+const segfill = document.getElementById('segfill');
+const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1.8 6.4 4.6 9.2 10.4 2.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"/></svg>';
+const PLAY = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1 9 5 2 9Z" fill="currentColor"/></svg>';
+document.getElementById('lvt').textContent = pad(N - 1);
+const visited = new Set([0]);
+levels.forEach((l, i) => {
+  spacer.appendChild(document.createElement('div'));
+  const b = document.createElement('button');
+  b.innerHTML = `<span class="ck"></span><span>${pad(i)}</span><span>${l.dataset.name}</span>`;
+  b.onclick = () => go(i);
+  idx.insertBefore(b, hl);
+  const s = document.createElement('button');
+  s.setAttribute('aria-label', 'Level ' + i);
+  s.onclick = () => go(i);
+  segs.insertBefore(s, document.getElementById('runner'));
+});
+const go = i => scrollTo({ top: Math.max(0, Math.min(N - 1, i)) * innerHeight, behavior: reduce ? 'auto' : 'smooth' });
+for (const a of document.querySelectorAll('[data-go]')) a.addEventListener('click', e => { e.preventDefault(); go(+a.dataset.go); });
 
-<div style="display: flex; flex-direction: column; gap: 6px">
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 96px; gap: 10px; align-items: center">
-<span style="font-weight: 600; color: #111111">reaches</span>
-<div style="position: relative; height: 12px"><div style="position: absolute; left: 0; right: 0; top: 5px; height: 2px; background: #111111"></div><div style="position: absolute; left: 50%; top: -2px; width: 2px; height: 16px; background: #5B5B57"></div><div class="ln-pass" style="position: absolute; top: 0; width: 12px; height: 12px; border-radius: 50%; background: #E0393E"></div></div>
-<span style="text-align: right">✓ drawn</span>
-</div>
-<div style="font-family: var(--sans); font-size: 13px; line-height: 1.5; color: #4A4A46">Prompt marks, links, titles, current directory, pointer shape, notifications (live only), clipboard copies, kitty keys, kitty graphics and kitty paste events.</div>
-</div>
+addEventListener('keydown', e => {
+  if (['ArrowDown', 's', 'S', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); go(cur + 1); }
+  else if (['ArrowUp', 'w', 'W', 'PageUp'].includes(e.key)) { e.preventDefault(); go(cur - 1); }
+  else if (/^[1-9]$/.test(e.key)) go(+e.key - 1);
+});
 
-<div style="display: flex; flex-direction: column; gap: 6px">
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 96px; gap: 10px; align-items: center">
-<span style="font-weight: 600; color: #111111">answered</span>
-<div style="position: relative; height: 12px"><div style="position: absolute; left: 0; width: 50%; top: 5px; height: 2px; background: #111111"></div><div style="position: absolute; left: 50%; right: 0; top: 5px; height: 2px; background: repeating-linear-gradient(90deg, #A9A9A2 0 4px, transparent 4px 8px)"></div><div style="position: absolute; left: 50%; top: -2px; width: 2px; height: 16px; background: #5B5B57"></div><div class="ln-ans" style="position: absolute; top: 0; width: 12px; height: 12px; border-radius: 50%; background: #E0393E"></div></div>
-<span style="text-align: right; color: #5B5B57">asleep is fine</span>
-</div>
-<div style="font-family: var(--sans); font-size: 13px; line-height: 1.5; color: #4A4A46">Colour and light/dark queries are answered on the host, from your terminal's last known colours. Status is kept there too.</div>
-</div>
+let mx = 0, my = 0;
+addEventListener('pointermove', e => { mx = e.clientX / innerWidth - .5; my = e.clientY / innerHeight - .5; });
 
-<div style="display: flex; flex-direction: column; gap: 6px">
-<div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 96px; gap: 10px; align-items: center">
-<span style="font-weight: 600; color: #111111">dropped</span>
-<div style="position: relative; height: 12px"><div style="position: absolute; left: 0; width: 50%; top: 5px; height: 2px; background: #111111"></div><div style="position: absolute; left: 50%; top: -2px; width: 2px; height: 16px; background: #5B5B57"></div><div class="ln-drop" style="position: absolute; top: 0; width: 12px; height: 12px; border-radius: 50%; background: #55554F"></div></div>
-<span style="text-align: right; color: #B8262C">✕ never sent</span>
-</div>
-<div style="font-family: var(--sans); font-size: 13px; line-height: 1.5; color: #4A4A46">Other OSCs, DCS (including tmux passthrough), APC, PM and SOS. Clipboard reads need <code style="font-family: var(--mono); font-size: 12px">--clipboard-read</code>, and only the owner gets them.</div>
-</div>
-</div>
-</div>
-</div>
+const banner = document.getElementById('banner');
+let bannerT;
+function announce(i, prev) {
+  const clear = i > prev ? `<span class="c">LV ${pad(prev)} CLEAR</span><span>·</span>` : '';
+  banner.innerHTML = `${clear}${PLAY}<span>LEVEL ${pad(i)} · ${levels[i].dataset.name.toUpperCase()}</span>`;
+  banner.classList.add('show');
+  const neko = document.getElementById('neko');
+  neko.classList.remove('wave'); void neko.getBBox(); neko.classList.add('wave');
+  clearTimeout(bannerT);
+  bannerT = setTimeout(() => banner.classList.remove('show'), 1600);
+}
 
-<div style="display: flex; flex-direction: column; gap: 14px">
-<h3 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em">Every sequence: what mosh and osewa do with it</h3>
-<div style="overflow-x: auto">
-<table class="seq" style="width: 100%; min-width: 960px; border-collapse: collapse; font-size: 14px; line-height: 1.5">
-<thead><tr style="font-family: var(--mono); font-size: 12px; color: #5B5B57; text-align: left">
-<th scope="col" style="padding: 10px 16px 10px 0; font-weight: 500; border-bottom: 1px solid #111111">Sequence</th>
-<th scope="col" style="padding: 10px 16px; font-weight: 500; border-bottom: 1px solid #111111">What it is</th>
-<th scope="col" style="padding: 10px 16px; font-weight: 500; border-bottom: 1px solid #111111">mosh 1.4</th>
-<th scope="col" style="padding: 10px 0 10px 16px; font-weight: 600; border-bottom: 1px solid #111111; color: #111111">osewa</th>
-</tr></thead>
-<tbody>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 7501</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Agent status: working, blocked, done, idle, with progress and a message</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Kept per session: <code style="font-family: var(--mono); font-size: 13px">osewa ls</code> shows it, and attach shows a notice when the agent is blocked or done</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 133</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Prompt marks</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Passed to your terminal; a new prompt ends a working or blocked status</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 9, OSC 777</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Desktop notifications</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Sent to your terminal as one, live only, never replayed on reconnect</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 52</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Clipboard</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #5B5B57; border-bottom: 1px solid #D3D3CE">Copies, selection <code style="font-family: var(--mono); font-size: 13px">c</code> only; no reads</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Copies reach your clipboard; reads only with <code style="font-family: var(--mono); font-size: 13px">--clipboard-read</code>, owner only</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 8</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Hyperlinks</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Kept in the screen and passed through</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 7</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Current directory</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Passed through</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 0, 1, 2</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Window and tab titles</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #5B5B57; border-bottom: 1px solid #D3D3CE">Passed through, cut to 256 characters</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Passed through, control characters stripped</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 4, 10, 11, 12, 21 and resets 104, 110–112</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Palette, foreground, background and cursor colors</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Queries go unanswered; colors the program sets are dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Your terminal&#x27;s colors answer the agent&#x27;s queries; colors it sets are drawn on your terminal and reset on detach</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">DSR 996, mode 2031</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Light or dark appearance</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>No answer</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Answered from your terminal&#x27;s, and reported when it changes</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">OSC 22</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Pointer shape</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Your terminal&#x27;s pointer follows</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">Kitty keyboard (<code style="font-family: var(--mono); font-size: 13px">CSI u</code>)</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Unambiguous keys and modifiers</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Not supported</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Supported</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #D3D3CE">Kitty graphics (<code style="font-family: var(--mono); font-size: 13px">APC G</code>)</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #D3D3CE">Images, including animation</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #D3D3CE"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #D3D3CE">Drawn on terminals that draw them (kitty, Ghostty, WezTerm; <code style="font-family: var(--mono); font-size: 13px">--graphics</code> to choose): kept on the host and redrawn on reconnect; images sent inline only</td></tr>
-<tr><th scope="row" style="text-align: left; vertical-align: top; padding: 12px 16px 12px 0; font-family: var(--mono); font-size: 13px; font-weight: 500; white-space: nowrap; border-bottom: 1px solid #111111">OSC 5522</th><td data-label="What it is" style="vertical-align: top; padding: 12px 16px; color: #4A4A46; border-bottom: 1px solid #111111">Kitty&#x27;s clipboard protocol</td><td data-label="mosh 1.4" style="vertical-align: top; padding: 12px 16px; color: #8F8F89; border-bottom: 1px solid #111111"><span aria-hidden="true" style="margin-right: 6px; color: #D98A86; font-size: 12px">✕</span>Dropped</td><td data-label="osewa" style="vertical-align: top; padding: 12px 0 12px 16px; color: #111111; border-bottom: 1px solid #111111">Reads wait for the owner like OSC 52&#x27;s, text only, with <code style="font-family: var(--mono); font-size: 13px">--clipboard-read</code>; pastes arrive as Kitty paste events when the program asks for them</td></tr>
-</tbody>
-</table>
-</div>
-<p style="margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #5B5B57; max-width: 900px">Everything else (other OSCs, DCS including tmux passthrough, APC, PM, SOS) is dropped before it reaches your terminal. The remote program doesn't get to command it. mosh column: mosh 1.4.0, its latest release, read from its source; its main branch has since added OSC 8 hyperlinks, not yet released.</p>
-</div>
-</div>
-</section>
+let cam = 0, cur = -1, px = 0, py = 0, lastKey = '';
+function fit() {
+  size();
+  levels.forEach(l => { l.fit = Math.min(1, (innerHeight - 170) / l.offsetHeight, (innerWidth - 24) / l.offsetWidth); });
+  lastKey = '';
+}
+fit();
+document.fonts.ready.then(fit);
+addEventListener('resize', fit);
 
-<section aria-labelledby="faq-h" style="background: #FFFFFF">
-<div style="max-width: 1200px; margin: 0 auto; padding: 88px 24px; display: flex; flex-wrap: wrap; gap: 40px">
-<h2 id="faq-h" style="flex: 1 1 280px; margin: 0; font-size: clamp(30px, 4vw, 44px); line-height: 1.05; font-weight: 600; letter-spacing: -0.04em">FAQ</h2>
-<div style="flex: 2 1 560px; display: flex; flex-direction: column; border-top: 1px solid #111111">
-<details id="security" open style="border-bottom: 1px solid #D3D3CE; padding: 18px 0"><summary style="font-size: 18px; font-weight: 500; min-height: 28px">Is it as safe as ssh?</summary><p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #4A4A46">The cryptography is: TLS 1.3 only, and both ends prove who they are with Ed25519 keys on every connection, no passwords. The server&#x27;s key comes to you during enrollment over ssh, so there&#x27;s no &ldquo;trust this host?&rdquo; prompt, and a revoked device is out on its next connect. Where ssh is ahead is age: OpenSSH has decades of audits and osewa has none yet, it adds a second open port, and its device key is a plain file (mode 0600), not one behind a passphrase or an agent.</p></details>
-<details style="border-bottom: 1px solid #D3D3CE; padding: 18px 0"><summary style="font-size: 18px; font-weight: 500; min-height: 28px">Does it replace ssh?</summary><p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #4A4A46">For interactive work, yes. You need ssh once, to enroll; after that osewa runs on its own port (TCP and UDP 7322).</p></details>
-<details style="border-bottom: 1px solid #D3D3CE; padding: 18px 0"><summary style="font-size: 18px; font-weight: 500; min-height: 28px">What if UDP is blocked?</summary><p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #4A4A46">The client races QUIC against a TLS WebSocket and takes whichever connects first. With UDP blocked, that costs 300 ms per connect.</p></details>
-<details style="border-bottom: 1px solid #D3D3CE; padding: 18px 0"><summary style="font-size: 18px; font-weight: 500; min-height: 28px">How is it different from mosh?</summary><p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #4A4A46">mosh keeps sessions alive and predicts echo too, but it is UDP-only and carries only the terminal. osewa adds TCP fallback, port forwarding and exec, and keeps keystrokes ahead of bulk data on the same connection.</p></details>
-<details style="border-bottom: 1px solid #D3D3CE; padding: 18px 0"><summary style="font-size: 18px; font-weight: 500; min-height: 28px">Does it work behind a VPN or tailnet?</summary><p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #4A4A46">Yes. QUIC starts with 1200-byte packets to fit a WireGuard MTU, and our Mac-to-Mac runs to Tokyo, in the README, were taken over Tailscale.</p></details>
-<details style="border-bottom: 1px solid #D3D3CE; padding: 18px 0"><summary style="font-size: 18px; font-weight: 500; min-height: 28px">Can a program on the host reach into my terminal?</summary><p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #4A4A46">Only through what osewa lets past. The screen is parsed on the host, and only known sequences reach your terminal: other OSCs, DCS (including tmux passthrough), APC, PM and SOS are dropped, and titles lose their control characters. Clipboard reads go only to the session&#x27;s owner, and only when they attached with <code style="font-family: var(--mono); font-size: 13px">--clipboard-read</code>.</p></details>
-</div>
-</div>
-</section>
+// Camera space: world z plus cam. Visible while zc < NEAR.
+function draw(env, fg, ox, oy) {
+  const cx = W / 2, cy = H / 2;
+  const proj = (x, y, zc) => { const k = P / (P - zc); return [ox + (x + cx - ox) * k, oy + (y + cy - oy) * k, k]; };
+  const fog = zc => Math.max(0, Math.min(1, 1 + zc / (FAR * .8)));
+  const ink = a => `rgba(${fg},${a.toFixed(3)})`;
+  g.fillStyle = `rgb(${env})`;
+  g.fillRect(0, 0, W, H);
+  g.lineWidth = 1;
+  const seg = (x1, y1, z1, x2, y2, z2, a) => {
+    if (a < .004) return;
+    // Clip against the near plane so lines through the camera don't explode.
+    if (z1 > NEAR && z2 > NEAR) return;
+    if (z1 > NEAR) { const t = (NEAR - z1) / (z2 - z1); x1 += (x2 - x1) * t; y1 += (y2 - y1) * t; z1 = NEAR; }
+    if (z2 > NEAR) { const t = (NEAR - z2) / (z1 - z2); x2 += (x1 - x2) * t; y2 += (y1 - y2) * t; z2 = NEAR; }
+    const [a1, b1] = proj(x1, y1, z1), [a2, b2] = proj(x2, y2, z2);
+    g.strokeStyle = ink(a);
+    g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke();
+  };
+  const STEP = 600;
+  // Lines running down the corridor, split so each piece can fade with distance.
+  for (let zc = NEAR; zc > -FAR; zc -= STEP) {
+    const z2 = Math.max(-FAR, zc - STEP), a = .13 * fog((zc + z2) / 2);
+    for (let x = -WALL; x <= WALL; x += GRID) seg(x, FLOOR, zc, x, FLOOR, z2, a);
+    for (let y = FLOOR; y >= CEIL; y -= GRID) {
+      const h = Math.max(0, Math.min(1, (y - CEIL) / (FLOOR - CEIL) * 1.6));
+      seg(-WALL, y, zc, -WALL, y, z2, a * h); seg(WALL, y, zc, WALL, y, z2, a * h);
+    }
+  }
+  // Rungs across the floor and up the walls, fixed to world z so they stream past.
+  const first = Math.floor((NEAR - cam) / GRID) * GRID;
+  for (let z = first; z + cam > -FAR; z -= GRID) {
+    const zc = z + cam, a = .13 * fog(zc);
+    seg(-WALL, FLOOR, zc, WALL, FLOOR, zc, a);
+    for (const x of [-WALL, WALL]) { seg(x, FLOOR, zc, x, -100, zc, a); seg(x, -100, zc, x, CEIL, zc, a * .35); }
+  }
+  // Motes.
+  for (const m of motes) {
+    const zc = m.z + cam;
+    if (zc > NEAR || zc < -FAR) continue;
+    const [sx, sy, k] = proj(m.x, m.y, zc), r = 6 * k;
+    g.fillStyle = m.red ? `rgba(224,57,62,${(.8 * fog(zc)).toFixed(3)})` : ink(.35 * fog(zc));
+    g.fillRect(sx - r / 2, sy - r / 2, r, r);
+  }
+  // Gates, far to near so nearer ones paint over.
+  for (let i = N - 1; i >= 0; i--) {
+    const zc = -i * D + 260 + cam;
+    if (zc > NEAR - 40 || zc < -FAR) continue;
+    // Gone by the time you reach its card (zc = 260), or its edge sits on the HUD.
+    const o = zc < 0 ? Math.max(0, 1 + zc / 3200) : Math.max(0, 1 - zc / 200);
+    if (o < .01) continue;
+    const [x0, y0, k] = proj(-620, -410, zc), [x1, y1] = proj(620, 410, zc);
+    g.globalAlpha = o;
+    g.strokeStyle = `rgb(${fg})`; g.lineWidth = 3 * k;
+    g.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    g.strokeStyle = '#E0393E'; g.lineWidth = 6 * k;
+    const L = 60 * k, e = 12 * k;
+    g.beginPath();
+    g.moveTo(x0 - e, y0 - e + L); g.lineTo(x0 - e, y0 - e); g.lineTo(x0 - e + L, y0 - e);
+    g.moveTo(x1 + e, y1 + e - L); g.lineTo(x1 + e, y1 + e); g.lineTo(x1 + e - L, y1 + e);
+    g.stroke();
+    const label = `LEVEL ${pad(i)} · ${levels[i].dataset.name.toUpperCase()}`;
+    g.font = `600 ${13 * k}px "JetBrains Mono", monospace`;
+    const tw = g.measureText(label).width;
+    g.fillStyle = `rgb(${env})`; g.fillRect(x0 + 14 * k, y0 - 11 * k, tw + 20 * k, 22 * k);
+    g.fillStyle = `rgb(${fg})`; g.textBaseline = 'middle'; g.fillText(label, x0 + 24 * k, y0 + 1 * k);
+    // Big outlined level number standing beside the gate.
+    g.font = `700 ${380 * k}px "JetBrains Mono", monospace`;
+    g.lineWidth = 2 * k; g.strokeStyle = ink(.16);
+    g.textBaseline = 'alphabetic';
+    const [nx, ny] = proj(660, 410, zc);
+    g.strokeText(pad(i), nx, ny);
+    g.globalAlpha = 1;
+  }
+  g.lineWidth = 1;
+}
 
-<footer style="background: #111111; color: #C9C9C2">
-<div style="max-width: 1200px; margin: 0 auto; padding: 72px 24px 32px; display: flex; flex-direction: column; gap: 56px">
+let shown = -1;
+function paintIndex() {
+  idx.querySelectorAll('button').forEach((b, i) => {
+    b.classList.toggle('cur', i === shown);
+    b.classList.toggle('v', visited.has(i));
+    b.firstChild.innerHTML = i === shown ? PLAY : visited.has(i) ? CHECK : '';
+  });
+}
+function frame() {
+  const p = shot ?? scrollY / innerHeight;
+  const target = p * D;
+  cam += (target - cam) * (reduce ? 1 : .085);
+  if (Math.abs(target - cam) < .5) cam = target;
+  px += (mx - px) * .05; py += (my - py) * .05;
+  if (Math.abs(mx - px) < .002) px = mx;
+  if (Math.abs(my - py) < .002) py = my;
+  // Nothing moves once the camera settles, so stop painting.
+  const key = cam + '|' + px + '|' + py;
+  if (key === lastKey) { requestAnimationFrame(frame); return; }
+  lastKey = key;
+  const speed = Math.abs(target - cam);
+  // The corridor's vanishing point follows the mouse a little; the cards zoom
+  // about the screen centre so they never slide sideways or vertically.
+  const ox = W * (.5 + px * .06), oy = H * (.5 + py * .05);
 
-<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 48px; border-bottom: 1px solid #2A2A28">
-<p style="margin: 0; font-size: clamp(24px, 3vw, 34px); line-height: 1.15; font-weight: 600; letter-spacing: -0.03em; color: #F4F4F1; max-width: 520px">ssh once. Then let the network do what it likes.</p>
-<div style="display: flex; align-items: center; gap: 0; border: 1px solid #3A3A37; font-family: var(--mono); font-size: 14px; max-width: 100%">
-<code class="ft-cmd" style="padding: 14px 16px; color: #F4F4F1; white-space: nowrap; overflow-x: auto"><span style="color: #FF8A73">$</span> osewa login --service me@devbox</code>
-<button type="button" data-copy="osewa login --service me@devbox" style="align-self: stretch; padding: 0 16px; border: 0; border-left: 1px solid #3A3A37; background: #1C1C1B; color: #C9C9C2; font-family: var(--mono); font-size: 12px; cursor: pointer; min-width: 72px" class="ft-copy">copy</button>
-</div>
-</div>
+  const fp = cam / D;
+  const a = Math.max(0, Math.min(N - 1, Math.floor(fp))), b = Math.min(N - 1, a + 1), t = Math.min(1, Math.max(0, fp - a));
+  const env = mix(rgb(envs[a]), rgb(envs[b]), t);
+  const lum = (env[0] * .3 + env[1] * .59 + env[2] * .11) / 255;
+  const fg = lum > .5 ? [17, 17, 17] : [244, 244, 241];
+  const root = document.documentElement.style;
+  root.setProperty('--env', `rgb(${env})`);
+  root.setProperty('--fg', `rgb(${fg})`);
+  draw(env, fg, ox, oy);
 
-<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 40px 56px">
-<div style="display: flex; flex-direction: column; gap: 16px; max-width: 360px">
-<a href="#" style="display: inline-flex; align-items: center; gap: 12px; text-decoration: none; color: #F4F4F1">
-<svg width="36" height="36" viewBox="0 0 100 100" aria-hidden="true"><path fill="#FF6A4D" fill-rule="evenodd" d="M31 0.1C29.9 0.2 28.9 0.9 27.2 2.5C23.1 6.5 20 12 17.5 19.5C16.9 21.2 16.6 22.5 15.7 25.7C15 28.3 14.7 29.2 13.4 32.1C12.1 34.9 11.8 35.8 11.2 37.6C9 45.2 10.2 52.6 14.5 57.6C15 58.2 16.6 59 18 59.3C18.6 59.5 19.2 59.7 20.4 60.1C27.9 62.8 37.3 63.8 46.5 63C47.2 62.9 47.3 62.9 47.7 62.7C49.3 62 51 61.8 52.8 61.9C53.6 61.9 54 61.9 56 61.3C59.6 60.4 61.7 59.5 65.2 57.6C69.2 55.3 72.4 48.9 72.5 43.1C72.6 39.5 72.1 38.7 69.5 37.3C67.9 36.5 67.7 36.2 67 33.6C65.8 29.4 64.8 26.9 63.1 24.4C62.2 23.1 62.2 23.1 62.1 21.3C61.1 12.2 59.1 6.7 56.6 6.6C54.6 6.5 51.5 8.4 47.6 12.2C45.9 13.7 45.8 13.8 45.3 13.7C44.7 13.7 44.5 13.4 43.3 11.5C39 4.6 34.8 0.4 31.8 0C31.4 0 31.4 0 31 0.1ZM33.8 4.8C35.5 5.6 38.4 9.6 40.9 14.4C41.9 16.5 41.9 16.6 40.9 16.9C37.6 17.6 33.5 19.6 30 22.2C28.5 23.3 28.7 23.5 28.7 20.6C28.7 15.5 29.2 11.6 30.3 8.2C31.3 5.2 32.4 4.1 33.8 4.8ZM57.9 10.8C58.6 11.3 59.5 14.9 59.9 18.5C60.2 21.3 60.3 21.2 58.7 20.1C57.3 19.2 56.3 18.6 55.1 18.1C54 17.7 54 17.7 54.5 16.2C55.7 12.6 57.1 10.3 57.9 10.8ZM54.4 30.6C56.6 31.1 58.5 32.6 59.6 34.8C60.2 36 59.9 36.2 58.8 35.4C54.8 32.8 50.7 32.8 46.4 35.5C45.2 36.2 45 35.8 45.9 34.5C47.9 31.5 51.3 29.9 54.4 30.6ZM86.9 26.7C82.2 27.2 79.1 29.2 76.8 33.2C75.5 35.5 75.1 37.6 74.8 42.9C74.4 49.7 73.7 53 71.5 57C70.7 58.6 70.3 59.1 68.3 61.2C66.2 63.4 66.3 63.1 66.2 64C66.1 66.2 65 67.5 62.2 68.6C62 68.6 62 68.6 62.3 69.3C64.9 77.2 58 85 49.8 83.4C44.9 82.4 41.3 78.1 41.1 73.1L41.1 72.3L39.9 72.4C29.9 72.5 19.1 69.9 13.7 66.1C12.1 65.1 12 65.1 10.6 66.8C4.6 74 1.6 82.1 2.6 88.8C3.4 94.5 11 97.4 28.7 98.8C44.9 100 63.8 99.4 75 97.3C77.2 96.9 77.8 96.7 78.1 96.1C78.4 95.3 78.2 92.5 77.5 89.3C77 87 77 87.1 79 85.3C81.4 83.3 82.9 81.7 84.6 79.5C90.2 71.9 92 64 91 50.5C90.5 45.2 90.7 44.7 93.1 43.7C96.9 42.2 98.4 40 98.4 36.2C98.4 30.4 93.1 25.9 86.9 26.7ZM51 63.3C40.9 64.3 39.4 78.8 49.2 81.7C50.9 82.2 52.1 82.3 52.2 81.9C52.8 79.1 53 75.9 52.4 75.6C50.8 74.7 51.3 72.2 53.2 71.9C55.3 71.5 56.4 74.6 54.5 75.6C54.3 75.7 54.3 75.7 54.3 76.1C54.3 77.5 54 79.7 53.6 81.3C53.5 82.1 53.4 82.1 53.9 82C59.9 80.7 63.2 74.1 60.4 68.6C58.7 65 54.9 62.9 51 63.3Z"></path></svg>
-<span style="font-size: 26px; font-weight: 700; letter-spacing: -0.04em">osewa</span>
-</a>
-<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #A3A39D"><span lang="ja" style="color: #F4F4F1">お世話</span> <span style="font-family: var(--mono); font-size: 13px">(o-se-wa)</span> is Japanese for looking after someone. Here, it's your sessions.</p>
-</div>
-<div style="display: flex; flex-wrap: wrap; gap: 32px 56px">
-<div style="display: flex; flex-direction: column; gap: 10px; min-width: 140px"><span style="font-family: var(--mono); font-size: 11px; color: #6E6E69; text-transform: uppercase; letter-spacing: .08em">Project</span><ul style="list-style: none; margin: 0; padding: 0; font-size: 15px"><li><a href="https://github.com/rjyo/osewa" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">GitHub ↗</a></li><li><a href="https://github.com/rjyo/osewa/blob/main/LICENSE" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">License</a></li><li><a href="#start" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Quick start</a></li><li><a href="#roadmap" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Roadmap</a></li></ul></div>
-<div style="display: flex; flex-direction: column; gap: 10px; min-width: 140px"><span style="font-family: var(--mono); font-size: 11px; color: #6E6E69; text-transform: uppercase; letter-spacing: .08em">Docs</span><ul style="list-style: none; margin: 0; padding: 0; font-size: 15px"><li><a href="https://github.com/rjyo/osewa/blob/main/docs/PROTOCOL.md" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Wire protocol ↗</a></li><li><a href="https://github.com/rjyo/osewa/blob/main/docs/QUIC.md" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">QUIC carrier ↗</a></li><li><a href="https://github.com/rjyo/osewa/blob/main/bench/RESULTS.md" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Benchmark results ↗</a></li></ul></div>
-<div style="display: flex; flex-direction: column; gap: 10px; min-width: 140px"><span style="font-family: var(--mono); font-size: 11px; color: #6E6E69; text-transform: uppercase; letter-spacing: .08em">This page</span><ul style="list-style: none; margin: 0; padding: 0; font-size: 15px"><li><a href="#why" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Why now</a></li><li><a href="#bench" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Benchmarks</a></li><li><a href="#how" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">How it works</a></li><li><a href="#agents" style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">Built for agents</a></li></ul></div>
-</div>
-</div>
+  levels.forEach((l, i) => {
+    const zc = cam - i * D;              // >0 means we've passed it
+    const o = zc >= NEAR - 40 ? 0 : zc < 0 ? Math.max(0, 1 + zc / 2400) : Math.max(0, 1 - zc / 380);
+    const os = o.toFixed(2);
+    if (l._o !== os) { l._o = os; l.style.opacity = os; l.style.visibility = o < .01 ? 'hidden' : 'visible'; }
+    if (o < .01) return;
+    const k = P / (P - zc);
+    l.style.transform = `translate(-50%, -50%) scale(${(k * l.fit).toFixed(4)})`;
+  });
 
-<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding-top: 20px; border-top: 1px solid #2A2A28; font-family: var(--mono); font-size: 12px; color: #6E6E69">
-<span>open source · Apache-2.0</span>
-<span>terminal engine: libghostty-vt</span>
-</div>
+  // The index and the red bar point at where you're going, right away; only the
+  // cat travels with the camera.
+  const dest = Math.max(0, Math.min(N - 1, Math.round(p)));
+  if (dest !== shown) { shown = dest; paintIndex(); }
+  // Measure the target row and segment each time; a fixed step rounds and drifts.
+  const row = idx.querySelectorAll('button')[dest].getBoundingClientRect(), box = idx.getBoundingClientRect();
+  hl.style.height = row.height + 'px';
+  hl.style.transform = `translateY(${row.top - box.top}px)`;
+  const sg = segs.querySelectorAll('button')[dest].getBoundingClientRect(), sb = segs.getBoundingClientRect();
+  segfill.style.width = sg.width + 'px';
+  segfill.style.transform = `translateX(${sg.left - sb.left}px)`;
+  const r = document.getElementById('runner');
+  r.style.left = `calc(${(fp + .5) / N * 100}% - 11px)`;
+  r.style.transform = speed > 30 ? `translateY(${-Math.abs(Math.sin(cam / 90)) * 8}px)` : '';
 
-</div>
-</footer>
-</div>
+  const near = Math.round(fp);
+  if (near !== cur && Math.abs(fp - near) < .12) {
+    const prev = cur;
+    cur = near;
+    visited.add(cur);
+    levels.forEach((l, i) => {
+      l.classList.toggle('on', i === cur);
+      l.querySelectorAll('.bar').forEach(bar => bar.style.width = i === cur ? `calc(${bar.dataset.w} * .78)` : '0');
+    });
+    paintIndex();
+    [...segs.querySelectorAll('button')].forEach((s, i) => s.classList.toggle('v', visited.has(i)));
+    document.getElementById('lvn').textContent = pad(cur);
+    document.getElementById('lvname').textContent = levels[cur].dataset.name;
+    document.getElementById('cleared').textContent = `${visited.size} / ${N} visited`;
+    if (prev >= 0) announce(cur, prev);
+  }
+  requestAnimationFrame(frame);
+}
+// ?shot=N parks the camera at level N without scrolling, for screenshots.
+const shotM = /shot=([\d.]+)/.exec(location.search), shot = shotM ? +shotM[1] : null;
+if (shot !== null) cam = shot * D;
+const deep = levels.findIndex(l => '#' + l.id === location.hash);
+if (deep > 0) { scrollTo(0, deep * innerHeight); cam = deep * D; }
+requestAnimationFrame(frame);
+setInterval(() => { document.getElementById('ping').textContent = 99 + Math.round(Math.random() * 9); }, 900);
+</script>
 </Base>

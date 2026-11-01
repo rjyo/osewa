@@ -1,0 +1,10 @@
+---
+// A five-pip stat bar; the page fills the pips when its level is reached.
+interface Props {
+  v: number;
+}
+const { v } = Astro.props;
+---
+<span class="pips" role="img" aria-label={`${v} of 5`}>
+  {[0, 1, 2, 3, 4].map((i) => <i class={i < v ? "f" : undefined} style={`transition-delay: ${0.3 + i * 0.08}s`}></i>)}
+</span>

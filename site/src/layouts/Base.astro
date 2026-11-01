@@ -5,14 +5,28 @@ import "../styles/global.css";
 import sans from "../fonts/inter-tight.woff2?url";
 import mono from "../fonts/jetbrains-mono.woff2?url";
 
-const title = "osewa — the terminal protocol that never drops";
-const description =
-  "Faster than ssh. Survives like mosh. Never garbles. osewa keeps your remote terminal alive through sleep and network changes, over QUIC or TLS WebSocket.";
-const url = "https://osewa.dev/";
+interface Props {
+  title?: string;
+  description?: string;
+  path?: string;
+  // Pages that must stay out of search results (the 404).
+  noindex?: boolean;
+  // JSON-LD for this page, if any.
+  schema?: object;
+}
+const {
+  title = "osewa — faster than ssh, survives like mosh, never garbles",
+  description = "The terminal protocol for the age of agents. Your agent runs for hours on the host; check in from a laptop or a phone, on any network, over QUIC or TLS WebSocket.",
+  path = "/",
+  noindex = false,
+  schema,
+} = Astro.props;
+const url = new URL(path, "https://osewa.dev").href;
 // Card images must be absolute URLs. Source: og/og.html.
-const image = "https://osewa.dev/og.jpg";
+// Bump ?v= whenever og.jpg changes: link previews cache by URL.
+const image = "https://osewa.dev/og.jpg?v=2";
 const imageAlt =
-  "osewa: the terminal protocol that never drops. A white maneki-neko with a red collar and gold bell beside the headline, and ssh 1995, mosh 2012, osewa 2026.";
+  "osewa: faster than ssh, survives like mosh, never garbles. A white maneki-neko with a red collar and gold bell beside the headline, and ssh 1995, mosh 2012, osewa 2026.";
 ---
 <!doctype html>
 <html lang="en">
@@ -22,11 +36,12 @@ const imageAlt =
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={url} />
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={url} />}
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#F4F4F1" />
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:site_name" content="osewa" />
     <meta property="og:url" content={url} />
     <meta property="og:title" content={title} />
@@ -41,6 +56,7 @@ const imageAlt =
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={image} />
     <meta name="twitter:image:alt" content={imageAlt} />
+    {schema && <script type="application/ld+json" set:html={JSON.stringify(schema)} />}
     <link rel="preload" href={sans} as="font" type="font/woff2" crossorigin />
     <link rel="preload" href={mono} as="font" type="font/woff2" crossorigin />
   </head>
