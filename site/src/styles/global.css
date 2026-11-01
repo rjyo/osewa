@@ -84,6 +84,17 @@ details summary::-webkit-details-marker{display:none}
 .site-header[data-open] .nav-btn-icon span:first-child{top:5px;transform:rotate(45deg)}
 .site-header[data-open] .nav-btn-icon span:last-child{top:5px;transform:rotate(-45deg)}
 
+/* Desktop nav keeps the short list; the menu and footer have the rest. */
+@media (min-width: 721px){.nav-extra{display:none}}
+
+/* Headline numbers: four across, 2×2 when narrower. */
+@media (max-width: 979px){
+.kpis{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+.kpis>div{border-right:0 !important}
+.kpis>div:nth-child(odd){border-right:1px solid #D3D3CE !important}
+.kpis>div:nth-child(-n+2){border-bottom:1px solid #D3D3CE}
+}
+
 /* ---- Phones. Inline styles carry the desktop layout, hence !important. ---- */
 @media (max-width: 720px){
 .site-header{position:sticky;top:0;z-index:10}
@@ -94,6 +105,12 @@ html{scroll-padding-top:64px}
 .site-header[data-open] .nav-links{display:flex !important;position:absolute;left:0;right:0;top:100%;flex-direction:column;align-items:stretch !important;gap:0 !important;background:#F4F4F1;border-bottom:1px solid #111111;padding:4px 20px 12px;font-size:15px !important}
 .site-header[data-open] .nav-links a{padding:14px 0 !important;border-bottom:1px solid #D3D3CE}
 .site-header[data-open] .nav-links a:last-child{border-bottom:0}
+
+/* Headline numbers: smaller so two fit side by side. */
+.kpis>div{padding:20px 16px !important}
+.kpis>div>div:first-child{font-size:38px !important}
+.kpis>div>div:first-child span{font-size:20px !important}
+.kpis>div>div:last-child{font-size:13px !important}
 
 /* §1: stacked era cards, rules between instead of beside. */
 .eras>div{padding:20px 0 !important;border-right:0 !important;border-bottom:1px solid #D3D3CE}
