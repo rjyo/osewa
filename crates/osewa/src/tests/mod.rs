@@ -21,6 +21,10 @@ pub(crate) struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new() -> TempDir {
+        // Every test makes one before it starts anything: sessions, exec
+        // and any server or holder process it starts then run in a sandbox
+        // home, never the real one.
+        osewa_paths::sandbox_home();
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);

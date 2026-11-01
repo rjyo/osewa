@@ -26,8 +26,22 @@ Holders listen at `<run>/<session id>.sock`, where `<run>` is
 The server spawns a holder with `osewa holder --run <run> --id <id> --cols
 <c> --rows <r> [--cwd <dir>] -- <argv...>`, detached with setsid; the holder
 prints one line `ready` on stdout once its socket accepts connections. The
-child's environment is the holder's environment, so the server passes
-`session.create` `env` by adding it to the holder process's environment.
+server passes `session.create` `env` as `OSEWA_SESSION_ENV`, a JSON array of
+`KEY=value`, in the holder's environment (not on its command line, which
+every user can read).
+
+A session's environment is built from the account, as sshd builds a
+login's, never inherited from the server (whatever started it: launchd's
+bare PATH, a terminal multiplexer's or an agent's variables): `HOME`,
+`USER`, `LOGNAME` and `SHELL` from the passwd entry, `PATH`
+`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` (on macOS with
+`/opt/homebrew/bin:/opt/homebrew/sbin` first when present; the login
+shell's profile extends it), `TERM=xterm-256color`, `LANG` and `LC_*` from
+the server when set, `TMPDIR` on macOS (the account's per-user temp dir),
+`XDG_RUNTIME_DIR` on Linux when the server has it; then `env`, whose
+entries win. `cwd` defaults to the passwd home directory. `OSEWA_HOME`, in
+the server's environment, overrides that home (HOME and the default cwd)
+for tests and sandboxes; nothing else of the account can be overridden.
 
 A holder never sends WELCOME; the server answers the client's HELLO itself.
 The server closes a client connection whose HELLO has no `client_id`.
@@ -159,7 +173,8 @@ may hold at most 64 streams.
 Error codes: `bad_request`, `not_found`, `not_owner`, `ended`, `unavailable`,
 `unreachable` (forward.open), `internal`.
 
-`argv` defaults to the user's login shell. `own: true` claims ownership on
+`argv` defaults to the account's login shell from passwd (not the server's
+`$SHELL`), run with `-l`. `own: true` claims ownership on
 attach.
 
 ## Output log
@@ -438,9 +453,10 @@ stream limit with session streams.
   both directions are done, STREAM_END `closed`.
 - **exec.start** runs `argv` directly (no shell: send `["sh","-lc",
   "<command>"]` for one). A bare `argv[0]` is looked up in the `PATH` the
-  process gets (from `env` if it sets one, otherwise the server's),
+  process gets (from `env` if it sets one, otherwise the account's base `PATH`),
   skipping relative entries. It runs in its own process group, in `cwd` (default the
-  home directory), with the server's environment plus `env`. stdout and
+  account's home directory), with a session's environment ("Holder sockets":
+  the account's, not the server's) plus `env`. stdout and
   stderr arrive as CHANNEL_DATA on channels 1 and 2, each followed by its
   CHANNEL_EOF; then STREAM_END `exited` with `exit_code` (128 + the signal
   for a signal). A missing program is `not_found`.

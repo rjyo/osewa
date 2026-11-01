@@ -22,9 +22,10 @@ pub const KILL_GRACE: Duration = Duration::from_secs(2);
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     pub argv: Vec<String>,
-    /// Default $HOME.
+    /// Default the account's home.
     pub dir: String,
-    /// Added to the environment; later entries win.
+    /// Over the account's environment (osewa_paths::session_env); later
+    /// entries win.
     pub env: Vec<String>,
 }
 
@@ -64,7 +65,10 @@ impl Proc {
         if o.argv.is_empty() {
             return Err(Error::Other("empty argv".into()));
         }
-        let dir = if o.dir.is_empty() { std::env::var("HOME").unwrap_or_default() } else { o.dir.clone() };
+        // As a session: the account's home and environment, not the
+        // server's (osewa_paths::session_env).
+        let acct = osewa_paths::account();
+        let dir = if o.dir.is_empty() { acct.home.to_string_lossy().into_owned() } else { o.dir.clone() };
         // A missing directory fails the spawn with ENOENT too; check it
         // first so that only a missing program is NotFound.
         if !dir.is_empty() {
@@ -74,16 +78,13 @@ impl Proc {
                 Ok(_) => {}
             }
         }
-        let env: Vec<(String, String)> = o
-            .env
-            .iter()
-            .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-            .collect();
+        let env = osewa_paths::session_env(&acct, &[], &o.env);
         let name = &o.argv[0];
         let prog: PathBuf = if name.contains('/') { name.into() } else { look_path(name, &env)? };
         let mut cmd = Command::new(&prog);
         cmd.arg0(name)
             .args(&o.argv[1..])
+            .env_clear()
             .envs(env)
             .process_group(0)
             .stdin(Stdio::piped())
@@ -306,17 +307,12 @@ impl PipeWriter {
     }
 }
 
-/// Finds file in the PATH of env, the environment the process will get on
-/// top of ours, so Options.env can choose which program runs. The last PATH
-/// wins, as it does in the child. Relative entries are skipped: they would
-/// resolve against the server's cwd here but the process's dir in the child.
+/// Finds file in the PATH of env, the environment the process will get, so
+/// Options.env can choose which program runs. Relative entries are
+/// skipped: they would resolve against the server's cwd here but the
+/// process's dir in the child.
 fn look_path(file: &str, env: &[(String, String)]) -> Result<PathBuf, Error> {
-    let path = env
-        .iter()
-        .rev()
-        .find(|(k, _)| k == "PATH")
-        .map(|(_, v)| v.clone())
-        .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
+    let path = env.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.clone()).unwrap_or_default();
     for d in path.split(':') {
         if !Path::new(d).is_absolute() {
             continue;

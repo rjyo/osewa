@@ -737,3 +737,52 @@ fn socket_refuses_after_stop() {
     h.done(Duration::from_secs(5)).unwrap();
     assert!(std::os::unix::net::UnixStream::connect(&h.sock).is_err());
 }
+
+/// A session's environment is the account's with the client's env on top,
+/// never the holder's (whatever started the server): its nesting guards,
+/// tokens, $SHELL and PATH stay out, and it starts in the account's home.
+#[test]
+fn session_env_is_the_accounts() {
+    let h = start(Config { env: vec!["EDITOR=vi".into(), "LANG=C.UTF-8".into()], cols: 120, rows: 40, ..cfg(sh("env | sort | tr '\\n' ' '; echo; echo cwd=$(pwd -P); sleep 30")) });
+    let a = osewa_paths::account();
+    let home = a.home.display().to_string();
+    let mut c = h.dial("dev1");
+    c.attach(own());
+    c.wait_text("cwd=");
+    let t = c.text().replace('\n', "");
+    assert_eq!(a.home, osewa_paths::sandbox_home(), "tests run in the sandbox home");
+    for want in [format!("HOME={home}"), format!("SHELL={}", a.shell), "EDITOR=vi".into(), "LANG=C.UTF-8".into(), "TERM=xterm-256color".into(), format!("cwd={home}")] {
+        assert!(t.contains(&want), "missing {want:?} in {t:?}");
+    }
+    // This test process's own variables (cargo's, the terminal's) stay out.
+    for gone in ["CARGO_PKG_NAME=", "RUST_TEST_THREADS=", "CARGO_MANIFEST_DIR="] {
+        assert!(!t.contains(gone), "{gone} leaked: {t:?}");
+    }
+}
+
+/// The holder CLI: the client's env comes in SESSION_ENV, and the
+/// session gets none of the holder process's own environment; with no
+/// --cwd it starts in the account's home (here OSEWA_HOME's).
+#[test]
+fn cli_session_env() {
+    let dir = TempDir::new();
+    let d = dir.0.to_str().unwrap();
+    let mut cmd = holder_command(&["--run", d, "--id", "e1", "--cols", "200", "--rows", "20", "--", "/bin/sh", "-c", "echo $HERDR_ENV/$FOO/$SHELL/$EDITOR/$HOME; pwd -P; sleep 30"]);
+    cmd.env("HERDR_ENV", "1").env("FOO", "bar").env("SHELL", "/bin/false").env(crate::SESSION_ENV, r#"["EDITOR=vi"]"#);
+    let mut p = Proc::spawn(cmd);
+    assert_eq!(p.line(), "ready\n", "stdout");
+    let mut c = Client::dial(&socket_path(&dir.0, "e1"), "dev1");
+    c.attach(wire::Request::default());
+    let a = osewa_paths::account();
+    let home = a.home.display().to_string();
+    let want = format!("//{}/vi/{home}", a.shell);
+    c.wait_for("env", move |c| c.text().contains(&want));
+    let real = std::fs::canonicalize(&a.home).unwrap().display().to_string();
+    c.wait_for("cwd", move |c| c.text().lines().any(|l| l == real));
+    p.signal(libc::SIGTERM);
+    assert_eq!(p.wait_exit(WAIT), 0, "code");
+
+    let mut cmd = holder_command(&["--run", d, "--id", "e2", "--", "/bin/true"]);
+    cmd.env(crate::SESSION_ENV, "not json");
+    assert_eq!(Proc::spawn(cmd).wait_exit(WAIT), 2, "a bad SESSION_ENV");
+}

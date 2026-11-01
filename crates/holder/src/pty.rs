@@ -60,24 +60,24 @@ pub(crate) fn read_mode(fd: RawFd) -> io::Result<InputMode> {
 }
 
 /// Builds the child's command: its own session with the PTY as its
-/// controlling terminal and stdio.
+/// controlling terminal and stdio, the account's environment with env on
+/// top (osewa_paths::session_env), and the account's home when no cwd is
+/// given; nothing of the holder's own environment or cwd.
 pub(crate) fn command(
     argv: &[String],
     cwd: &str,
     env: &[String],
+    acct: &osewa_paths::Account,
     slave: &OwnedFd,
 ) -> io::Result<tokio::process::Command> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
-    if !cwd.is_empty() {
+    if cwd.is_empty() {
+        cmd.current_dir(&acct.home);
+    } else {
         cmd.current_dir(Path::new(cwd));
     }
-    cmd.env("TERM", "xterm-256color");
-    for kv in env {
-        if let Some((k, v)) = kv.split_once('=') {
-            cmd.env(k, v);
-        }
-    }
+    cmd.env_clear().envs(osewa_paths::session_env(acct, &[("TERM", "xterm-256color")], env));
     cmd.stdin(slave.try_clone()?);
     cmd.stdout(slave.try_clone()?);
     cmd.stderr(slave.try_clone()?);

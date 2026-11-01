@@ -22,6 +22,8 @@ pub(crate) struct LiveHost {
     pub addr: String,
     /// The client config directory: hosts.json with "h", client.key.
     pub dir: TempDir,
+    /// The home sessions and exec run in (OSEWA_HOME): never the real one.
+    pub home: PathBuf,
     ctl: tokio::sync::mpsc::UnboundedSender<Ctl>,
     thread: Option<JoinHandle<()>>,
     _host: TempDir,
@@ -58,6 +60,7 @@ fn inproc(holders: &Rc<RefCell<Vec<Holder>>>) -> osewa_server::Spawn {
 
 impl LiveHost {
     pub fn new() -> LiveHost {
+        let home = osewa_paths::sandbox_home();
         let (host, dir) = (TempDir::new(), TempDir::new());
         let sid = osewa_auth::Identity::load_or_create(&host.path().join("server.key")).unwrap();
         let devices = osewa_auth::Devices::new(host.path().join("devices"));
@@ -146,7 +149,7 @@ impl LiveHost {
             });
         });
         ready_rx.recv().unwrap();
-        LiveHost { addr, dir, ctl, thread: Some(thread), _host: host }
+        LiveHost { addr, dir, home, ctl, thread: Some(thread), _host: host }
     }
 
     /// Drops every client connection and serves again on the same address;
@@ -249,22 +252,22 @@ fn live_quic() {
 }
 
 /// update copies this build to the host over osewa, checked, and asks it to
-/// restart. The host here is this machine: HOME is a temporary one, and the
-/// restart a no-op, or it would replace and restart the real server.
+/// restart. The host here is this machine: its sessions' home is a
+/// temporary one (LiveHost's account), and the restart a no-op, or it
+/// would replace and restart the real server.
 #[test]
 fn live_update() {
-    let home = TempDir::new();
-    let mut g = EnvGuard::new();
-    g.set("HOME", home.path());
     let h = LiveHost::new();
+    let home = &h.home;
+    assert_ne!(*home, osewa_paths::passwd_account().home, "update would install into the real home");
     let (mut e, out, err) = h.env("");
     e.update_restart = "echo restart-asked >> \"$HOME/restarted\"".into();
     let r = block(async { tokio::time::timeout(Duration::from_secs(60), e.update(&ctx(), &args(&["h"]))).await });
     assert!(matches!(r, Ok(Ok(()))), "update: {:?} {}", r.map(|r| r.map_err(|e| e.to_string())), err.string());
     let want = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-    let got = std::fs::read(home.path().join(".local/bin/osewa")).unwrap();
+    let got = std::fs::read(home.join(".local/bin/osewa")).unwrap();
     assert!(got == want, "copied {} bytes, want this build's {}", got.len(), want.len());
-    let asked = std::fs::read_to_string(home.path().join("restarted")).unwrap_or_default();
+    let asked = std::fs::read_to_string(home.join("restarted")).unwrap_or_default();
     assert!(asked.contains("restart-asked"), "no restart asked");
     assert!(out.string().contains("restarted with it"), "{}", out.string());
     drop(h);
@@ -305,4 +308,20 @@ fn live_quic_discovery() {
     let (c, d) = dial();
     assert!(c.carrier() == "ws" && d <= Duration::from_secs(2), "with UDP dead: {} after {d:?}", c.carrier());
     block(c.close());
+}
+
+/// The guard: what a test session or exec writes to $HOME lands in the
+/// sandbox home (OSEWA_HOME), never in the real one.
+#[test]
+fn live_sessions_never_touch_the_real_home() {
+    let h = LiveHost::new();
+    let real = osewa_paths::passwd_account().home;
+    assert_ne!(h.home, real, "the test host runs in the real home");
+    let canary = format!("osewa-canary-{}", std::process::id());
+    let script = format!("echo session > \"$HOME/{canary}\"; sleep 5");
+    h.run_ok(&["new", "h", "--", "/bin/sh", "-c", &script]);
+    eventually(|| h.home.join(&canary).exists());
+    h.run_ok(&["exec", "h", "--", "sh", "-c", &format!("echo exec >> \"$HOME/{canary}\"")]);
+    assert_eq!(std::fs::read_to_string(h.home.join(&canary)).unwrap(), "session\nexec\n");
+    assert!(!real.join(&canary).exists(), "a test wrote to the real home");
 }

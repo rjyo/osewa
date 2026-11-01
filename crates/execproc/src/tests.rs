@@ -11,11 +11,20 @@ fn rt() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
 }
 
+/// The account tests run processes as: this one, with a home of its own
+/// (OSEWA_HOME), so nothing a test runs lands in the real one.
+fn account() -> osewa_paths::Account {
+    osewa_paths::sandbox_home();
+    osewa_paths::account()
+}
+
 fn sh(script: &str) -> Options {
+    account();
     Options { argv: vec!["sh".into(), "-c".into(), script.into()], ..Default::default() }
 }
 
 fn argv(a: &[&str]) -> Options {
+    account();
     Options { argv: a.iter().map(|s| s.to_string()).collect(), ..Default::default() }
 }
 
@@ -46,6 +55,7 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new() -> TempDir {
+        osewa_paths::sandbox_home();
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!("osewa-execproc-{}-{n}", std::process::id()));
@@ -164,28 +174,56 @@ fn env_and_dir() {
             env: vec!["OSEWA_EXECPROC_OVERRIDE=child".into(), "OSEWA_EXECPROC_ADDED=new".into()],
         });
         let (out, _, _, _) = run(&mut p.0).await;
-        assert_eq!(out, format!("{}\nparent child new\n", dir.real()));
+        // The server's own variables don't reach the process; env does.
+        assert_eq!(out, format!("{}\n child new\n", dir.real()));
     });
 }
 
+/// The process gets the account's environment, as a session does, and
+/// none of whatever started the server: its nesting guards, tokens,
+/// $SHELL, PATH.
+#[test]
+fn environment_is_the_accounts() {
+    let _g = ENV.lock().unwrap();
+    let junk = [("HERDR_ENV", "1"), ("OSEWA_EXECPROC_FOO", "bar"), ("SHELL", "/bin/false"), ("PATH", "/osewa-junk:/usr/bin:/bin")];
+    let saved: Vec<_> = junk.iter().map(|(k, _)| (*k, std::env::var_os(k))).collect();
+    for (k, v) in junk {
+        unsafe { std::env::set_var(k, v) };
+    }
+    let out = rt().block_on(async {
+        let mut p = start(Options { env: vec!["EDITOR=vi".into(), "USER=override".into()], ..sh("env | sort; echo cwd=$(pwd -P)") });
+        run(&mut p.0).await.0
+    });
+    for (k, v) in saved {
+        match v {
+            Some(v) => unsafe { std::env::set_var(k, v) },
+            None => unsafe { std::env::remove_var(k) },
+        }
+    }
+    let a = account();
+    for want in [
+        format!("HOME={}", a.home.display()),
+        format!("LOGNAME={}", a.name),
+        format!("SHELL={}", a.shell),
+        "USER=override".into(),
+        "EDITOR=vi".into(),
+        format!("cwd={}", a.home.display()),
+    ] {
+        assert!(out.lines().any(|l| l == want), "missing {want:?} in:\n{out}");
+    }
+    for gone in ["HERDR_ENV=", "OSEWA_EXECPROC_FOO=", "/osewa-junk", "SHELL=/bin/false"] {
+        assert!(!out.contains(gone), "{gone} leaked:\n{out}");
+    }
+}
+
+/// The account's home, not the server's HOME or cwd.
 #[test]
 fn dir_defaults_to_home() {
-    let _g = ENV.lock().unwrap();
-    // Kept: processes other tests start meanwhile run in it, and a shell
-    // whose cwd vanished complains on stderr.
-    let home = std::env::temp_dir().join("osewa-execproc-home");
-    std::fs::create_dir_all(&home).unwrap();
-    let real = std::fs::canonicalize(&home).unwrap().to_string_lossy().into_owned();
-    let old = std::env::var("HOME").ok();
-    unsafe { std::env::set_var("HOME", &home) };
     let got = rt().block_on(async {
         let mut p = start(argv(&["pwd", "-P"]));
         run(&mut p.0).await.0
     });
-    if let Some(h) = old {
-        unsafe { std::env::set_var("HOME", h) };
-    }
-    assert_eq!(got, format!("{real}\n"));
+    assert_eq!(got, format!("{}\n", account().home.display()));
 }
 
 #[test]
@@ -345,21 +383,25 @@ fn path_from_env() {
     });
 }
 
+/// Without a PATH in env, the account's base PATH, never the server's.
 #[test]
-fn path_falls_back_to_server() {
+fn path_is_never_the_servers() {
     let _g = ENV.lock().unwrap();
     let dir = script("osewa-execproc-prog");
     let d = dir.0.to_string_lossy().into_owned();
     with_path(&format!("{d}:/usr/bin:/bin"), || {
         rt().block_on(async {
-            let mut p = start(Options { env: vec!["OTHER=1".into()], ..argv(&["osewa-execproc-prog"]) });
-            let (out, _, code, _) = run(&mut p.0).await;
-            assert_eq!((out.as_str(), code), ("osewa-execproc-prog\n", 0));
+            let r = Proc::start(Options { env: vec!["OTHER=1".into()], ..argv(&["osewa-execproc-prog"]) });
+            assert!(matches!(r, Err(Error::NotFound(_))), "found on the server's PATH");
+            let mut p = start(argv(&["sh", "-c", "echo $PATH"]));
+            let path = run(&mut p.0).await.0;
+            assert!(path.trim_end().ends_with("/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin") && !path.contains(&d), "PATH {path}");
             // A directory or a non-executable file on PATH doesn't count.
             std::fs::create_dir(dir.0.join("osewa-execproc-dir")).unwrap();
             std::fs::write(dir.0.join("osewa-execproc-noexec"), b"").unwrap();
             for name in ["osewa-execproc-dir", "osewa-execproc-noexec"] {
-                assert!(matches!(Proc::start(argv(&[name])), Err(Error::NotFound(_))), "{name}");
+                let r = Proc::start(Options { env: vec![format!("PATH={d}")], ..argv(&[name]) });
+                assert!(matches!(r, Err(Error::NotFound(_))), "{name}");
             }
         })
     });

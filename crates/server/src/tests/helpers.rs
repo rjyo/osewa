@@ -33,6 +33,8 @@ pub struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new() -> TempDir {
+        // Before anything starts: sessions run in a sandbox home.
+        osewa_paths::sandbox_home();
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let d = PathBuf::from(format!("/tmp/osw{}-{n}", std::process::id()));
@@ -145,6 +147,7 @@ impl Env {
         let device = Rc::new(osewa_auth::Identity::generate());
         let devices = osewa_auth::Devices::new(run_dir.0.join("config/devices"));
         devices.add(osewa_auth::Device { name: "test".into(), key: osewa_auth::encode_key(&device.public()) }).unwrap();
+        osewa_paths::sandbox_home();
         let mut cfg = Config {
             identity: Some(Rc::new(id)),
             devices: Some(devices),
@@ -236,6 +239,11 @@ impl Env {
 
     pub fn dir(&self) -> &Path {
         &self.srv.cfg.run_dir
+    }
+
+    /// The home sessions and exec run in (OSEWA_HOME, canonical).
+    pub fn home(&self) -> String {
+        osewa_paths::sandbox_home().display().to_string()
     }
 
     /// Connects without saying HELLO.

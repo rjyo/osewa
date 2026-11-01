@@ -118,8 +118,8 @@ pub struct Config {
     /// Starts a holder. The default runs `<self> holder ...` detached, or
     /// $OSEWA_HOLDER's holder when that is set.
     pub spawn: Option<Spawn>,
-    /// The default argv for session.create; default $SHELL -l, else
-    /// /bin/sh.
+    /// The default argv for session.create; default the account's login
+    /// shell (passwd), as a login shell.
     pub shell: Vec<String>,
     /// Turns off permessage-deflate toward clients.
     pub no_compress: bool,
@@ -228,7 +228,7 @@ impl Server {
             cfg.name = hostname();
         }
         if cfg.shell.is_empty() {
-            cfg.shell = default_shell();
+            cfg.shell = osewa_paths::account().login_shell();
         }
         let spawn = cfg.spawn.clone().unwrap_or_else(|| {
             let timeout = cfg.tune.spawn_timeout;
@@ -531,13 +531,6 @@ fn hostname() -> String {
     String::from_utf8_lossy(&b[..n]).into_owned()
 }
 
-fn default_shell() -> Vec<String> {
-    match std::env::var("SHELL") {
-        Ok(sh) if !sh.is_empty() => vec![sh, "-l".into()],
-        _ => vec!["/bin/sh".into()],
-    }
-}
-
 /// The holder's command line after the binary.
 fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
     let mut a: Vec<String> = vec![
@@ -577,9 +570,7 @@ fn holder_binary() -> io::Result<PathBuf> {
 async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(holder_binary().map_err(|e| e.to_string())?);
     cmd.args(holder_args(&cfg))
-        // The holder CLI has no --env; the child gets the holder's own
-        // environment instead.
-        .envs(cfg.env.iter().filter_map(|kv| kv.split_once('=')))
+        .env(osewa_holder::SESSION_ENV, serde_json::to_string(&cfg.env).map_err(|e| e.to_string())?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());

@@ -23,6 +23,8 @@ pub struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new() -> TempDir {
+        // Before anything starts: sessions run in a sandbox home.
+        osewa_paths::sandbox_home();
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let d = PathBuf::from(format!("/tmp/oh{}-{n}", std::process::id()));
@@ -64,6 +66,7 @@ pub fn start(mut cfg: Config) -> TestHolder {
         cfg.cols = 40;
         cfg.rows = 10;
     }
+    osewa_paths::sandbox_home();
     let sock = socket_path(&cfg.run_dir, &cfg.id);
     let (ready_tx, ready_rx) = mpsc::channel();
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();

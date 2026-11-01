@@ -809,3 +809,25 @@ fn path_free_while_nobody_types() {
 fn only_client(e: &Env) -> Rc<Client> {
     e.srv.st.borrow().clients.values().next().unwrap().upgrade().unwrap()
 }
+
+/// exec.start runs as a session does: the account's environment and home,
+/// none of the server's environment, the client's env on top.
+#[test]
+fn exec_env_is_the_accounts() {
+    let _junk = super::Junk::set();
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        let r = c
+            .call(wire::Request {
+                env: vec!["EDITOR=vi".into()],
+                argv: ["sh", "-c", "echo [$HERDR_ENV][$OSEWA_TEST_TOKEN][$SHELL][$EDITOR][$HOME]; pwd -P"].iter().map(|s| s.to_string()).collect(),
+                ..stream_req(wire::METHOD_EXEC_START, 1)
+            })
+            .await;
+        assert!(r.error.is_empty(), "exec.start {r:?}");
+        let res = c.drain(1).await;
+        let (home, shell) = (e.home(), osewa_paths::account().shell);
+        assert_eq!(res.out(1), format!("[][][{shell}][vi][{home}]\n{home}\n"));
+    });
+}

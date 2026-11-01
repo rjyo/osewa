@@ -421,17 +421,18 @@ fn new_and_defaults() {
     let _g = super::ENV.lock().unwrap();
     let d = TempDir::new();
     let run_dir = d.path().join("run");
+    // The default shell is the account's login shell (passwd), whatever
+    // $SHELL the server was started with.
     let old_shell = std::env::var("SHELL").ok();
-    unsafe { std::env::set_var("SHELL", "") };
+    unsafe { std::env::set_var("SHELL", "/bin/false") };
     assert!(Server::new(Config::default()).is_err(), "new without identity");
     let s = Server::new(Config { run_dir: run_dir.clone(), ..auth_config(d.path()) }).unwrap();
-    assert!(s.cfg.shell[0] == "/bin/sh" && !s.cfg.name.is_empty(), "defaults {:?} {:?}", s.cfg.shell, s.cfg.name);
-    unsafe { std::env::set_var("SHELL", "/bin/zsh") };
-    assert_eq!(crate::default_shell(), ["/bin/zsh", "-l"]);
     match old_shell {
         Some(v) => unsafe { std::env::set_var("SHELL", v) },
         None => unsafe { std::env::remove_var("SHELL") },
     }
+    assert!(s.cfg.shell == osewa_paths::account().login_shell() && !s.cfg.name.is_empty(), "defaults {:?} {:?}", s.cfg.shell, s.cfg.name);
+
     assert!(run_dir.is_dir());
     run(async {
         s.close().await;
@@ -529,4 +530,30 @@ fn session_ids() {
     for bad in ["x", "../../etc", &"AB".repeat(16), &"g".repeat(32)] {
         assert!(!crate::client::valid_id(bad), "{bad}");
     }
+}
+
+/// A session runs as the account (here a test one), whatever environment
+/// the server was started with: none of it reaches the session, which
+/// starts in the account's home with the client's env on top.
+#[test]
+fn session_env_is_the_accounts() {
+    let _junk = super::Junk::set();
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        let resp = c
+            .call(wire::Request {
+                method: wire::METHOD_CREATE.into(),
+                cols: 120,
+                rows: 24,
+                env: vec!["EDITOR=vi".into()],
+                argv: ["sh", "-c", "echo [$HERDR_ENV][$OSEWA_TEST_TOKEN][$SHELL][$EDITOR][$HOME] cwd=$(pwd -P); sleep 30"].iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            })
+            .await;
+        assert!(resp.error.is_empty(), "create {resp:?}");
+        c.attach(&resp.session_id, 1, true).await;
+        let (home, shell) = (e.home(), osewa_paths::account().shell);
+        c.output(1, &format!("[][][{shell}][vi][{home}] cwd={home}")).await;
+    });
 }

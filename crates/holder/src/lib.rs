@@ -109,7 +109,9 @@ pub struct Config {
     /// Required.
     pub argv: Vec<String>,
     pub cwd: String,
-    /// Added to the holder's environment; TERM defaults to xterm-256color.
+    /// KEY=value entries over the session's environment, which is the
+    /// account's (osewa_paths::session_env), not the holder's; TERM
+    /// defaults to xterm-256color. The CLI takes them from SESSION_ENV.
     pub env: Vec<String>,
     /// Ring cap, default 8 MiB.
     pub log_bytes: usize,
@@ -219,6 +221,18 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
+/// Where the server hands `osewa holder` the client's session env: a JSON
+/// array of KEY=value. In the environment rather than on the command line,
+/// which every user on the host can read.
+pub const SESSION_ENV: &str = "OSEWA_SESSION_ENV";
+
+fn session_env_var() -> Result<Vec<String>, String> {
+    match std::env::var(SESSION_ENV) {
+        Ok(j) if !j.is_empty() => serde_json::from_str(&j).map_err(|e| format!("holder: {SESSION_ENV}: {e}")),
+        _ => Ok(Vec::new()),
+    }
+}
+
 fn parse_flags(args: &[String]) -> Result<Config, String> {
     let mut fs = osewa_flag::FlagSet::new("holder");
     fs.value("run", "", "run directory for the socket")
@@ -248,6 +262,7 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
             None => p.duration("idle-timeout").map_err(|e| e.to_string())?,
         },
         argv: p.args.clone(),
+        env: session_env_var()?,
         trace_dir: std::env::var("OSEWA_TRACE").unwrap_or_default(),
         ..Default::default()
     })
@@ -293,7 +308,8 @@ pub async fn serve(
 
     let tune = cfg.tune.clone();
     let (master, slave) = pty::open(cfg.cols as u16, cfg.rows as u16, cfg.width as u16, cfg.height as u16).map_err(|e| e.to_string())?;
-    let mut cmd = pty::command(&cfg.argv, &cfg.cwd, &cfg.env, &slave).map_err(|e| e.to_string())?;
+    let acct = osewa_paths::account();
+    let mut cmd = pty::command(&cfg.argv, &cfg.cwd, &cfg.env, &acct, &slave).map_err(|e| e.to_string())?;
     let mode_poll = if cfg.idle.is_zero() { tune.mode_poll } else { tune.mode_poll.min((cfg.idle / 4).max(Duration::from_millis(10))) };
     let s = Session::new(cfg, master.as_raw_fd(), real_clock())?;
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;

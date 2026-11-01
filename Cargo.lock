@@ -574,6 +574,7 @@ name = "osewa-execproc"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "osewa-paths",
  "tokio",
 ]
 
@@ -587,6 +588,7 @@ dependencies = [
  "osewa-ghostty",
  "osewa-holder",
  "osewa-mirror",
+ "osewa-paths",
  "osewa-server",
  "osewa-vt",
  "osewa-wire",

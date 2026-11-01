@@ -67,6 +67,7 @@ pub fn echo_flood_raw_argv() -> Vec<String> {
 
 /// The holder process, with args after "holder".
 pub fn holder_command(args: &[&str]) -> Command {
+    osewa_paths::sandbox_home();
     let mut cmd = Command::new(std::env::current_exe().unwrap());
     cmd.args(SELF_ARGS.split(' '));
     cmd.env("OSEWA_TEST_HOLDER", "1").env("OSEWA_TEST_ARGS", args.join("\x1f"));
