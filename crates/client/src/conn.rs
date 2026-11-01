@@ -439,7 +439,9 @@ impl Conn {
             let b = match b {
                 Ok(b) => b,
                 Err(e) => {
-                    self.enqueue(Inbound::Err(read_error(e.to_string())));
+                    // Only before WELCOME can a close be a version refusal.
+                    let e = if self.0.welcomed.is_set() { Error::closed(e) } else { read_error(e.to_string()) };
+                    self.enqueue(Inbound::Err(e));
                     return;
                 }
             };

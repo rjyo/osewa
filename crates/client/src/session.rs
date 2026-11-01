@@ -939,6 +939,12 @@ impl Session {
         self.0.lock().pending.len()
     }
 
+    /// The text of the input awaiting an INPUT_ACK, in bytes: what a
+    /// caller bounds to keep a long outage from queueing without end.
+    pub fn pending_bytes(&self) -> usize {
+        self.0.lock().pending.iter().map(|i| i.text.len()).sum()
+    }
+
     /// Ends the session locally, without detaching.
     pub fn close(&self) {
         let mut st = self.0.lock();
