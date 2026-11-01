@@ -24,24 +24,41 @@ frames; it never parses snapshot or output payloads.
 Holders listen at `<run>/<session id>.sock`, where `<run>` is
 `$XDG_RUNTIME_DIR/osewa` if set, else `~/.local/state/osewa/run`, mode 0700.
 The server spawns a holder with `osewa holder --run <run> --id <id> --cols
-<c> --rows <r> [--cwd <dir>] -- <argv...>`, detached with setsid; the holder
-prints one line `ready` on stdout once its socket accepts connections. The
-server passes `session.create` `env` as `OSEWA_SESSION_ENV`, a JSON array of
-`KEY=value`, in the holder's environment (not on its command line, which
-every user can read).
+<c> --rows <r> [--cwd <dir>] --env-stdin -- <argv...>`, detached with setsid,
+and writes `session.create` `env` to its stdin as a JSON array of
+`KEY=value` (not on its command line, which every user can read, nor in one
+environment string, which Linux caps at 128 KiB; a create request's 1 MiB
+bounds it). The holder prints one line `ready` on stdout once its socket
+accepts connections. A holder that exits first fails the create with its
+exit status and the end of its stderr.
 
 A session's environment is built from the account, as sshd builds a
 login's, never inherited from the server (whatever started it: launchd's
-bare PATH, a terminal multiplexer's or an agent's variables): `HOME`,
-`USER`, `LOGNAME` and `SHELL` from the passwd entry, `PATH`
-`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` (on macOS with
-`/opt/homebrew/bin:/opt/homebrew/sbin` first when present; the login
-shell's profile extends it), `TERM=xterm-256color`, `LANG` and `LC_*` from
-the server when set, `TMPDIR` on macOS (the account's per-user temp dir),
-`XDG_RUNTIME_DIR` on Linux when the server has it; then `env`, whose
-entries win. `cwd` defaults to the passwd home directory. `OSEWA_HOME`, in
-the server's environment, overrides that home (HOME and the default cwd)
-for tests and sandboxes; nothing else of the account can be overridden.
+bare PATH, a terminal multiplexer's or an agent's variables):
+
+- `HOME`, `USER`, `LOGNAME` and `SHELL` from the passwd entry. Without one
+  (or when the lookup fails, said on the server's stderr), `USER` or
+  `LOGNAME` and `HOME` from the server's environment, else `/`, and
+  `/bin/sh`.
+- `PATH` `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, on macOS with
+  `/opt/homebrew/bin:/opt/homebrew/sbin` first when present; the login
+  shell's profile extends it.
+- `TERM=xterm-256color`, in PTY sessions only: exec.start gets none.
+- From the server's environment when set: `LANG`, `LANGUAGE`, `LC_*`,
+  `TZ`; on macOS `__CF_USER_TEXT_ENCODING`; on Linux `XDG_RUNTIME_DIR`.
+  `TMPDIR` on macOS is the account's per-user temp dir (else the server's).
+- Then `env`, whose entries win, except `OSEWA_*` ones: that prefix is
+  osewa's own, and dropped.
+- On macOS, `LANG=en_US.UTF-8` when neither the server nor `env` set
+  `LANG`, `LC_ALL` or `LC_CTYPE` (launchd gives none); an explicit choice
+  is kept.
+
+`cwd` defaults to the home directory, and `argv` to passwd's login shell.
+`OSEWA_HOME`, in the server's environment, overrides that home (`HOME` and
+the default cwd) for tests and sandboxes: it must be an absolute path (the
+server refuses to start otherwise), the server says so on stderr at start,
+holders get it from the server, and sessions never do. Nothing else of the
+account can be overridden.
 
 A holder never sends WELCOME; the server answers the client's HELLO itself.
 The server closes a client connection whose HELLO has no `client_id`.
