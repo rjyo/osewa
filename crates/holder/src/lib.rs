@@ -303,7 +303,6 @@ pub fn run_until(
     signals: bool,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(), String> {
-    osewa_paths::check_home(cfg.home.as_deref()).map_err(|e| format!("holder: {e}"))?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, serve(cfg, ready, signals, stop))
@@ -320,6 +319,8 @@ pub async fn serve(
     signals: bool,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(), String> {
+    // Every way into a holder comes through here.
+    osewa_paths::check_home(cfg.home.as_deref()).map_err(|e| format!("holder: {e}"))?;
     cfg.defaults()?;
     osewa_paths::ensure(&cfg.run_dir).map_err(|e| e.to_string())?;
     let sock = socket_path(&cfg.run_dir, &cfg.id);

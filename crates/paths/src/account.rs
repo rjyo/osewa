@@ -7,7 +7,7 @@
 
 use std::ffi::{CStr, OsStr, OsString};
 use std::io;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 /// The account this process runs as, from passwd.
@@ -93,11 +93,45 @@ pub fn check_home(home: Option<&Path>) -> Result<(), String> {
     if std::env::var_os(REQUIRE_SANDBOX).is_some_and(|v| v == "1") {
         match home {
             None => return Err(format!("{REQUIRE_SANDBOX}=1 and no sandbox home: set {HOME_OVERRIDE} (osewa_paths::sandbox) or Config.home")),
-            Some(h) if h == passwd_account().home => return Err(format!("{REQUIRE_SANDBOX}=1 and the sessions' home {} is the real one", h.display())),
+            Some(h) if same_dir(h, &passwd_account().home) => {
+                return Err(format!("{REQUIRE_SANDBOX}=1 and the sessions' home {} is the real one", h.display()))
+            }
             Some(_) => {}
         }
     }
     Ok(())
+}
+
+/// The path p names once symlinks and `..` are resolved: the nearest
+/// existing ancestor canonicalized, then the rest, for a p not made yet.
+fn resolved(p: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut cur = p;
+    loop {
+        if let Ok(c) = std::fs::canonicalize(cur) {
+            return rest.iter().rev().fold(c, |acc: PathBuf, part| acc.join(part));
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                cur = parent;
+            }
+            _ => return p.to_path_buf(),
+        }
+    }
+}
+
+/// Whether a and b are one directory: by resolved path, and by device
+/// and inode when both exist (a bind mount or hard alias resolves apart).
+fn same_dir(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if resolved(a) == resolved(b) {
+        return true;
+    }
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+        _ => false,
+    }
 }
 
 /// A fresh private directory for this test process's sessions to use as
@@ -107,10 +141,15 @@ pub fn check_home(home: Option<&Path>) -> Result<(), String> {
 pub fn sandbox_home() -> PathBuf {
     static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME.get_or_init(|| {
-        let d = std::env::temp_dir().join(format!("osewa-home-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).expect("osewa: sandbox home");
-        std::fs::canonicalize(&d).expect("osewa: sandbox home")
+        // A new directory of its own (mkdtemp), never one that exists: a
+        // pid-named one could be a reused pid's, still in use.
+        let template = std::env::temp_dir().join("osewa-home-XXXXXX");
+        let mut t = template.into_os_string().into_vec();
+        t.push(0);
+        let p = unsafe { libc::mkdtemp(t.as_mut_ptr().cast()) };
+        assert!(!p.is_null(), "osewa: sandbox home: {}", io::Error::last_os_error());
+        t.pop();
+        std::fs::canonicalize(OsStr::from_bytes(&t)).expect("osewa: sandbox home")
     })
     .clone()
 }
@@ -154,8 +193,15 @@ fn passwd() -> io::Result<Option<(String, PathBuf, String)>> {
 
 /// The account as passwd has it, OSEWA_HOME aside. Without an entry, or
 /// when the lookup fails (said on stderr), what the environment says,
-/// else / and /bin/sh.
+/// else / and /bin/sh. Looked up once per process, at its first use (a
+/// server's start): a failure is then said before anything serves, never
+/// from a runtime where a blocked stderr would stall it.
 pub fn passwd_account() -> Account {
+    static ACCOUNT: std::sync::OnceLock<Account> = std::sync::OnceLock::new();
+    ACCOUNT.get_or_init(lookup_account).clone()
+}
+
+fn lookup_account() -> Account {
     let (name, home, shell) = match passwd() {
         Ok(Some(e)) => e,
         Ok(None) => Default::default(),
@@ -377,6 +423,31 @@ mod tests {
         let mut cmd = std::process::Command::new("true");
         sandbox(&mut cmd);
         assert!(cmd.get_envs().any(|(k, v)| k == HOME_OVERRIDE && v == Some(home.as_os_str())));
+    }
+
+    /// The guard sees through a symlink or `..` to the real home.
+    #[test]
+    fn real_home_however_named() {
+        let real = passwd_account().home;
+        assert!(same_dir(&real, &real));
+        let parent = real.parent().unwrap();
+        let dotdot = real.join("..").join(real.file_name().unwrap());
+        assert!(same_dir(&dotdot, &real), "{dotdot:?}");
+        let link = sandbox_home().join("home-link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(same_dir(&link, &real), "a symlink to the real home");
+        assert!(same_dir(&link.join("not-yet"), &real.join("not-yet")), "a path under it, not made yet");
+        assert!(!same_dir(&sandbox_home(), &real) && !same_dir(parent, &real));
+        let _ = std::fs::remove_file(&link);
+    }
+
+    /// Each process gets a new directory of its own.
+    #[test]
+    fn sandbox_home_is_new() {
+        let h = sandbox_home();
+        assert!(h.is_dir() && h.file_name().unwrap().to_str().unwrap().starts_with("osewa-home-"), "{h:?}");
+        assert_eq!(sandbox_home(), h, "made once");
     }
 
     #[test]
