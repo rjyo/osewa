@@ -84,7 +84,7 @@ struct Host {
     device: Vec<u8>,
     ctl: tokio::sync::mpsc::UnboundedSender<Ctl>,
     thread: Option<JoinHandle<()>>,
-    _dir: TempDir,
+    dir: TempDir,
 }
 
 impl Host {
@@ -153,7 +153,12 @@ impl Host {
             });
         });
         ready_rx.recv().unwrap();
-        Host { addr, server_key, device: device.pkcs8().to_vec(), ctl, thread: Some(thread), _dir: dir }
+        Host { addr, server_key, device: device.pkcs8().to_vec(), ctl, thread: Some(thread), dir }
+    }
+
+    /// Takes this test's device off the server's devices file.
+    fn revoke(&self) {
+        osewa_auth::Devices::new(self.dir.path().join("devices")).remove("phone").unwrap();
     }
 
     /// Drops every connection and serves again on the same address;
@@ -181,7 +186,11 @@ struct Rec {
     states: Mutex<Vec<(i32, Option<String>)>>,
     stats: Mutex<Vec<(u32, String)>>,
     events: Mutex<Vec<serde_json::Value>>,
+    /// States and event types, in the order they came.
+    log: Mutex<Vec<String>>,
     calls: std::sync::atomic::AtomicUsize,
+    /// The session, for callbacks that call back in.
+    h: std::sync::atomic::AtomicPtr<OsewaSession>,
 }
 
 // The terminal is only used under its lock.
@@ -196,7 +205,9 @@ impl Rec {
             states: Mutex::default(),
             stats: Mutex::default(),
             events: Mutex::default(),
+            log: Mutex::default(),
             calls: Default::default(),
+            h: Default::default(),
         })
     }
 
@@ -252,6 +263,7 @@ unsafe extern "C" fn on_state(ctx: *mut c_void, state: i32, detail: *const c_cha
     let r = rec(ctx);
     r.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let d = (!detail.is_null()).then(|| unsafe { CStr::from_ptr(detail) }.to_string_lossy().into_owned());
+    r.log.lock().unwrap().push(format!("state {state}"));
     r.states.lock().unwrap().push((state, d));
 }
 
@@ -265,7 +277,9 @@ unsafe extern "C" fn on_event(ctx: *mut c_void, json: *const c_char) {
     let r = rec(ctx);
     r.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let j = unsafe { CStr::from_ptr(json) }.to_string_lossy();
-    r.events.lock().unwrap().push(serde_json::from_str(&j).expect("event JSON"));
+    let v: serde_json::Value = serde_json::from_str(&j).expect("event JSON");
+    r.log.lock().unwrap().push(format!("event {}", v["type"].as_str().unwrap_or_default()));
+    r.events.lock().unwrap().push(v);
 }
 
 const WAIT: Duration = Duration::from_secs(10);

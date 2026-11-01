@@ -16,9 +16,21 @@ mod options;
 mod session;
 
 pub use options::OpenOptions;
-pub use session::{Callbacks, CLOSED, CONNECTED, CONNECTING, RECONNECTING};
+pub use session::{Callbacks, CLOSED, CONNECTED, CONNECTING, INPUT_MAX, RECONNECTING};
 
-use session::Handle;
+use session::{Handle, Refused};
+
+/// osewa_send and osewa_paste's refusals (osewa.h).
+pub const ERR: i32 = -1;
+pub const ERR_FULL: i32 = -2;
+
+fn refused(r: Result<(), Refused>) -> i32 {
+    match r {
+        Ok(()) => 0,
+        Err(Refused::Closed) => ERR,
+        Err(Refused::Full) => ERR_FULL,
+    }
+}
 
 #[cfg(test)]
 mod tests;
@@ -70,11 +82,7 @@ pub unsafe extern "C" fn osewa_send(s: *mut OsewaSession, buf: *const u8, len: u
             return -1;
         }
         let b = unsafe { std::slice::from_raw_parts(buf, len) };
-        if s.0.send(b) {
-            0
-        } else {
-            -1
-        }
+        refused(s.0.send(b))
     })
 }
 
@@ -90,11 +98,7 @@ pub unsafe extern "C" fn osewa_paste(s: *mut OsewaSession, utf8: *const c_char) 
             return -1;
         }
         let Ok(text) = unsafe { CStr::from_ptr(utf8) }.to_str() else { return -1 };
-        if s.0.paste(text.to_string()) {
-            0
-        } else {
-            -1
-        }
+        refused(s.0.paste(text.to_string()))
     })
 }
 
@@ -131,26 +135,31 @@ pub unsafe extern "C" fn osewa_network_changed(s: *mut OsewaSession) {
     })
 }
 
+/// Quiesces the callbacks through a shared reference, then frees s: a
+/// callback still running may be calling osewa_send on it meanwhile.
+///
 /// # Safety
-/// s is from osewa_open and not yet closed; it is freed.
-#[no_mangle]
-pub unsafe extern "C" fn osewa_close(s: *mut OsewaSession) {
+/// s is from osewa_open and not yet closed.
+unsafe fn close(s: *mut OsewaSession, kill: bool) {
     guard((), || {
-        if !s.is_null() {
-            unsafe { Box::from_raw(s) }.0.close(false);
-        }
+        let Some(h) = (unsafe { s.as_ref() }) else { return };
+        h.0.quiesce();
+        unsafe { Box::from_raw(s) }.0.close(kill);
     })
 }
 
 /// # Safety
 /// s is from osewa_open and not yet closed; it is freed.
 #[no_mangle]
+pub unsafe extern "C" fn osewa_close(s: *mut OsewaSession) {
+    unsafe { close(s, false) }
+}
+
+/// # Safety
+/// s is from osewa_open and not yet closed; it is freed.
+#[no_mangle]
 pub unsafe extern "C" fn osewa_kill(s: *mut OsewaSession) {
-    guard((), || {
-        if !s.is_null() {
-            unsafe { Box::from_raw(s) }.0.close(true);
-        }
-    })
+    unsafe { close(s, true) }
 }
 
 /// Writes a new device key, PKCS#8 DER, into out. When cap is too small
@@ -197,7 +206,7 @@ pub unsafe extern "C" fn osewa_public_key(der: *const u8, len: usize) -> *mut c_
 #[no_mangle]
 pub extern "C" fn osewa_build_info() -> *const c_char {
     static INFO: OnceLock<CString> = OnceLock::new();
-    INFO.get_or_init(|| CString::new(osewa_client::build_info()).unwrap_or_default()).as_ptr()
+    guard(c"{}".as_ptr(), || INFO.get_or_init(|| CString::new(osewa_client::build_info()).unwrap_or_default()).as_ptr())
 }
 
 /// Frees a string osewa returned (an error, a public key).

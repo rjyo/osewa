@@ -22,6 +22,12 @@ typedef struct osewa_session osewa_session;
 
 enum { OSEWA_CONNECTING = 0, OSEWA_CONNECTED = 1, OSEWA_RECONNECTING = 2, OSEWA_CLOSED = 3 };
 
+/* osewa_send and osewa_paste: 0 ok; OSEWA_ERR for a closed session or bad
+   arguments; OSEWA_ERR_FULL when 1 MiB of input is already outstanding
+   (queued, or sent and not yet acked by the host, as during an outage):
+   nothing was taken, try again later. */
+enum { OSEWA_ERR = -1, OSEWA_ERR_FULL = -2 };
+
 typedef struct osewa_callbacks {
   void *ctx;
   /* VT bytes for the app's own terminal (a full repaint after each snapshot,
@@ -58,9 +64,10 @@ typedef struct osewa_open_options {
 /* Never blocks on the network; connection progress arrives via callbacks.
    NULL + *err (free with osewa_string_free) on bad options. */
 osewa_session *osewa_open(const osewa_open_options *opts, osewa_callbacks cb, char **err);
-/* Raw bytes from the app's key encoder; split UTF-8 runes are held back. 0 ok. */
+/* Raw bytes from the app's key encoder; split UTF-8 runes are held back.
+   0, OSEWA_ERR or OSEWA_ERR_FULL. */
 int32_t osewa_send(osewa_session *s, const uint8_t *buf, size_t len);
-int32_t osewa_paste(osewa_session *s, const char *utf8);
+int32_t osewa_paste(osewa_session *s, const char *utf8); /* as osewa_send */
 void osewa_resize(osewa_session *s, uint16_t cols, uint16_t rows, uint32_t width_px, uint32_t height_px);
 /* Repaint the whole screen through `output` (the app's view was recreated). */
 void osewa_redraw(osewa_session *s);

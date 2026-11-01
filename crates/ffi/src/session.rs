@@ -4,6 +4,7 @@
 
 use std::ffi::{c_char, c_void, CString};
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -28,6 +29,19 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_AFTER: Duration = Duration::from_millis(250);
 /// stats at most this often: a sample comes with every keystroke's ack.
 const STATS_EVERY: Duration = Duration::from_secs(1);
+/// Bounds the input the app may have outstanding: queued here, or with the
+/// session awaiting the holder's ack. Past it send and paste refuse, so an
+/// outage (or a connection that never comes) can't queue without end.
+pub const INPUT_MAX: usize = 1 << 20;
+
+/// Why send or paste refused.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// The session is over.
+    Closed,
+    /// INPUT_MAX is outstanding.
+    Full,
+}
 
 /// osewa_callbacks, as osewa.h lays it out.
 #[repr(C)]
@@ -163,9 +177,19 @@ struct Live {
     a: Option<Attached>,
 }
 
+/// Input outstanding, in bytes: in the channel to the session thread, and
+/// with the session unacked as the thread last saw it. Only atomics, as
+/// send may come from inside a callback that runs with the session locked.
+#[derive(Default)]
+struct Backlog {
+    queued: AtomicUsize,
+    unacked: AtomicUsize,
+}
+
 /// An open session (osewa_session).
 pub struct Handle {
     sink: Arc<Sink>,
+    backlog: Arc<Backlog>,
     cmds: mpsc::UnboundedSender<Cmd>,
     size: watch::Sender<Size>,
     stop: Option<oneshot::Sender<()>>,
@@ -196,7 +220,8 @@ impl Handle {
             }
         }));
         let link = Link::new(cfg);
-        let w = Worker { o, link: link.clone(), sink: sink.clone(), live: live.clone() };
+        let backlog = Arc::new(Backlog::default());
+        let w = Worker { o, link: link.clone(), sink: sink.clone(), live: live.clone(), backlog: backlog.clone() };
         let thread = std::thread::Builder::new()
             .name("osewa-session".into())
             .spawn(move || {
@@ -210,16 +235,28 @@ impl Handle {
                 })
             })
             .expect("osewa: session thread");
-        Handle { sink, cmds, size, stop: Some(stop), thread: Some(thread), link, live }
+        Handle { sink, backlog, cmds, size, stop: Some(stop), thread: Some(thread), link, live }
     }
 
-    /// False once the session is closed.
-    pub fn send(&self, b: &[u8]) -> bool {
-        self.cmds.send(Cmd::Send(b.to_vec())).is_ok()
+    pub fn send(&self, b: &[u8]) -> Result<(), Refused> {
+        self.queue(b.len(), Cmd::Send(b.to_vec()))
     }
 
-    pub fn paste(&self, text: String) -> bool {
-        self.cmds.send(Cmd::Paste(text)).is_ok()
+    pub fn paste(&self, text: String) -> Result<(), Refused> {
+        self.queue(text.len(), Cmd::Paste(text))
+    }
+
+    fn queue(&self, n: usize, cmd: Cmd) -> Result<(), Refused> {
+        if self.cmds.is_closed() {
+            return Err(Refused::Closed);
+        }
+        let b = &self.backlog;
+        let queued = b.queued.fetch_add(n, Ordering::SeqCst);
+        if queued + b.unacked.load(Ordering::SeqCst) + n > INPUT_MAX {
+            b.queued.fetch_sub(n, Ordering::SeqCst);
+            return Err(Refused::Full);
+        }
+        self.cmds.send(cmd).map_err(|_| Refused::Closed)
     }
 
     pub fn redraw(&self) {
@@ -234,9 +271,16 @@ impl Handle {
         self.link.check();
     }
 
-    /// Stops the callbacks and the session thread, then lets go of the
-    /// session in the background: detached (it keeps running on the host)
-    /// or killed.
+    /// Stops the callbacks, waiting out one that is running. Through a
+    /// shared reference, before the handle is freed: a running callback may
+    /// still be using it (osewa_send from inside one).
+    pub fn quiesce(&self) {
+        self.sink.off();
+    }
+
+    /// Stops the session thread, then lets go of the session in the
+    /// background: detached (it keeps running on the host) or killed. Call
+    /// quiesce first.
     pub fn close(mut self, kill: bool) {
         self.sink.off();
         if let Some(stop) = self.stop.take() {
@@ -279,6 +323,7 @@ struct Worker {
     link: Link,
     sink: Arc<Sink>,
     live: Arc<Mutex<Live>>,
+    backlog: Arc<Backlog>,
 }
 
 impl Worker {
@@ -294,12 +339,27 @@ impl Worker {
         }
         self.sink.event(&serde_json::json!({"type": "session", "id": s.id()}).to_string());
         a.send_appearance().await;
+        let mut events = s.take_events();
+        // Only follow ends (the others run until the thread is stopped), so
+        // the end is always reported, after the last events.
         tokio::select! {
-            _ = self.follow(&s, &rtt) => {}
-            _ = input(cmds, &s, &a) => {}
+            _ = self.follow(&s, &rtt, &mut events) => {}
+            _ = input(cmds, &s, &a, &self.backlog) => {}
             _ = resize(size, &s) => {}
-            _ = osewa_vt::ticker(a.clone(), s.done()) => {}
+            _ = osewa_vt::ticker(a.clone(), std::future::pending::<()>()) => {}
         }
+        self.finish(&s, &mut events);
+    }
+
+    /// Reports the last events and why the session is over, once it is.
+    fn finish(&self, s: &Session, events: &mut Option<mpsc::Receiver<wire::EventMsg>>) {
+        if !s.is_done() {
+            return;
+        }
+        while let Some(e) = events.as_mut().and_then(|rx| rx.try_recv().ok()) {
+            self.sink.event(&event_json(&e));
+        }
+        self.sink.state(CLOSED, Some(&ended(s)));
     }
 
     /// Creates the session if asked to, and attaches it through the link,
@@ -389,23 +449,24 @@ impl Worker {
 
     /// Reports the state as the link and the session change, the stats,
     /// and the session's live events, until the session ends.
-    async fn follow(&self, s: &Session, rtt: &Notify) {
+    async fn follow(&self, s: &Session, rtt: &Notify, events: &mut Option<mpsc::Receiver<wire::EventMsg>>) {
         let (mut lw, mut sw) = (self.link.watch(), s.watch());
-        let mut events = s.take_events();
         let mut carrier: Option<&'static str> = None;
         let (mut stats_due, mut stats_at) = (false, None::<Instant>);
         loop {
+            self.backlog.unacked.store(s.pending_bytes(), Ordering::SeqCst);
             if s.is_done() {
-                // The last events (the exit) come before why it closed.
-                while let Some(e) = events.as_mut().and_then(|rx| rx.try_recv().ok()) {
-                    self.sink.event(&event_json(&e));
-                }
-                self.sink.state(CLOSED, Some(&ended(s)));
-                return;
+                return; // run's finish reports it
             }
             let st = self.link.state();
-            if let Some(e) = &st.fin {
-                self.sink.state(CLOSED, Some(&fatal(e).unwrap_or_else(|| e.to_string())));
+            // Incompatible stops the link; a refusal on a redial (the
+            // device revoked, the host re-keyed) doesn't, but no redial
+            // will get past it either.
+            let why = st.fin.as_ref().map(|e| fatal(e).unwrap_or_else(|| e.to_string())).or_else(|| st.err.as_ref().and_then(fatal));
+            if let Some(why) = why {
+                self.sink.state(CLOSED, Some(&why));
+                s.close();
+                self.link.close().await;
                 return;
             }
             if st.up && s.connected() {
@@ -436,7 +497,7 @@ impl Worker {
                 up = sw.changed() => if !up { std::future::pending::<()>().await },
                 e = async { match events.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => match e {
                     Some(e) => self.sink.event(&event_json(&e)),
-                    None => events = None,
+                    None => *events = None,
                 },
                 _ = rtt.notified() => stats_due = true,
                 _ = async { match wait { Some(d) => osewa_client::sleep(d).await, None => std::future::pending().await } } => {}
@@ -447,9 +508,14 @@ impl Worker {
 
 /// Sends the app's input in order. Text goes once a rune is whole; the
 /// app being in front, a session someone else took is taken back first.
-async fn input(cmds: &mut mpsc::UnboundedReceiver<Cmd>, s: &Session, a: &Attached) {
+async fn input(cmds: &mut mpsc::UnboundedReceiver<Cmd>, s: &Session, a: &Attached, backlog: &Backlog) {
     let mut carry: Vec<u8> = Vec::new();
     while let Some(cmd) = cmds.recv().await {
+        let n = match &cmd {
+            Cmd::Send(b) => b.len(),
+            Cmd::Paste(t) => t.len(),
+            Cmd::Redraw => 0,
+        };
         match cmd {
             Cmd::Send(b) => {
                 carry.extend_from_slice(&b);
@@ -468,7 +534,11 @@ async fn input(cmds: &mut mpsc::UnboundedReceiver<Cmd>, s: &Session, a: &Attache
             }
             Cmd::Redraw => a.redraw(),
         }
+        // Handed to the session, whose own count (unacked) takes over.
+        backlog.unacked.store(s.pending_bytes(), Ordering::SeqCst);
+        backlog.queued.fetch_sub(n, Ordering::SeqCst);
     }
+    std::future::pending::<()>().await
 }
 
 /// Takes the session back when another client owns it.

@@ -297,3 +297,118 @@ fn send_from_inside_a_callback() {
     H.store(std::ptr::null_mut(), std::sync::atomic::Ordering::SeqCst);
     unsafe { osewa_close(h) };
 }
+
+/// A remote exit always ends in exactly one CLOSED "exit N", after the
+/// exit event, whichever of the session's tasks sees the end first.
+#[test]
+fn exit_reports_closed_once() {
+    let host = Host::new();
+    for i in 0..10 {
+        let r = Rec::new(80, 24);
+        let h = open(&host.open_opts(), &r);
+        r.wait_state(CONNECTED);
+        send(h, &format!("exit {}\r", i + 1));
+        assert_eq!(r.wait_state(CLOSED).as_deref(), Some(format!("exit {}", i + 1).as_str()), "run {i}");
+        std::thread::sleep(Duration::from_millis(50));
+        let log = r.log.lock().unwrap().clone();
+        let closed: Vec<usize> = log.iter().enumerate().filter(|(_, l)| *l == "state 3").map(|(i, _)| i).collect();
+        let exit = log.iter().position(|l| l == "event exit");
+        assert!(closed.len() == 1 && exit.is_some_and(|e| e < closed[0]), "run {i}: {log:?}");
+        unsafe { osewa_close(h) };
+    }
+}
+
+/// Closing while a callback is calling osewa_send on the same session is
+/// safe: close waits the callback out before freeing anything.
+#[test]
+fn close_while_callbacks_send() {
+    unsafe extern "C" fn sending(ctx: *mut c_void, b: *const u8, n: usize) {
+        unsafe { on_output(ctx, b, n) };
+        let h = rec(ctx).h.load(std::sync::atomic::Ordering::SeqCst);
+        for _ in 0..20 {
+            let r = unsafe { osewa_send(h, b"".as_ptr(), 0) } + unsafe { osewa_send(h, b"\x1b[A".as_ptr(), 0) };
+            assert!(r <= 0);
+            unsafe { osewa_resize(h, 80, 24, 0, 0) };
+        }
+        let _ = unsafe { osewa_send(h, b":".as_ptr(), 1) };
+    }
+    let host = Host::new();
+    for i in 0..20 {
+        let r = Rec::new(80, 24);
+        let mut cb = r.callbacks();
+        cb.output = Some(sending);
+        let o = host.open_opts();
+        let mut s = Strings::default();
+        let opts = OpenOptions {
+            addr: s.add(&o.addr),
+            server_key: s.add(&o.server_key),
+            quic_port: 0,
+            device_key: o.device.as_ptr(),
+            device_key_len: o.device.len(),
+            client_id: s.add("phone-test"),
+            device_name: s.add("phone"),
+            session_id: std::ptr::null(),
+            // Output keeps coming, so callbacks are running as it closes;
+            // what they type goes nowhere.
+            argv_json: s.add(r#"["/bin/sh","-c","while :; do echo flood; done"]"#),
+            cwd: std::ptr::null(),
+            cols: 80,
+            rows: 24,
+            width_px: 0,
+            height_px: 0,
+            predict: 1,
+            appearance_json: std::ptr::null(),
+        };
+        let h = unsafe { osewa_open(&opts, cb, std::ptr::null_mut()) };
+        r.h.store(h, std::sync::atomic::Ordering::SeqCst);
+        r.wait_screen("flood");
+        std::thread::sleep(Duration::from_millis(i % 5));
+        unsafe { osewa_kill(h) };
+        let calls = r.calls();
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(r.calls(), calls, "run {i}: callbacks after close");
+    }
+}
+
+/// Input that can't drain (nothing to connect to yet) is bounded: past
+/// INPUT_MAX outstanding, send refuses with OSEWA_ERR_FULL.
+#[test]
+fn input_is_bounded() {
+    let ln = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = ln.local_addr().unwrap().to_string();
+    drop(ln);
+    let host = Host::new();
+    let r = Rec::new(80, 24);
+    let mut o = host.open_opts();
+    o.addr = addr;
+    let h = open(&o, &r);
+    let chunk = vec![b'a'; 64 << 10];
+    let mut taken = 0;
+    loop {
+        match unsafe { osewa_send(h, chunk.as_ptr(), chunk.len()) } {
+            0 => taken += chunk.len(),
+            ERR_FULL => break,
+            e => panic!("send: {e}"),
+        }
+        assert!(taken <= INPUT_MAX, "took {taken}");
+    }
+    assert_eq!(taken, INPUT_MAX, "took {taken}");
+    let paste = CString::new("x").unwrap();
+    assert_eq!(unsafe { osewa_paste(h, paste.as_ptr()) }, ERR_FULL);
+    unsafe { osewa_close(h) };
+}
+
+/// A device revoked mid-session is refused on the redial: CLOSED
+/// "unauthorized", not reconnecting forever.
+#[test]
+fn revoked_device_closes_unauthorized() {
+    let host = Host::new();
+    let r = Rec::new(80, 24);
+    let h = open(&host.open_opts(), &r);
+    r.wait_state(CONNECTED);
+    host.revoke();
+    host.restart();
+    let why = r.wait_state(CLOSED).unwrap_or_default();
+    assert!(why.starts_with("unauthorized: "), "detail {why:?}");
+    unsafe { osewa_close(h) };
+}
