@@ -30,7 +30,7 @@ in from a laptop or a phone.
 | Transport | TCP | UDP only | QUIC, falling back to TLS over TCP |
 | Screen on the host | None, bytes are replayed | Its own emulator, no scrollback | libghostty-vt, Ghostty's terminal engine |
 | Beyond the shell | Port forwards, exec | Terminal only | Port forwards and exec on the same connection |
-| Kitty protocols (keyboard, graphics, clipboard) | Passed through | No | Keyboard; graphics with animation, kept on the host and redrawn on reconnect (images sent inline); OSC 52 copy, and paste with `--clipboard-read` |
+| Kitty protocols (keyboard, graphics, clipboard) | Passed through | No | Keyboard; graphics with animation, kept on the host and redrawn on reconnect (images sent inline); OSC 52 copy; OSC 52 and Kitty clipboard reads with `--clipboard-read`; Kitty paste events |
 | OSC, including modern ones (hyperlinks, cwd, prompt marks, agent status OSC 7501) | Passed through | Few | Yes, plus colors (your terminal's answer programs' queries), light/dark reports, pointer shapes and notifications (OSC 9, 777) |
 
 **mosh bet on saving bandwidth.** It sends small screen diffs from its own
@@ -79,26 +79,44 @@ caps a 50 Mbit/s download near 1.4 MB/s.
 
 From one Mac mini Pro in Thailand to another in Tokyo, over Tailscale (about
 125 ms round trip), osewa connects four times faster than ssh and six times
-faster than mosh. During a download it echoes keys in 132 ms, against ssh's
-258 and mosh's 152.
+faster than mosh. During a download it echoes keys in 129 ms, 3 ms over
+idle, against ssh's 178 and mosh's 198.
 
 | Median of 5 runs | osewa QUIC | osewa WebSocket | ssh | mosh |
 | --- | ---: | ---: | ---: | ---: |
-| Connect + run a command | **379 ms** | 630 ms | 1,582 ms | 2,324 ms |
-| Echo p50, idle | **122 ms** | 125 ms | 132 ms | 138 ms |
-| Echo p50 / p95 during a download | 132 / **158 ms** | **131** / 233 ms | 258 / 331 ms | 152 / 190 ms |
-| Download alone | **9.70 MB/s** | 9.69 MB/s | 5.36 MB/s | — |
-| Download while typing | 7.27 MB/s | **9.01 MB/s** | 6.94 MB/s | 6.48 MB/s |
+| Connect + run a command | **387 ms** | 640 ms | 1,627 ms | 2,366 ms |
+| Echo p50, idle | **126 ms** | 127 ms | 136 ms | 142 ms |
+| Echo p50 / p95 during a download | **129 / 156 ms** | 164 / 276 ms | 178 / 208 ms | 198 / 228 ms |
+| Download alone | 9.86 MB/s | **9.97 MB/s** | 9.82 MB/s | — |
+| Download while typing | 9.82 MB/s | 9.57 MB/s | 10.87 MB/s | **11.07 MB/s** |
 
 Echo is timed with prediction off, so it is the real round trip of a key.
 mosh carries only the terminal, so its download ran over a separate ssh
-connection on the same path, as a mosh user's would. The path swings from
-run to run (ssh's echo during a download ranged 176–301 ms across the five
-runs), so read differences under about 20 ms as noise. Runs of 2026-10-31
-with `osewa-bench vs` (raw output in
-[bench/real-world-2026-10-31.txt](bench/real-world-2026-10-31.txt)), on a build
-before the WebSocket compression and window fixes the VPS runs below
-include.
+connection on the same path, as a mosh user's would. Alone, every download
+ran near 10 MB/s, close to what the line allows (below). While typing,
+ssh's downloads filled the line to 96–98% and kept about 1 MB/s more than
+osewa's, and their keys waited 50–70 ms longer, behind the queue that
+takes. osewa's download left about a tenth of the line free, and its keys
+did not queue. Runs of 2026-11-01 with `osewa-bench vs` on the current
+build (raw output in [bench/real-world-2026-11-01.txt](bench/real-world-2026-11-01.txt)).
+
+**The network.** The Tokyo Mac mini sits on 5 GHz Wi-Fi (802.11ac, 80 MHz)
+behind an apartment cable line (coax, not fiber) whose upload is capped at
+100 Mbit/s. That cap is the bottleneck for every download here: after
+Tailscale's and Ethernet's headers it leaves about 11.3 MB/s of payload.
+Tailscale ran direct between the two NATs (WireGuard over UDP, no relay),
+and the benchmark checked that before and after the runs. The path is
+jittery, as a cable upload's request-and-grant scheduling makes it: ping
+before the runs measured 120 ms at best, 167 ms on average, with a 36 ms
+standard deviation, and 116 / 156 / 33 ms after. Run to run it swings too
+(ssh's echo during a download ranged 175–359 ms across the five runs, osewa
+QUIC's 127–160), so read differences under about 20 ms as noise. It also
+changes from day to day, since the building's neighbours share the cable
+upload: on 2026-10-31 the same path gave ssh 5.36 MB/s alone, against 9.82
+here, so compare columns within one table, not across days. That evening
+the Thai ISP's path would not go direct at all, and Tailscale fell back to
+its Tokyo relay, which caps everything near 2.8 MB/s and pushes ssh's echo
+under load to about 700 ms. Those runs are not used here.
 
 ### Real world: Thailand to a Tokyo VPS
 
@@ -171,12 +189,10 @@ osewa is growing into two layers: a transport that any terminal app can
 ride, and a multiplexer on top of it.
 
 1. **Transport.** What ships today: QUIC with TLS WebSocket fallback,
-   sessions held on the host, exactly-once input, keystrokes ahead of bulk.
-   Next:
-    - Screen diffs on catch-up: send what changed since the screen the
-      client last acknowledged, not the whole screen, negotiated at
-      connect. That takes mosh's last edge on a slow link, without the
-      garbling: the diffs come from libghostty-vt's exact screen.
+   sessions held on the host, exactly-once input, keystrokes ahead of bulk,
+   and the latest screen instead of a backlog on a slow link. Next:
+    - osewa as a transport in Moshi, the iOS and Android terminal app,
+      beside mosh.
 2. **Mux.** Tabs, splits and workspaces held on the host, like tmux, but
    built from osewa sessions instead of running inside one. Every pane is
    its own session with its own flow control, the layout lives on the host,
@@ -210,7 +226,7 @@ that is asleep.
 | OSC 22 | Pointer shape | Your terminal's pointer follows |
 | Kitty keyboard (`CSI u`) | Unambiguous keys and modifiers | Supported |
 | Kitty graphics (`APC G`) | Images, including animation | Drawn on terminals that draw them (kitty, Ghostty, WezTerm; `--graphics` to choose): kept on the host and redrawn on reconnect; images sent inline only |
-| OSC 5522 | Kitty's clipboard protocol | Reads refused; use OSC 52 |
+| OSC 5522 | Kitty's clipboard protocol | Reads wait for the owner like OSC 52's, text only, with `--clipboard-read`; pastes arrive as Kitty paste events when the program asks for them |
 
 Everything else (other OSCs, DCS including tmux passthrough, APC, PM, SOS)
 is dropped before it reaches your terminal: the remote program doesn't get
