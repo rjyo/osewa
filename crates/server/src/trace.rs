@@ -36,7 +36,7 @@ impl Tracer {
         let f = self.f.get_or_init(|| match OpenOptions::new().create(true).append(true).mode(0o600).open(self.path()) {
             Ok(f) => Some(f),
             Err(e) => {
-                eprintln!("osewa server: OSEWA_TRACE: {e}");
+                crate::log::log!("osewa server: OSEWA_TRACE: {e}");
                 None
             }
         });

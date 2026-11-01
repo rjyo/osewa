@@ -40,7 +40,10 @@ pub fn main(args: &[String]) -> i32 {
         }
     };
     let local = tokio::task::LocalSet::new();
-    match local.block_on(&rt, serve(listen, cfg, stop_signal())) {
+    let r = local.block_on(&rt, serve(listen, cfg, stop_signal()));
+    // What the server logged last, before it goes.
+    crate::log::flush(std::time::Duration::from_secs(1));
+    match r {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("osewa server: {e}");
@@ -109,12 +112,12 @@ pub(crate) async fn serve(listen: String, mut cfg: Config, stop: impl Future<Out
         // QUIC on the UDP port of the same number (docs/QUIC.md). A port
         // UDP can't have only loses the carrier.
         match ln.local_addr().and_then(std::net::UdpSocket::bind) {
-            Err(e) => eprintln!("osewa server: no QUIC: listen udp {listen}: {e}"),
+            Err(e) => crate::log::log!("osewa server: no QUIC: listen udp {listen}: {e}"),
             Ok(sock) => {
                 let s = s.clone();
                 quic = Some(tokio::task::spawn_local(async move {
                     if let Err(e) = s.serve_quic(sock).await {
-                        eprintln!("osewa server: no QUIC: {e}");
+                        crate::log::log!("osewa server: no QUIC: {e}");
                     }
                 }));
             }

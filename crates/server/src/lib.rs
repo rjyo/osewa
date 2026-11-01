@@ -28,6 +28,7 @@ pub mod conn;
 mod dial;
 mod flight;
 mod limits;
+mod log;
 mod lowat;
 pub mod path;
 mod cli;
@@ -152,7 +153,7 @@ pub struct Server {
     closing: Notify,
     /// Anyone who can reach the port can fail a handshake, and each failure
     /// is a log line.
-    log: RefCell<limits::LimitedLog<io::Stderr>>,
+    log: RefCell<limits::LimitedLog<log::Stderr>>,
 }
 
 /// How long a stopping server waits for its QUIC clients' closes to be
@@ -248,7 +249,7 @@ impl Server {
             execs: Cell::new(0),
             execs_done: Notify::new(),
             closing: Notify::new(),
-            log: RefCell::new(limits::LimitedLog::new(io::stderr(), 20, Duration::from_secs(60))),
+            log: RefCell::new(limits::LimitedLog::new(log::Stderr, 20, Duration::from_secs(60))),
         }))
     }
 
@@ -605,45 +606,6 @@ async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(
 
 /// How much of a holder's stderr an early exit reports.
 const STDERR_TAIL: usize = 2 << 10;
-/// Chunks of holders' stderr waiting for the writer thread; past it they
-/// are dropped (and counted) rather than block the runtime.
-const STDERR_QUEUE: usize = 256;
-
-/// Writes holders' stderr to ours on a thread of its own: a write to a
-/// full stderr pipe blocks, and the runtime must not.
-fn forward_stderr(chunk: Vec<u8>) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::io::Write as _;
-    use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
-    use std::sync::OnceLock;
-    static DROPPED: AtomicU64 = AtomicU64::new(0);
-    static TX: OnceLock<Option<SyncSender<Vec<u8>>>> = OnceLock::new();
-    let tx = TX.get_or_init(|| {
-        let (tx, rx) = sync_channel::<Vec<u8>>(STDERR_QUEUE);
-        let spawned = std::thread::Builder::new().name("osewa-holder-stderr".into()).spawn(move || {
-            let mut err = std::io::stderr();
-            for chunk in rx {
-                let dropped = DROPPED.swap(0, Ordering::Relaxed);
-                if dropped > 0 {
-                    let _ = writeln!(err, "[osewa server: {dropped} chunks of holder stderr dropped]");
-                }
-                let _ = err.write_all(&chunk);
-            }
-        });
-        spawned.ok().map(|_| tx)
-    });
-    match tx {
-        Some(tx) => {
-            if let Err(TrySendError::Full(_)) = tx.try_send(chunk) {
-                DROPPED.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        None => {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-}
-
 /// Waits for the started child to print "ready", with deliver (its stdin)
 /// running alongside, all within timeout. Afterwards it keeps draining
 /// stdout, so a later write can't kill the holder with SIGPIPE, and reaps
@@ -672,7 +634,7 @@ async fn await_ready(
                     let cut = t.len().saturating_sub(STDERR_TAIL);
                     t.drain(..cut);
                 }
-                forward_stderr(buf[..n].to_vec());
+                crate::log::bytes(buf[..n].to_vec());
             }
             let _ = err_done.send(());
         });
