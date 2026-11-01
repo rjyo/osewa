@@ -28,9 +28,14 @@ The server spawns a holder with `osewa holder --run <run> --id <id> --cols
 and writes `session.create` `env` to its stdin as a JSON array of
 `KEY=value` (not on its command line, which every user can read, nor in one
 environment string, which Linux caps at 128 KiB; a create request's 1 MiB
-bounds it). The holder prints one line `ready` on stdout once its socket
-accepts connections. A holder that exits first fails the create with its
-exit status and the end of its stderr.
+bounds it), while it drains the holder's stdout and stderr; delivery and
+readiness share one deadline. The holder prints one line `ready` on stdout
+once its socket accepts connections. A holder that exits or times out first
+fails the create with an `internal` error saying so: `server: holder exited
+before ready` (or `did not become ready`), then any failure writing its
+env, its exit status (`: exit status: 3`) and the last 2 KiB of its stderr,
+quoted. Holders' stderr goes on to the server's; a reader too slow for it
+loses chunks (counted in a note) rather than stall the server.
 
 A session's environment is built from the account, as sshd builds a
 login's, never inherited from the server (whatever started it: launchd's
@@ -44,8 +49,9 @@ bare PATH, a terminal multiplexer's or an agent's variables):
   `/opt/homebrew/bin:/opt/homebrew/sbin` first when present; the login
   shell's profile extends it.
 - `TERM=xterm-256color`, in PTY sessions only: exec.start gets none.
-- From the server's environment when set: `LANG`, `LANGUAGE`, `LC_*`,
-  `TZ`; on macOS `__CF_USER_TEXT_ENCODING`; on Linux `XDG_RUNTIME_DIR`.
+- From the server's environment when set and non-empty (an empty one
+  counts as unset): `LANG`, `LANGUAGE`, `LC_*`, `TZ`; on macOS
+  `__CF_USER_TEXT_ENCODING`; on Linux `XDG_RUNTIME_DIR`.
   `TMPDIR` on macOS is the account's per-user temp dir (else the server's).
 - Then `env`, whose entries win, except `OSEWA_*` ones: that prefix is
   osewa's own, and dropped.
@@ -56,9 +62,12 @@ bare PATH, a terminal multiplexer's or an agent's variables):
 `cwd` defaults to the home directory, and `argv` to passwd's login shell.
 `OSEWA_HOME`, in the server's environment, overrides that home (`HOME` and
 the default cwd) for tests and sandboxes: it must be an absolute path (the
-server refuses to start otherwise), the server says so on stderr at start,
-holders get it from the server, and sessions never do. Nothing else of the
-account can be overridden.
+server and holder refuse to start otherwise), both say so on stderr at
+start, holders get it from the server, and sessions never do. Nothing else
+of the account can be overridden. `OSEWA_REQUIRE_SANDBOX=1`, for tests only
+(cargo sets it for this repository, `.cargo/config.toml`), makes the
+server, the holder and exec.start refuse to run unless that home is set and
+is not the passwd one; it can only refuse, never allow more.
 
 A holder never sends WELCOME; the server answers the client's HELLO itself.
 The server closes a client connection whose HELLO has no `client_id`.
