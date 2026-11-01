@@ -182,6 +182,7 @@ Build from source (needs Rust and Zig for libghostty-vt):
     make libghostty   # pinned libghostty-vt into .cache/
     make check        # clippy + tests
     make build        # bin/osewa
+    make ios-framework  # target/Osewa.xcframework: the C API (crates/ffi/include/osewa.h) for iOS apps
 
 ## Roadmap
 

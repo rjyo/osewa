@@ -1,4 +1,4 @@
-.PHONY: libghostty build check test cover clean
+.PHONY: libghostty build check test cover clean ios-framework
 
 CARGO ?= cargo
 
@@ -8,6 +8,10 @@ libghostty:
 build: libghostty
 	$(CARGO) build --release
 	mkdir -p bin && cp target/release/osewa bin/osewa
+
+# target/Osewa.xcframework: the C API for iOS apps (macOS with Xcode).
+ios-framework:
+	./scripts/build-ios-framework.sh
 
 check: libghostty
 	$(CARGO) clippy --all-targets -- -D warnings
