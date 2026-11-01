@@ -8,9 +8,13 @@ fn main() {
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     // The directory names follow `uname`, as scripts/libghostty.sh makes them.
+    // The iOS simulator is its own platform to the linker: a device
+    // archive doesn't link there.
+    let sim = env::var("CARGO_CFG_TARGET_ABI").is_ok_and(|a| a == "sim");
     let platform = match (os.as_str(), arch.as_str()) {
         ("macos", "aarch64") => "darwin-arm64".to_string(),
         ("macos", a) => format!("darwin-{a}"),
+        (o, a) if sim => format!("{o}-{a}-simulator"),
         (o, a) => format!("{o}-{a}"),
     };
     println!("cargo:rerun-if-env-changed=OSEWA_LIBGHOSTTY");

@@ -64,6 +64,22 @@ pub const GHOSTTY_COMMIT: &str = "83fb95624b0439ee660c2679b43b38c8b63769cd";
 /// The snapshot format version, as `osewa_ghostty::SNAPSHOT_VERSION`.
 pub const SNAPSHOT_VERSION: i32 = 1;
 
+/// This build as one line of JSON, for a host and an app to compare:
+/// `{"osewa":"<version>","version":<protocol>,"ghostty":"<commit>",
+/// "snapshot_version":<n>}`. They interoperate iff `version`, `ghostty`
+/// and `snapshot_version` are equal; `osewa` is the release
+/// (OSEWA_VERSION at build time, else the crate version), for people.
+pub fn build_info() -> String {
+    let release = option_env!("OSEWA_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    serde_json::json!({
+        "osewa": release,
+        "version": wire::VERSION,
+        "ghostty": GHOSTTY_COMMIT,
+        "snapshot_version": SNAPSHOT_VERSION,
+    })
+    .to_string()
+}
+
 /// Hears each WELCOME's carriers, to remember them (hosts.json keeps the
 /// QUIC port).
 pub type OnCarriers = Arc<dyn Fn(&[wire::Carrier]) + Send + Sync>;

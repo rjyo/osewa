@@ -197,6 +197,18 @@ fn shared<T: Default>() -> Arc<Mutex<T>> {
     Arc::new(Mutex::new(T::default()))
 }
 
+/// build_info is what `osewa version --json` and the FFI print, and what
+/// moshi-hook compares: its keys must not drift.
+#[test]
+fn build_info_shape() {
+    let v: serde_json::Value = serde_json::from_str(&build_info()).unwrap();
+    assert_eq!(v["version"], wire::VERSION);
+    assert_eq!(v["ghostty"], GHOSTTY_COMMIT);
+    assert_eq!(v["snapshot_version"], SNAPSHOT_VERSION);
+    assert!(v["osewa"].as_str().is_some_and(|s| !s.is_empty()), "{v}");
+    assert_eq!(v.as_object().unwrap().len(), 4, "{v}");
+}
+
 #[test]
 fn ghostty_commit_matches() {
     assert_eq!(crate::GHOSTTY_COMMIT, ghostty::COMMIT);

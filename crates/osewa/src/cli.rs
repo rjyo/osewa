@@ -45,7 +45,7 @@ client commands:
                                        forward local ports through the host, as ssh -L
                                        (bind defaults to 127.0.0.1, the target to the
                                        host's localhost at the same port) until Ctrl-C
-  version
+  version [--json]                     this build; --json for compatibility checks
 "#;
 
 /// Set at release time from OSEWA_VERSION.
@@ -290,6 +290,10 @@ pub(crate) fn run(args: &[String], env: Env) -> i32 {
         "enroll" => return osewa_auth::enroll_main(rest),
         "-h" | "--help" | "help" => {
             let _ = write!(env.out(), "{USAGE}");
+            return 0;
+        }
+        "version" | "--version" if rest.first().is_some_and(|a| a == "--json") => {
+            let _ = writeln!(env.out(), "{}", osewa_client::build_info());
             return 0;
         }
         "version" | "--version" => {

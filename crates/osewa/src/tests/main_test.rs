@@ -290,6 +290,11 @@ fn version() {
     if option_env!("OSEWA_VERSION").is_none() {
         assert_eq!(crate::cli::VERSION, "dev");
     }
+    let (code, out, _) = run(dir.path(), &["version", "--json"]);
+    assert_eq!(code, 0);
+    assert_eq!(out, format!("{}\n", osewa_client::build_info()));
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["ghostty"] == osewa_ghostty::COMMIT && v["snapshot_version"] == osewa_ghostty::SNAPSHOT_VERSION && v["version"] == wire::VERSION, "{v}");
 }
 
 /// login leaves a server running on the host and says how: a daemon by
