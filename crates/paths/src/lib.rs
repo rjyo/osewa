@@ -7,6 +7,10 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+mod account;
+
+pub use account::{account, passwd_account, sandbox_home, session_env, session_env_from, Account, HOME_OVERRIDE};
+
 fn var(k: &str) -> Option<String> {
     env::var(k).ok().filter(|v| !v.is_empty())
 }

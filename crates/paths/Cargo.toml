@@ -1,6 +1,6 @@
 [package]
 name = "osewa-paths"
-description = "osewa's per-user directories"
+description = "osewa's per-user directories, and the account sessions run as"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
