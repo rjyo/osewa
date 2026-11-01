@@ -74,7 +74,12 @@ void osewa_redraw(osewa_session *s);
 /* Wake/foreground hint: probe the link now instead of waiting for keepalive. */
 void osewa_network_changed(osewa_session *s);
 /* Close locally; the session stays alive and resumable on the host. Frees s.
-   No callbacks fire after it returns. */
+   No callbacks fire after it returns.
+   Threads: osewa_* calls on one handle may come from any thread, but none
+   may run concurrently with osewa_close or osewa_kill on it from another
+   thread, nor after either: synchronize them. Only calls made from inside
+   this handle's callbacks are guaranteed safe while it closes (close waits
+   for a running callback first). */
 void osewa_close(osewa_session *s);
 /* Ask the host to end the session (kill), then close. Frees s. */
 void osewa_kill(osewa_session *s);

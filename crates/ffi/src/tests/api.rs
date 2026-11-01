@@ -412,3 +412,20 @@ fn revoked_device_closes_unauthorized() {
     assert!(why.starts_with("unauthorized: "), "detail {why:?}");
     unsafe { osewa_close(h) };
 }
+
+/// A device revoked while its first create is in flight: the connection
+/// drops, every redial is refused, and that is CLOSED "unauthorized"
+/// rather than waiting forever for a connection.
+#[test]
+fn revoked_during_create_closes_unauthorized() {
+    let host = Host::with_spawn_delay(Duration::from_secs(3));
+    let r = Rec::new(80, 24);
+    let h = open(&host.open_opts(), &r);
+    eventually("a create in flight", || host.spawning.load(std::sync::atomic::Ordering::SeqCst), String::new);
+    host.revoke();
+    host.restart();
+    let why = r.wait_state(CLOSED).unwrap_or_default();
+    assert!(why.starts_with("unauthorized: "), "detail {why:?}");
+    assert!(!r.states.lock().unwrap().iter().any(|s| s.0 == CONNECTED), "{:?}", r.states.lock().unwrap());
+    unsafe { osewa_close(h) };
+}

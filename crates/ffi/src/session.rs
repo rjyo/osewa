@@ -368,9 +368,10 @@ impl Worker {
         let o = &self.o;
         let mut id = o.session_id.clone();
         loop {
-            let c = match self.link.conn().await {
-                Ok(c) => c,
-                Err(e) => {
+            let c = match self.or_fatal(self.link.conn()).await {
+                None => return None,
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
                     if let Some(why) = fatal(&e) {
                         self.sink.state(CLOSED, Some(&why));
                         return None;
@@ -392,7 +393,8 @@ impl Worker {
                     cwd: o.cwd.clone(),
                     env: Vec::new(),
                 };
-                match osewa_client::timeout(REQUEST_TIMEOUT, c.create(create)).await {
+                let created = self.or_fatal(osewa_client::timeout(REQUEST_TIMEOUT, c.create(create))).await?;
+                match created {
                     Some(Ok(new)) => {
                         self.live.lock().unwrap_or_else(|e| e.into_inner()).id = Some(new.clone());
                         id = Some(new);
@@ -428,7 +430,11 @@ impl Worker {
                 })),
                 ..Default::default()
             };
-            match osewa_client::timeout(REQUEST_TIMEOUT, self.link.attach(id, opt)).await {
+            let Some(attached) = self.or_fatal(osewa_client::timeout(REQUEST_TIMEOUT, self.link.attach(id, opt))).await else {
+                a.m.close();
+                return None;
+            };
+            match attached {
                 Some(Ok(s)) => {
                     *a.s.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
                     return Some((s, a));
@@ -443,6 +449,33 @@ impl Worker {
                     osewa_client::sleep(RETRY_AFTER).await;
                 }
                 None => a.m.close(),
+            }
+        }
+    }
+
+    /// Why the link can't serve this session however long it tries: it
+    /// stopped (incompatible), or its last dial was refused (unauthorized).
+    /// Once a connection was up, Link::conn waits through dial errors
+    /// rather than returning them, so it is read from the state.
+    fn fatal_now(&self) -> Option<String> {
+        let st = self.link.state();
+        st.fin.as_ref().map(|e| fatal(e).unwrap_or_else(|| e.to_string())).or_else(|| st.err.as_ref().and_then(fatal))
+    }
+
+    /// Runs f until it finishes, or until the link turns fatal: then it
+    /// reports CLOSED, stops the link and returns None.
+    async fn or_fatal<T>(&self, f: impl std::future::Future<Output = T>) -> Option<T> {
+        tokio::pin!(f);
+        loop {
+            let mut w = self.link.watch();
+            if let Some(why) = self.fatal_now() {
+                self.sink.state(CLOSED, Some(&why));
+                self.link.close().await;
+                return None;
+            }
+            tokio::select! {
+                v = &mut f => return Some(v),
+                _ = w.changed() => {}
             }
         }
     }
@@ -462,8 +495,7 @@ impl Worker {
             // Incompatible stops the link; a refusal on a redial (the
             // device revoked, the host re-keyed) doesn't, but no redial
             // will get past it either.
-            let why = st.fin.as_ref().map(|e| fatal(e).unwrap_or_else(|| e.to_string())).or_else(|| st.err.as_ref().and_then(fatal));
-            if let Some(why) = why {
+            if let Some(why) = self.fatal_now() {
                 self.sink.state(CLOSED, Some(&why));
                 s.close();
                 self.link.close().await;

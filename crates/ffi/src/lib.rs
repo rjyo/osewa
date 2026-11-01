@@ -7,6 +7,12 @@
 //!
 //! Every entry point catches panics, so none unwinds into C; the iOS build
 //! unwinds (scripts/build-ios-framework.sh) for that to matter.
+//!
+//! Threads: calls on a handle may come from any thread, but the caller
+//! must not make any concurrently with, or after, osewa_close/osewa_kill
+//! on it from another thread. Only calls from inside the handle's own
+//! callbacks are safe while it closes: close waits a running callback out
+//! before freeing (osewa.h).
 
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};

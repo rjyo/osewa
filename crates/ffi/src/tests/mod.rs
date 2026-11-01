@@ -45,10 +45,12 @@ impl Drop for TempDir {
 
 type Holder = (tokio::sync::oneshot::Sender<()>, JoinHandle<Result<(), String>>);
 
-/// Holders run in this process, each on its own thread.
-fn inproc(holders: &Rc<RefCell<Vec<Holder>>>) -> osewa_server::Spawn {
+/// Holders run in this process, each on its own thread. Each spawn sets
+/// spawning, then waits delay before the holder starts.
+fn inproc(holders: &Rc<RefCell<Vec<Holder>>>, spawning: Arc<std::sync::atomic::AtomicBool>, delay: Duration) -> osewa_server::Spawn {
     let holders = holders.clone();
     Rc::new(move |mut cfg: osewa_holder::Config| {
+        spawning.store(true, std::sync::atomic::Ordering::SeqCst);
         cfg.exit_retention = Duration::from_millis(200);
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -64,6 +66,7 @@ fn inproc(holders: &Rc<RefCell<Vec<Holder>>>) -> osewa_server::Spawn {
         });
         holders.borrow_mut().push((stop_tx, h));
         Box::pin(async move {
+            tokio::time::sleep(delay).await;
             match tokio::time::timeout(Duration::from_secs(5), ready_rx).await {
                 Ok(Ok(())) => Ok(()),
                 _ => Err("holder not ready".into()),
@@ -85,10 +88,20 @@ struct Host {
     ctl: tokio::sync::mpsc::UnboundedSender<Ctl>,
     thread: Option<JoinHandle<()>>,
     dir: TempDir,
+    /// A holder spawn has begun.
+    spawning: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Host {
     fn new() -> Host {
+        Host::with_spawn_delay(Duration::ZERO)
+    }
+
+    /// A host whose holders take delay to start: a create stays in flight
+    /// that long.
+    fn with_spawn_delay(delay: Duration) -> Host {
+        let spawning: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+        let sp = spawning.clone();
         let dir = TempDir::new();
         let sid = osewa_auth::Identity::generate();
         let device = osewa_auth::Identity::generate();
@@ -116,7 +129,7 @@ impl Host {
                         devices: Some(devices.clone()),
                         run_dir: run_dir.clone(),
                         name: "ffi".into(),
-                        spawn: Some(inproc(&holders)),
+                        spawn: Some(inproc(&holders, sp.clone(), delay)),
                         shell: vec!["/bin/sh".into()],
                         ..Default::default()
                     };
@@ -153,7 +166,7 @@ impl Host {
             });
         });
         ready_rx.recv().unwrap();
-        Host { addr, server_key, device: device.pkcs8().to_vec(), ctl, thread: Some(thread), dir }
+        Host { addr, server_key, device: device.pkcs8().to_vec(), ctl, thread: Some(thread), dir, spawning }
     }
 
     /// Takes this test's device off the server's devices file.
