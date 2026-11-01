@@ -78,6 +78,28 @@ pub fn home_override() -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Set to 1 (cargo sets it for every test run, .cargo/config.toml), a
+/// server, holder or exec refuses to start unless its sessions' home is a
+/// sandbox: given (OSEWA_HOME, Config.home) and not the passwd home. A
+/// harness that forgets sandboxing then fails instead of writing to the
+/// real home. For tests only: it can only refuse.
+pub const REQUIRE_SANDBOX: &str = "OSEWA_REQUIRE_SANDBOX";
+
+/// Checks home against OSEWA_REQUIRE_SANDBOX, and that it is absolute.
+pub fn check_home(home: Option<&Path>) -> Result<(), String> {
+    if let Some(h) = home.filter(|h| !h.is_absolute()) {
+        return Err(format!("sessions' home {:?}: want an absolute path", h));
+    }
+    if std::env::var_os(REQUIRE_SANDBOX).is_some_and(|v| v == "1") {
+        match home {
+            None => return Err(format!("{REQUIRE_SANDBOX}=1 and no sandbox home: set {HOME_OVERRIDE} (osewa_paths::sandbox) or Config.home")),
+            Some(h) if h == passwd_account().home => return Err(format!("{REQUIRE_SANDBOX}=1 and the sessions' home {} is the real one", h.display())),
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// A fresh private directory for this test process's sessions to use as
 /// home, made once. Test harnesses hand it to every server, holder and
 /// exec they start (Config.home in process, sandbox for a process), so
@@ -85,14 +107,6 @@ pub fn home_override() -> Result<Option<PathBuf>, String> {
 pub fn sandbox_home() -> PathBuf {
     static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME.get_or_init(|| {
-        // Those of test processes that are gone: nothing removes them at exit.
-        for e in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
-            let name = e.file_name();
-            let Some(pid) = name.to_str().and_then(|n| n.strip_prefix("osewa-home-")).and_then(|p| p.parse::<i32>().ok()) else { continue };
-            if unsafe { libc::kill(pid, 0) } != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-                let _ = std::fs::remove_dir_all(e.path());
-            }
-        }
         let d = std::env::temp_dir().join(format!("osewa-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("osewa: sandbox home");
@@ -107,11 +121,14 @@ pub fn sandbox(cmd: &mut std::process::Command) -> &mut std::process::Command {
     cmd.env(HOME_OVERRIDE, sandbox_home())
 }
 
+/// The most getpwuid_r gets to fill.
+const PASSWD_BUF_MAX: usize = 1 << 20;
+
 /// The passwd entry: None when there is none (a container's arbitrary
 /// uid), an error when the lookup itself failed.
 fn passwd() -> io::Result<Option<(String, PathBuf, String)>> {
     let mut size = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
-        n if n > 0 => n as usize,
+        n if n > 0 => (n as usize).min(PASSWD_BUF_MAX),
         _ => 16 << 10,
     };
     loop {
@@ -119,8 +136,8 @@ fn passwd() -> io::Result<Option<(String, PathBuf, String)>> {
         let mut buf = vec![0 as libc::c_char; size];
         let mut out: *mut libc::passwd = std::ptr::null_mut();
         let r = unsafe { libc::getpwuid_r(libc::getuid(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) };
-        if r == libc::ERANGE && size < 1 << 20 {
-            size *= 4;
+        if r == libc::ERANGE && size < PASSWD_BUF_MAX {
+            size = (size * 4).min(PASSWD_BUF_MAX);
             continue;
         }
         if r != 0 {

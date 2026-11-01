@@ -69,14 +69,17 @@ impl Proc {
         }
         // As a session: the account's home and environment, not the
         // server's (osewa_paths::session_env).
+        osewa_paths::check_home(o.home.as_deref()).map_err(Error::Other)?;
         let acct = osewa_paths::account(o.home.as_deref());
-        let dir = if o.dir.is_empty() { acct.home.to_string_lossy().into_owned() } else { o.dir.clone() };
+        // A home need not be UTF-8: kept as a path.
+        let dir: PathBuf = if o.dir.is_empty() { acct.home.clone() } else { o.dir.clone().into() };
         // A missing directory fails the spawn with ENOENT too; check it
         // first so that only a missing program is NotFound.
-        if !dir.is_empty() {
+        if !dir.as_os_str().is_empty() {
+            let d = dir.display();
             match std::fs::metadata(&dir) {
-                Err(e) => return Err(Error::Other(format!("dir: stat {dir}: {}", error_text(&e)))),
-                Ok(m) if !m.is_dir() => return Err(Error::Other(format!("dir {dir}: not a directory"))),
+                Err(e) => return Err(Error::Other(format!("dir: stat {d}: {}", error_text(&e)))),
+                Ok(m) if !m.is_dir() => return Err(Error::Other(format!("dir {d}: not a directory"))),
                 Ok(_) => {}
             }
         }
@@ -92,7 +95,7 @@ impl Proc {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if !dir.is_empty() {
+        if !dir.as_os_str().is_empty() {
             cmd.current_dir(&dir);
         }
         let mut child = cmd.spawn().map_err(|e| match e.kind() {

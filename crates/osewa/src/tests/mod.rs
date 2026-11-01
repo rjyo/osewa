@@ -142,7 +142,11 @@ impl EnvGuard {
             keep.push(d);
         }
         // Servers these tests start (start_daemon) inherit it: their
-        // sessions run in a sandbox home.
+        // sessions run in a sandbox home. start_daemon runs the real server
+        // with this process's environment, so it goes there, as the other
+        // variables here do: set while ENV is held, by tests that read the
+        // environment only under it; OSEWA_REQUIRE_SANDBOX fails any server
+        // that would start without it.
         self.set(osewa_paths::HOME_OVERRIDE, osewa_paths::sandbox_home());
     }
 }

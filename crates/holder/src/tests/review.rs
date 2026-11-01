@@ -222,7 +222,7 @@ fn snapshot_error_starts_lapse() {
 #[test]
 fn size_caps() {
     let dir = TempDir::new();
-    let big = Config { run_dir: dir.0.clone(), id: "x".into(), cols: wire::MAX_COLS + 1, rows: 10, argv: sh("true"), ..Default::default() };
+    let big = Config { run_dir: dir.0.clone(), id: "x".into(), cols: wire::MAX_COLS + 1, rows: 10, argv: sh("true"), home: Some(osewa_paths::sandbox_home()), ..Default::default() };
     assert!(crate::run(big, || {}, false).is_err(), "oversized config accepted");
     let h = start(cfg(sh("sleep 30")));
     let mut c = h.dial("dev1");
@@ -240,6 +240,6 @@ fn size_caps() {
 fn run_dir_must_be_private() {
     let dir = TempDir::new();
     std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let c = Config { run_dir: dir.0.clone(), id: "x".into(), cols: 10, rows: 10, argv: sh("true"), ..Default::default() };
+    let c = Config { run_dir: dir.0.clone(), id: "x".into(), cols: 10, rows: 10, argv: sh("true"), home: Some(osewa_paths::sandbox_home()), ..Default::default() };
     assert!(crate::run(c, || {}, false).is_err(), "served from a 0755 run dir");
 }

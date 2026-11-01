@@ -1,0 +1,7 @@
+# Everything cargo runs here (tests, and the servers and holders they
+# start, which inherit it) refuses to run sessions in the real home: a
+# harness that forgets osewa_paths::sandbox fails instead of writing
+# shell history, installs and files there. It also applies to `cargo run`;
+# run built binaries (target/, bin/) directly to serve the real home.
+[env]
+OSEWA_REQUIRE_SANDBOX = "1"

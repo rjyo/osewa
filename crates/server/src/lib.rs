@@ -231,9 +231,7 @@ impl Server {
         if cfg.name.is_empty() {
             cfg.name = hostname();
         }
-        if let Some(h) = cfg.home.as_ref().filter(|h| !h.is_absolute()) {
-            return Err(format!("server: home {}: want an absolute path", h.display()));
-        }
+        osewa_paths::check_home(cfg.home.as_deref()).map_err(|e| format!("server: {e}"))?;
         if cfg.shell.is_empty() {
             cfg.shell = osewa_paths::account(cfg.home.as_deref()).login_shell();
         }
@@ -592,24 +590,72 @@ async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(
         });
     }
     let mut child = cmd.spawn().map_err(|e| format!("server: start holder: {e}"))?;
-    // The client's env goes in on stdin (holder --env-stdin). A holder
-    // that died first fails the write; await_ready says why.
-    if let Some(mut stdin) = child.stdin.take() {
-        let env = serde_json::to_vec(&cfg.env).map_err(|e| e.to_string())?;
-        let _ = stdin.write_all(&env).await;
-    }
-    await_ready(child, timeout).await
+    // The client's env goes in on stdin (holder --env-stdin), while
+    // await_ready drains stdout and stderr, under its one deadline: a
+    // holder that writes first, or never reads, can't hang the create.
+    let env = serde_json::to_vec(&cfg.env).map_err(|e| e.to_string())?;
+    let stdin = child.stdin.take();
+    let deliver = async move {
+        let Some(mut stdin) = stdin else { return Ok(()) };
+        stdin.write_all(&env).await?;
+        stdin.shutdown().await
+    };
+    await_ready(child, deliver, timeout).await
 }
 
 /// How much of a holder's stderr an early exit reports.
 const STDERR_TAIL: usize = 2 << 10;
+/// Chunks of holders' stderr waiting for the writer thread; past it they
+/// are dropped (and counted) rather than block the runtime.
+const STDERR_QUEUE: usize = 256;
 
-/// Waits for the started child to print "ready". Afterwards it keeps
-/// draining stdout, so a later write can't kill the holder with SIGPIPE,
-/// and reaps the process when it exits.
-async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Result<(), String> {
+/// Writes holders' stderr to ours on a thread of its own: a write to a
+/// full stderr pipe blocks, and the runtime must not.
+fn forward_stderr(chunk: Vec<u8>) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::io::Write as _;
+    use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+    use std::sync::OnceLock;
+    static DROPPED: AtomicU64 = AtomicU64::new(0);
+    static TX: OnceLock<Option<SyncSender<Vec<u8>>>> = OnceLock::new();
+    let tx = TX.get_or_init(|| {
+        let (tx, rx) = sync_channel::<Vec<u8>>(STDERR_QUEUE);
+        let spawned = std::thread::Builder::new().name("osewa-holder-stderr".into()).spawn(move || {
+            let mut err = std::io::stderr();
+            for chunk in rx {
+                let dropped = DROPPED.swap(0, Ordering::Relaxed);
+                if dropped > 0 {
+                    let _ = writeln!(err, "[osewa server: {dropped} chunks of holder stderr dropped]");
+                }
+                let _ = err.write_all(&chunk);
+            }
+        });
+        spawned.ok().map(|_| tx)
+    });
+    match tx {
+        Some(tx) => {
+            if let Err(TrySendError::Full(_)) = tx.try_send(chunk) {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        None => {
+            DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Waits for the started child to print "ready", with deliver (its stdin)
+/// running alongside, all within timeout. Afterwards it keeps draining
+/// stdout, so a later write can't kill the holder with SIGPIPE, and reaps
+/// the process when it exits.
+async fn await_ready(
+    mut child: tokio::process::Child,
+    deliver: impl std::future::Future<Output = io::Result<()>>,
+    timeout: Duration,
+) -> Result<(), String> {
     let Some(out) = child.stdout.take() else { return Err("server: holder has no stdout".into()) };
-    // The holder's stderr goes on to ours, its tail kept for an early exit.
+    // The holder's stderr goes on to ours, its tail kept for an early exit
+    // whatever becomes of the forward.
     let tail: Rc<std::cell::RefCell<Vec<u8>>> = Rc::default();
     let (err_done, err_eof) = tokio::sync::oneshot::channel::<()>();
     if let Some(mut err) = child.stderr.take() {
@@ -620,18 +666,40 @@ async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Res
                 if n == 0 {
                     break;
                 }
-                let _ = std::io::Write::write_all(&mut std::io::stderr(), &buf[..n]);
-                let mut t = tail.borrow_mut();
-                t.extend_from_slice(&buf[..n]);
-                let cut = t.len().saturating_sub(STDERR_TAIL);
-                t.drain(..cut);
+                {
+                    let mut t = tail.borrow_mut();
+                    t.extend_from_slice(&buf[..n]);
+                    let cut = t.len().saturating_sub(STDERR_TAIL);
+                    t.drain(..cut);
+                }
+                forward_stderr(buf[..n].to_vec());
             }
             let _ = err_done.send(());
         });
     }
     let mut br = BufReader::new(out);
     let mut line = String::new();
-    let mut r = match tokio::time::timeout(timeout, br.read_line(&mut line)).await {
+    let mut delivered: Option<io::Result<()>> = None;
+    tokio::pin!(deliver);
+    let deadline = tokio::time::Instant::now() + timeout;
+    let read = async {
+        let read = br.read_line(&mut line);
+        tokio::pin!(read);
+        loop {
+            tokio::select! {
+                d = &mut deliver, if delivered.is_none() => delivered = Some(d),
+                r = &mut read => return r,
+            }
+        }
+    };
+    let read = tokio::time::timeout_at(deadline, read).await;
+    // A holder that died mid-delivery: let the write see it, to say so.
+    if delivered.is_none() && !matches!(read, Ok(Ok(_)) if line.trim() == "ready") {
+        if let Ok(d) = tokio::time::timeout(Duration::from_millis(200), &mut deliver).await {
+            delivered = Some(d);
+        }
+    }
+    let mut r = match read {
         Err(_) => Err("server: holder did not become ready".to_string()),
         Ok(_) if line.trim() == "ready" => Ok(()),
         // EOF before a whole line: the holder died before saying ready.
@@ -639,6 +707,9 @@ async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Res
         Ok(Err(e)) => Err(format!("server: holder exited before ready: {e}")),
         Ok(Ok(_)) => Err(format!("server: holder said {}", wire::quote(&line))),
     };
+    if let (Err(e), Some(Err(w))) = (&mut r, &delivered) {
+        *e += &format!(" (writing its env: {w})");
+    }
     if let Err(e) = &mut r {
         let _ = child.start_kill();
         // Why it died: its status and what it said last.

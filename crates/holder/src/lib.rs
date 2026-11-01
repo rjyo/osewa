@@ -212,6 +212,13 @@ pub fn main(args: &[String]) -> i32 {
             return 2;
         }
     };
+    if let Err(e) = osewa_paths::check_home(cfg.home.as_deref()) {
+        eprintln!("osewa holder: {e}");
+        return 2;
+    }
+    if let Some(h) = &cfg.home {
+        eprintln!("osewa holder: {}={}: the session's home instead of the account's", osewa_paths::HOME_OVERRIDE, h.display());
+    }
     let ready = || {
         let mut out = io::stdout().lock();
         let _ = writeln!(out, "ready");
@@ -296,6 +303,7 @@ pub fn run_until(
     signals: bool,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(), String> {
+    osewa_paths::check_home(cfg.home.as_deref()).map_err(|e| format!("holder: {e}"))?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, serve(cfg, ready, signals, stop))

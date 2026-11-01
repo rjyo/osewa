@@ -599,7 +599,7 @@ fn ack_and_credit_accepted() {
 fn cancel_stops_child() {
     let dir = TempDir::new();
     let run_dir = dir.0.join("run");
-    let cfg = Config { run_dir: run_dir.clone(), id: "s1".into(), cols: 20, rows: 5, argv: sh("sleep 30"), ..Default::default() };
+    let cfg = Config { run_dir: run_dir.clone(), id: "s1".into(), cols: 20, rows: 5, argv: sh("sleep 30"), home: Some(osewa_paths::sandbox_home()), ..Default::default() };
     let (stop, stop_rx) = tokio::sync::oneshot::channel();
     let (ready_tx, ready) = std::sync::mpsc::channel();
     let c = cfg.clone();
@@ -629,6 +629,7 @@ fn config_errors() {
         cols,
         rows: 1,
         argv: argv.iter().map(|s| s.to_string()).collect(),
+        home: Some(osewa_paths::sandbox_home()),
         ..Default::default()
     };
     let none = std::path::Path::new("");

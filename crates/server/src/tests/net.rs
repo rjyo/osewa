@@ -232,6 +232,8 @@ impl ServerDirs {
         unsafe {
             std::env::set_var("OSEWA_CONFIG_DIR", dir.path().join("config"));
             std::env::set_var("OSEWA_RUN_DIR", dir.path().join("run"));
+            // cli::main reads it, as a server process would.
+            std::env::set_var(osewa_paths::HOME_OVERRIDE, osewa_paths::sandbox_home());
         }
         ServerDirs { _g: g, _dir: dir }
     }
@@ -242,6 +244,7 @@ impl Drop for ServerDirs {
         unsafe {
             std::env::remove_var("OSEWA_CONFIG_DIR");
             std::env::remove_var("OSEWA_RUN_DIR");
+            std::env::remove_var(osewa_paths::HOME_OVERRIDE);
         }
     }
 }

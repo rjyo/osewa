@@ -406,7 +406,7 @@ fn await_ready_lines() {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
-            await_ready(child, timeout)
+            await_ready(child, async { Ok(()) }, timeout)
         };
         assert!(ready("echo ready; echo more", Duration::from_secs(1)).await.is_ok());
         assert_eq!(ready("echo nope", Duration::from_secs(1)).await, Err(r#"server: holder said "nope\n": exit status: 0"#.into()));
@@ -419,6 +419,52 @@ fn await_ready_lines() {
         assert!(ready("printf ready", Duration::from_secs(1)).await.is_ok(), "ready without a newline");
         assert!(ready("exit 1", Duration::from_secs(1)).await.is_err(), "early exit accepted");
         assert!(ready("sleep 10", Duration::from_millis(50)).await.is_err(), "timeout not reported");
+    });
+}
+
+/// The env written to a holder's stdin shares the readiness deadline: a
+/// holder that never reads it, or fills stderr first, fails the create in
+/// time rather than hanging it, and a failed write is said.
+#[test]
+fn await_ready_delivers_within_the_deadline() {
+    run(async {
+        let start = |script: &str| {
+            tokio::process::Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        };
+        let deliver = |child: &mut tokio::process::Child| {
+            use tokio::io::AsyncWriteExt;
+            let mut stdin = child.stdin.take().unwrap();
+            // Far more than a pipe holds.
+            let env = vec![b' '; 4 << 20];
+            async move {
+                stdin.write_all(&env).await?;
+                stdin.shutdown().await
+            }
+        };
+        let t0 = Instant::now();
+        let mut c = start("exec sleep 10");
+        let d = deliver(&mut c);
+        assert!(await_ready(c, d, Duration::from_millis(300)).await.is_err(), "never ready, never reading: accepted");
+        // Lots of stderr first, then never reading: drained, not deadlocked.
+        let mut c = start("head -c 1000000 /dev/zero >&2; exec sleep 10");
+        let d = deliver(&mut c);
+        assert!(await_ready(c, d, Duration::from_millis(500)).await.is_err());
+        assert!(t0.elapsed() < Duration::from_secs(5), "took {:?}", t0.elapsed());
+        // Exits without reading: the write's failure is in the error.
+        let mut c = start("exit 4");
+        let d = deliver(&mut c);
+        let e = await_ready(c, d, Duration::from_secs(2)).await.unwrap_err();
+        assert!(e.contains("exit status: 4") && e.contains("writing its env"), "{e}");
+        // Reads it all, then ready.
+        let mut c = start("cat >/dev/null; echo ready; exec sleep 10");
+        let d = deliver(&mut c);
+        assert_eq!(await_ready(c, d, Duration::from_secs(5)).await, Ok(()));
     });
 }
 
@@ -571,4 +617,22 @@ fn home_must_be_absolute() {
     let d = TempDir::new();
     let cfg = Config { run_dir: d.path().join("run"), home: Some("relative/home".into()), ..auth_config(d.path()) };
     assert!(Server::new(cfg).err().is_some_and(|e| e.contains("absolute")), "relative home accepted");
+}
+
+/// Under OSEWA_REQUIRE_SANDBOX (cargo sets it for tests) an in-process
+/// server without a sandbox home refuses too, as do holders and exec.
+#[test]
+fn unsandboxed_refuses() {
+    if std::env::var_os(osewa_paths::REQUIRE_SANDBOX).is_none_or(|v| v != "1") {
+        panic!("{} is not set: .cargo/config.toml sets it for every test", osewa_paths::REQUIRE_SANDBOX);
+    }
+    let d = TempDir::new();
+    for home in [None, Some(osewa_paths::passwd_account().home)] {
+        let cfg = Config { run_dir: d.path().join("run"), home: home.clone(), ..auth_config(d.path()) };
+        assert!(Server::new(cfg).err().is_some_and(|e| e.contains(osewa_paths::REQUIRE_SANDBOX)), "home {home:?} accepted");
+    }
+    let opts = osewa_execproc::Options { argv: vec!["true".into()], ..Default::default() };
+    assert!(osewa_execproc::Proc::start(opts).is_err(), "exec without a home");
+    let cfg = osewa_holder::Config { argv: vec!["/bin/true".into()], ..Default::default() };
+    assert!(osewa_holder::run(cfg, || {}, false).err().is_some_and(|e| e.contains(osewa_paths::REQUIRE_SANDBOX)), "holder without a home");
 }

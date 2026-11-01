@@ -327,3 +327,25 @@ fn live_sessions_never_touch_the_real_home() {
     assert_eq!(std::fs::read_to_string(h.home.join(&canary)).unwrap(), "session\nexec\n");
     assert!(!real.join(&canary).exists(), "a test wrote to the real home");
 }
+
+/// Under OSEWA_REQUIRE_SANDBOX (cargo sets it for every test), a server
+/// or holder process started without a sandbox home refuses to run,
+/// before it takes the lock or looks for a running server: a harness that
+/// forgets osewa_paths::sandbox fails loudly instead of using the real
+/// home.
+#[test]
+fn unsandboxed_processes_refuse() {
+    let bin = osewa_bin();
+    for (args, what) in [(&["server", "--listen", "127.0.0.1:0"][..], "osewa server"), (&["holder", "--run", "/nonexistent", "--id", "x", "--", "/bin/true"][..], "osewa holder")] {
+        for home in [None, Some(osewa_paths::passwd_account().home)] {
+            let mut cmd = std::process::Command::new(&bin);
+            cmd.args(args).env(osewa_paths::REQUIRE_SANDBOX, "1").env_remove(osewa_paths::HOME_OVERRIDE).stdin(std::process::Stdio::null());
+            if let Some(h) = &home {
+                cmd.env(osewa_paths::HOME_OVERRIDE, h);
+            }
+            let out = cmd.output().unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.code() == Some(2) && err.contains(osewa_paths::REQUIRE_SANDBOX), "{what} with home {home:?}: {:?} {err}", out.status);
+        }
+    }
+}

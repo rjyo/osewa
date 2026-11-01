@@ -36,6 +36,12 @@ pub(crate) fn log_path() -> PathBuf {
 
 /// `osewa server [--daemon] [server flags]`.
 pub(crate) fn server_main(args: &[String], mut stdout: Out, mut stderr: Out) -> i32 {
+    // Before anything else (the running server, the lock): a test's server
+    // must never start on the real home.
+    if let Err(e) = osewa_paths::home_override().and_then(|h| osewa_paths::check_home(h.as_deref())) {
+        let _ = writeln!(stderr, "osewa server: {e}");
+        return 2;
+    }
     let daemon = args.iter().any(|a| a == "--daemon" || a == "-daemon");
     let rest: Vec<String> = args.iter().filter(|a| *a != "--daemon" && *a != "-daemon").cloned().collect();
     if daemon {

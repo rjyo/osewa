@@ -22,7 +22,7 @@ pub fn main(args: &[String]) -> i32 {
         }
     };
     cfg.trace_dir = std::env::var("OSEWA_TRACE").unwrap_or_default();
-    cfg.home = match osewa_paths::home_override() {
+    cfg.home = match osewa_paths::home_override().and_then(|h| osewa_paths::check_home(h.as_deref()).map(|()| h)) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("osewa server: {e}");
