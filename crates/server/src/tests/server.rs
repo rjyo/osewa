@@ -563,3 +563,12 @@ fn session_env_is_the_accounts() {
         c.output(1, &format!("[][][{shell}][vi][{home}] cwd={home}")).await;
     });
 }
+
+/// A sessions' home must be absolute: a relative one would resolve
+/// against wherever each holder happens to run.
+#[test]
+fn home_must_be_absolute() {
+    let d = TempDir::new();
+    let cfg = Config { run_dir: d.path().join("run"), home: Some("relative/home".into()), ..auth_config(d.path()) };
+    assert!(Server::new(cfg).err().is_some_and(|e| e.contains("absolute")), "relative home accepted");
+}
