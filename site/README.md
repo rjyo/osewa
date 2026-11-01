@@ -16,3 +16,8 @@ account `wrangler login` uses.
 The benchmark figures in `src/data/bench.js` and the tables in
 `src/pages/index.astro` come from `../README.md` and `../bench/RESULTS.md`;
 update them together.
+
+Fonts are self-hosted in `src/fonts/`: Inter Tight and JetBrains Mono,
+subset to Latin-1 plus the characters the pages use, weights trimmed to
+the range in use. If new copy needs a character they lack, rebuild them
+with `scripts/build-fonts.py` (instructions at its top).

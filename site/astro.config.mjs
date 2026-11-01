@@ -5,4 +5,7 @@ import { defineConfig } from "astro/config";
 export default defineConfig({
   site: "https://osewa.dev",
   output: "static",
+  // The page's CSS is a few kB: inline it rather than spend a
+  // render-blocking request on it.
+  build: { inlineStylesheets: "always" },
 });

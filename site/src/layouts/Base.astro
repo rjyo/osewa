@@ -1,5 +1,9 @@
 ---
 import "../styles/global.css";
+// The same hashed files global.css's @font-face points at, preloaded so
+// text paints in the real fonts on first load.
+import sans from "../fonts/inter-tight.woff2?url";
+import mono from "../fonts/jetbrains-mono.woff2?url";
 
 const title = "osewa — the terminal protocol that never drops";
 const description =
@@ -21,14 +25,10 @@ const url = "https://osewa.dev/";
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta name="twitter:card" content="summary" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <link rel="preload" href={sans} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={mono} as="font" type="font/woff2" crossorigin />
   </head>
-  <body style="font-family: 'Inter Tight', system-ui, sans-serif; color: #111111">
+  <body style="font-family: var(--sans); color: #111111">
     <slot />
     <script>
       // Toggles: a button sets one key ("udp", "mode"); elements tagged

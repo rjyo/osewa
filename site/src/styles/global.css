@@ -1,3 +1,13 @@
+/* Fonts: self-hosted, subset to Latin-1 plus what the page uses, variable
+   weight trimmed to the range in use. Built from Google Fonts' variable TTFs
+   (OFL, licenses beside them). The fallback faces are local fonts scaled to
+   the same metrics, so the swap doesn't move the layout. */
+@font-face{font-family:"Inter Tight";src:url("../fonts/inter-tight.woff2") format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url("../fonts/jetbrains-mono.woff2") format("woff2");font-weight:400 600;font-style:normal;font-display:swap}
+@font-face{font-family:"Inter Tight Fallback";src:local("Arial"),local("ArialMT");size-adjust:97.21%;ascent-override:99.65%;descent-override:24.81%;line-gap-override:0%}
+@font-face{font-family:"JetBrains Mono Fallback";src:local("Menlo"),local("Menlo-Regular"),local("Courier New");size-adjust:99.66%;ascent-override:102.35%;descent-override:30.1%;line-gap-override:0%}
+:root{--sans:"Inter Tight","Inter Tight Fallback",system-ui,sans-serif;--mono:"JetBrains Mono","JetBrains Mono Fallback",ui-monospace,Menlo,monospace}
+
 body{margin:0;background:#F4F4F1}
 a{color:#111111}a:hover{color:#B8262C}
 .cyc1{animation:cyc1 9s infinite}.cyc2{opacity:0;animation:cyc2 9s infinite}.cyc3{opacity:0;animation:cyc3 9s infinite}
