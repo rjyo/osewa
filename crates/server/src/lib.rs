@@ -121,6 +121,10 @@ pub struct Config {
     /// The default argv for session.create; default the account's login
     /// shell (passwd), as a login shell.
     pub shell: Vec<String>,
+    /// Sessions' and exec.start's home in place of the account's: an
+    /// absolute path. `osewa server` takes it from OSEWA_HOME (tests and
+    /// sandboxes); holders it starts get it the same way.
+    pub home: Option<PathBuf>,
     /// Turns off permessage-deflate toward clients.
     pub no_compress: bool,
     /// Leave the forward and exec features out of WELCOME, which turns off
@@ -227,8 +231,11 @@ impl Server {
         if cfg.name.is_empty() {
             cfg.name = hostname();
         }
+        if let Some(h) = cfg.home.as_ref().filter(|h| !h.is_absolute()) {
+            return Err(format!("server: home {}: want an absolute path", h.display()));
+        }
         if cfg.shell.is_empty() {
-            cfg.shell = osewa_paths::account().login_shell();
+            cfg.shell = osewa_paths::account(cfg.home.as_deref()).login_shell();
         }
         let spawn = cfg.spawn.clone().unwrap_or_else(|| {
             let timeout = cfg.tune.spawn_timeout;
@@ -551,6 +558,7 @@ fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
         a.push("--cwd".into());
         a.push(cfg.cwd.clone());
     }
+    a.push("--env-stdin".into());
     a.push("--".into());
     a.extend(cfg.argv.iter().cloned());
     a
@@ -569,11 +577,12 @@ fn holder_binary() -> io::Result<PathBuf> {
 /// the server, and waits for its "ready" line.
 async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(holder_binary().map_err(|e| e.to_string())?);
-    cmd.args(holder_args(&cfg))
-        .env(osewa_holder::SESSION_ENV, serde_json::to_string(&cfg.env).map_err(|e| e.to_string())?)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+    cmd.args(holder_args(&cfg)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // The home is the server's to give, not whatever its environment has.
+    match &cfg.home {
+        Some(h) => cmd.env(osewa_paths::HOME_OVERRIDE, h),
+        None => cmd.env_remove(osewa_paths::HOME_OVERRIDE),
+    };
     unsafe {
         cmd.pre_exec(|| {
             if libc::setsid() < 0 {
@@ -582,27 +591,65 @@ async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(
             Ok(())
         });
     }
-    let child = cmd.spawn().map_err(|e| format!("server: start holder: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("server: start holder: {e}"))?;
+    // The client's env goes in on stdin (holder --env-stdin). A holder
+    // that died first fails the write; await_ready says why.
+    if let Some(mut stdin) = child.stdin.take() {
+        let env = serde_json::to_vec(&cfg.env).map_err(|e| e.to_string())?;
+        let _ = stdin.write_all(&env).await;
+    }
     await_ready(child, timeout).await
 }
+
+/// How much of a holder's stderr an early exit reports.
+const STDERR_TAIL: usize = 2 << 10;
 
 /// Waits for the started child to print "ready". Afterwards it keeps
 /// draining stdout, so a later write can't kill the holder with SIGPIPE,
 /// and reaps the process when it exits.
 async fn await_ready(mut child: tokio::process::Child, timeout: Duration) -> Result<(), String> {
     let Some(out) = child.stdout.take() else { return Err("server: holder has no stdout".into()) };
+    // The holder's stderr goes on to ours, its tail kept for an early exit.
+    let tail: Rc<std::cell::RefCell<Vec<u8>>> = Rc::default();
+    let (err_done, err_eof) = tokio::sync::oneshot::channel::<()>();
+    if let Some(mut err) = child.stderr.take() {
+        let tail = tail.clone();
+        tokio::task::spawn_local(async move {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = err.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                let _ = std::io::Write::write_all(&mut std::io::stderr(), &buf[..n]);
+                let mut t = tail.borrow_mut();
+                t.extend_from_slice(&buf[..n]);
+                let cut = t.len().saturating_sub(STDERR_TAIL);
+                t.drain(..cut);
+            }
+            let _ = err_done.send(());
+        });
+    }
     let mut br = BufReader::new(out);
     let mut line = String::new();
-    let r = match tokio::time::timeout(timeout, br.read_line(&mut line)).await {
+    let mut r = match tokio::time::timeout(timeout, br.read_line(&mut line)).await {
         Err(_) => Err("server: holder did not become ready".to_string()),
         Ok(_) if line.trim() == "ready" => Ok(()),
         // EOF before a whole line: the holder died before saying ready.
-        Ok(Ok(_)) if !line.ends_with('\n') => Err("server: holder exited before ready: EOF".into()),
+        Ok(Ok(_)) if !line.ends_with('\n') => Err("server: holder exited before ready".into()),
         Ok(Err(e)) => Err(format!("server: holder exited before ready: {e}")),
         Ok(Ok(_)) => Err(format!("server: holder said {}", wire::quote(&line))),
     };
-    if r.is_err() {
+    if let Err(e) = &mut r {
         let _ = child.start_kill();
+        // Why it died: its status and what it said last.
+        if let Ok(Ok(st)) = tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
+            *e += &format!(": {st}");
+        }
+        let _ = tokio::time::timeout(Duration::from_millis(500), err_eof).await;
+        let said = String::from_utf8_lossy(&tail.borrow()).trim().to_string();
+        if !said.is_empty() {
+            *e += &format!(": {}", osewa_wire::quote(&said));
+        }
     }
     tokio::task::spawn_local(async move {
         let _ = tokio::io::copy(&mut br, &mut tokio::io::sink()).await;

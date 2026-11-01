@@ -11,21 +11,18 @@ fn rt() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
 }
 
-/// The account tests run processes as: this one, with a home of its own
-/// (OSEWA_HOME), so nothing a test runs lands in the real one.
+/// The account tests run processes as: this one, with a home of its own,
+/// so nothing a test runs lands in the real one.
 fn account() -> osewa_paths::Account {
-    osewa_paths::sandbox_home();
-    osewa_paths::account()
+    osewa_paths::account(Some(&osewa_paths::sandbox_home()))
 }
 
 fn sh(script: &str) -> Options {
-    account();
-    Options { argv: vec!["sh".into(), "-c".into(), script.into()], ..Default::default() }
+    Options { argv: vec!["sh".into(), "-c".into(), script.into()], home: Some(osewa_paths::sandbox_home()), ..Default::default() }
 }
 
 fn argv(a: &[&str]) -> Options {
-    account();
-    Options { argv: a.iter().map(|s| s.to_string()).collect(), ..Default::default() }
+    Options { argv: a.iter().map(|s| s.to_string()).collect(), home: Some(osewa_paths::sandbox_home()), ..Default::default() }
 }
 
 /// Stops the process when the test ends.
@@ -55,7 +52,6 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new() -> TempDir {
-        osewa_paths::sandbox_home();
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!("osewa-execproc-{}-{n}", std::process::id()));
@@ -160,18 +156,19 @@ fn env_and_dir() {
     let _g = ENV.lock().unwrap();
     let dir = TempDir::new();
     unsafe {
-        std::env::set_var("OSEWA_EXECPROC_INHERITED", "parent");
-        std::env::set_var("OSEWA_EXECPROC_OVERRIDE", "parent");
+        std::env::set_var("EXECPROC_INHERITED", "parent");
+        std::env::set_var("EXECPROC_OVERRIDE", "parent");
     }
     rt().block_on(async {
         let mut p = start(Options {
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                r#"pwd -P; echo "$OSEWA_EXECPROC_INHERITED $OSEWA_EXECPROC_OVERRIDE $OSEWA_EXECPROC_ADDED""#.into(),
+                r#"pwd -P; echo "$EXECPROC_INHERITED $EXECPROC_OVERRIDE $EXECPROC_ADDED""#.into(),
             ],
             dir: dir.0.to_string_lossy().into(),
-            env: vec!["OSEWA_EXECPROC_OVERRIDE=child".into(), "OSEWA_EXECPROC_ADDED=new".into()],
+            env: vec!["EXECPROC_OVERRIDE=child".into(), "EXECPROC_ADDED=new".into()],
+            home: Some(osewa_paths::sandbox_home()),
         });
         let (out, _, _, _) = run(&mut p.0).await;
         // The server's own variables don't reach the process; env does.

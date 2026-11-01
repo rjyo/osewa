@@ -30,7 +30,7 @@ fn echo_flood(env: String, catch_up_delay: Duration) -> Config {
 #[test]
 fn no_input_screens_while_streaming() {
     let _heavy = heavy(1);
-    let h = start(echo_flood(format!("OSEWA_TEST_ECHOFLOOD={},{},0,80,24", 10 * LINK, 1500), Duration::from_secs(1)));
+    let h = start(echo_flood(format!("HOLDER_TEST_ECHOFLOOD={},{},0,80,24", 10 * LINK, 1500), Duration::from_secs(1)));
     let mut c = h.dial_via("dev1", slow_link(LINK));
     c.attach(wire::Request { own: true, cols: 80, rows: 24, ..Default::default() });
     c.wait_for("first snapshot", |c| c.term.is_some() && c.snap_ends.contains_key(&0));
@@ -59,7 +59,7 @@ fn no_input_screens_while_streaming() {
 #[test]
 fn input_screens_not_starved() {
     let _heavy = heavy(1);
-    let h = start(echo_flood(format!("OSEWA_TEST_ECHOFLOOD={},{},0,80,24", 10 * LINK, 60000), Duration::ZERO));
+    let h = start(echo_flood(format!("HOLDER_TEST_ECHOFLOOD={},{},0,80,24", 10 * LINK, 60000), Duration::ZERO));
     let mut c = h.dial_via("dev1", slow_link(LINK));
     c.attach(wire::Request { own: true, cols: 80, rows: 24, ..Default::default() });
     c.wait_for("first snapshot", |c| c.term.is_some() && c.snap_ends.contains_key(&0));

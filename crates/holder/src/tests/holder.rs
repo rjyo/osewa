@@ -744,7 +744,7 @@ fn socket_refuses_after_stop() {
 #[test]
 fn session_env_is_the_accounts() {
     let h = start(Config { env: vec!["EDITOR=vi".into(), "LANG=C.UTF-8".into()], cols: 120, rows: 40, ..cfg(sh("env | sort | tr '\\n' ' '; echo; echo cwd=$(pwd -P); sleep 30")) });
-    let a = osewa_paths::account();
+    let a = osewa_paths::account(h.cfg.home.as_deref());
     let home = a.home.display().to_string();
     let mut c = h.dial("dev1");
     c.attach(own());
@@ -760,29 +760,68 @@ fn session_env_is_the_accounts() {
     }
 }
 
-/// The holder CLI: the client's env comes in SESSION_ENV, and the
+/// The holder CLI: the client's env comes on stdin (--env-stdin), and the
 /// session gets none of the holder process's own environment; with no
 /// --cwd it starts in the account's home (here OSEWA_HOME's).
 #[test]
 fn cli_session_env() {
     let dir = TempDir::new();
     let d = dir.0.to_str().unwrap();
-    let mut cmd = holder_command(&["--run", d, "--id", "e1", "--cols", "200", "--rows", "20", "--", "/bin/sh", "-c", "echo $HERDR_ENV/$FOO/$SHELL/$EDITOR/$HOME; pwd -P; sleep 30"]);
-    cmd.env("HERDR_ENV", "1").env("FOO", "bar").env("SHELL", "/bin/false").env(crate::SESSION_ENV, r#"["EDITOR=vi"]"#);
+    let mut cmd = holder_command(&["--run", d, "--id", "e1", "--cols", "200", "--rows", "20", "--env-stdin", "--", "/bin/sh", "-c", "echo $HERDR_ENV/$FOO/$SHELL/$EDITOR/$OSEWA_HOME/$HOME; pwd -P; sleep 30"]);
+    cmd.env("HERDR_ENV", "1").env("FOO", "bar").env("SHELL", "/bin/false").stdin(std::process::Stdio::piped());
     let mut p = Proc::spawn(cmd);
+    {
+        use std::io::Write;
+        let mut stdin = p.child.stdin.take().unwrap();
+        stdin.write_all(br#"["EDITOR=vi","OSEWA_HOME=/tmp/no"]"#).unwrap();
+    }
     assert_eq!(p.line(), "ready\n", "stdout");
     let mut c = Client::dial(&socket_path(&dir.0, "e1"), "dev1");
     c.attach(wire::Request::default());
-    let a = osewa_paths::account();
+    // holder_command gave it the sandbox home (OSEWA_HOME), which the
+    // session doesn't see; the client's OSEWA_* is dropped.
+    let a = osewa_paths::account(Some(&osewa_paths::sandbox_home()));
     let home = a.home.display().to_string();
-    let want = format!("//{}/vi/{home}", a.shell);
+    let want = format!("//{}/vi//{home}", a.shell);
     c.wait_for("env", move |c| c.text().contains(&want));
     let real = std::fs::canonicalize(&a.home).unwrap().display().to_string();
     c.wait_for("cwd", move |c| c.text().lines().any(|l| l == real));
     p.signal(libc::SIGTERM);
     assert_eq!(p.wait_exit(WAIT), 0, "code");
 
-    let mut cmd = holder_command(&["--run", d, "--id", "e2", "--", "/bin/true"]);
-    cmd.env(crate::SESSION_ENV, "not json");
-    assert_eq!(Proc::spawn(cmd).wait_exit(WAIT), 2, "a bad SESSION_ENV");
+    let mut cmd = holder_command(&["--run", d, "--id", "e2", "--env-stdin", "--", "/bin/true"]);
+    cmd.stdin(std::process::Stdio::piped());
+    let mut bad = Proc::spawn(cmd);
+    {
+        use std::io::Write;
+        bad.child.stdin.take().unwrap().write_all(b"not json").unwrap();
+    }
+    assert_eq!(bad.wait_exit(WAIT), 2, "a bad --env-stdin");
+    let mut cmd = holder_command(&["--run", d, "--id", "e3", "--", "/bin/true"]);
+    cmd.env(osewa_paths::HOME_OVERRIDE, "relative/home");
+    assert_eq!(Proc::spawn(cmd).wait_exit(WAIT), 2, "a relative OSEWA_HOME");
+}
+
+/// --env-stdin takes more than one environment string may hold (Linux's
+/// 128 KiB): the whole of what a create request can carry.
+#[test]
+fn cli_env_stdin_is_large() {
+    let dir = TempDir::new();
+    let d = dir.0.to_str().unwrap();
+    let mut cmd = holder_command(&["--run", d, "--id", "b1", "--env-stdin", "--", "/bin/sh", "-c", "echo len=${#BIG}; sleep 30"]);
+    cmd.stdin(std::process::Stdio::piped());
+    let mut p = Proc::spawn(cmd);
+    let big = "x".repeat(300 << 10);
+    {
+        use std::io::Write;
+        let env = serde_json::to_vec(&[format!("BIG={big}")]).unwrap();
+        p.child.stdin.take().unwrap().write_all(&env).unwrap();
+    }
+    assert_eq!(p.line(), "ready\n", "stdout");
+    let mut c = Client::dial(&socket_path(&dir.0, "b1"), "dev1");
+    c.attach(wire::Request::default());
+    let want = format!("len={}", big.len());
+    c.wait_for("len", move |c| c.text().contains(&want));
+    p.signal(libc::SIGTERM);
+    assert_eq!(p.wait_exit(WAIT), 0, "code");
 }

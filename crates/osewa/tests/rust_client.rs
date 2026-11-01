@@ -81,7 +81,10 @@ impl Rig {
             ..Default::default()
         };
         hosts::save(&client_dir, host.clone()).unwrap();
-        let server = Command::new(bin)
+        let mut cmd = Command::new(bin);
+        // Its sessions and exec run in a sandbox home, never the real one.
+        osewa_paths::sandbox(&mut cmd);
+        let server = cmd
             .args(["server", "--listen", &listen, "--name", tag])
             .env("OSEWA_CONFIG_DIR", &server_dir)
             .env("OSEWA_RUN_DIR", &run_dir)
@@ -206,7 +209,7 @@ fn client_against(bin: &Path, tag: &str, carrier: &'static str) {
     let id = run(c.create(CreateOptions {
         cols: 80,
         rows: 24,
-        argv: argv(&["/bin/sh", "-c", "printf 'before attach\\n'; exec cat"]),
+        argv: argv(&["/bin/sh", "-c", "printf 'before attach\\nhome %s\\ncwd %s\\n' \"$HOME\" \"$(pwd -P)\"; exec cat"]),
         ..Default::default()
     }))
     .unwrap();
@@ -229,7 +232,8 @@ fn client_against(bin: &Path, tag: &str, carrier: &'static str) {
         },
     ))
     .unwrap();
-    wait_text(&m, "before attach");
+    let home = osewa_paths::sandbox_home().display().to_string();
+    wait_text(&m, &format!("before attach\nhome {home}\ncwd {home}"));
 
     // Input echo: the tty echoes, then cat.
     s.send_text("one\r").unwrap();

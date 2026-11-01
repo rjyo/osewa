@@ -119,7 +119,10 @@ fn resume_against_rust_server() {
         .unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let listen = format!("127.0.0.1:{port}");
-    let mut server = Command::new(&osewa)
+    let mut server = Command::new(&osewa);
+    // Its sessions and exec run in a sandbox home, never the real one.
+    osewa_paths::sandbox(&mut server);
+    let mut server = server
         .args(["server", "--listen", &listen, "--name", "bench", "--no-quic"])
         .env("OSEWA_CONFIG_DIR", &server_dir)
         .env("OSEWA_RUN_DIR", &run_dir)
@@ -154,6 +157,10 @@ fn resume_against_rust_server() {
             })
             .await
             .unwrap();
+        // The sandbox home is where sessions and exec run.
+        let o = c.output(osewa_client::ExecOptions { argv: args(&["sh", "-c", "echo $HOME; pwd -P"]), ..Default::default() }).await.unwrap();
+        let home = osewa_paths::sandbox_home().display().to_string();
+        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("{home}\n{home}\n"));
         c.close().await;
         id
     }))

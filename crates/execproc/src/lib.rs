@@ -27,6 +27,8 @@ pub struct Options {
     /// Over the account's environment (osewa_paths::session_env); later
     /// entries win.
     pub env: Vec<String>,
+    /// The home in place of the account's (the server's OSEWA_HOME).
+    pub home: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -67,7 +69,7 @@ impl Proc {
         }
         // As a session: the account's home and environment, not the
         // server's (osewa_paths::session_env).
-        let acct = osewa_paths::account();
+        let acct = osewa_paths::account(o.home.as_deref());
         let dir = if o.dir.is_empty() { acct.home.to_string_lossy().into_owned() } else { o.dir.clone() };
         // A missing directory fails the spawn with ENOENT too; check it
         // first so that only a missing program is NotFound.
@@ -311,8 +313,8 @@ impl PipeWriter {
 /// Options.env can choose which program runs. Relative entries are
 /// skipped: they would resolve against the server's cwd here but the
 /// process's dir in the child.
-fn look_path(file: &str, env: &[(String, String)]) -> Result<PathBuf, Error> {
-    let path = env.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.clone()).unwrap_or_default();
+fn look_path(file: &str, env: &[(std::ffi::OsString, std::ffi::OsString)]) -> Result<PathBuf, Error> {
+    let path = env.iter().find(|(k, _)| k == "PATH").and_then(|(_, v)| v.to_str()).unwrap_or_default().to_string();
     for d in path.split(':') {
         if !Path::new(d).is_absolute() {
             continue;

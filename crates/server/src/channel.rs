@@ -570,7 +570,7 @@ impl Channel {
 
     async fn exec(self: Rc<Self>, req: wire::Request) {
         let _guard = ExecGuard(self.c.clone());
-        let opts = execproc::Options { argv: req.argv.clone(), dir: req.cwd.clone(), env: req.env.clone() };
+        let opts = execproc::Options { argv: req.argv.clone(), dir: req.cwd.clone(), env: req.env.clone(), home: self.c.srv.cfg.home.clone() };
         let mut p = match execproc::Proc::start(opts) {
             Ok(p) => p,
             Err(execproc::Error::NotFound(m)) => return self.fail_start(req.id, wire::ERR_NOT_FOUND, &m),

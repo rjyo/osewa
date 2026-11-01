@@ -156,7 +156,7 @@ fn ready_gaps(rate: usize, d: Duration) -> Vec<Duration> {
     let h = start(Config {
         cols: 200,
         rows: 60,
-        env: vec![format!("OSEWA_TEST_FLOOD={}", 10 * rate)],
+        env: vec![format!("HOLDER_TEST_FLOOD={}", 10 * rate)],
         ..cfg(self_child(""))
     });
     let mut nc = UnixStream::connect(&h.sock).unwrap();
@@ -229,7 +229,7 @@ fn catch_up() {
     let h = start(Config {
         cols: 200,
         rows: 60,
-        env: vec![format!("OSEWA_TEST_ECHOFLOOD={},{}", 10 * LINK, flood.as_millis())],
+        env: vec![format!("HOLDER_TEST_ECHOFLOOD={},{}", 10 * LINK, flood.as_millis())],
         ..cfg(echo_flood_argv())
     });
     let mut c = h.dial_via("dev1", slow_link(LINK));

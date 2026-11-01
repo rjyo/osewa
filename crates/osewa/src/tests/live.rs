@@ -61,6 +61,7 @@ fn inproc(holders: &Rc<RefCell<Vec<Holder>>>) -> osewa_server::Spawn {
 impl LiveHost {
     pub fn new() -> LiveHost {
         let home = osewa_paths::sandbox_home();
+        let shome = home.clone();
         let (host, dir) = (TempDir::new(), TempDir::new());
         let sid = osewa_auth::Identity::load_or_create(&host.path().join("server.key")).unwrap();
         let devices = osewa_auth::Devices::new(host.path().join("devices"));
@@ -94,6 +95,7 @@ impl LiveHost {
                         name: "live".into(),
                         spawn: Some(inproc(&holders)),
                         shell: vec!["/bin/sh".into()],
+                        home: Some(shome.clone()),
                         ..Default::default()
                     };
                     let s = osewa_server::Server::new(cfg).unwrap();

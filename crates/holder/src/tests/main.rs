@@ -29,10 +29,10 @@ fn child_process() {
             .collect();
         std::process::exit(crate::main(&args));
     }
-    if let Ok(rate) = std::env::var("OSEWA_TEST_FLOOD").unwrap_or_default().parse::<usize>() {
+    if let Ok(rate) = std::env::var("HOLDER_TEST_FLOOD").unwrap_or_default().parse::<usize>() {
         flood_main(rate);
     }
-    if let Ok(v) = std::env::var("OSEWA_TEST_ECHOFLOOD") {
+    if let Ok(v) = std::env::var("HOLDER_TEST_ECHOFLOOD") {
         // rate,ms: flood at rate for ms.
         // [,tail[,cols,rows[,raw]]]: then tail bytes a second, on a cols x
         // rows screen (default 200x60); raw=1 echoes keystrokes as typed.
@@ -67,8 +67,9 @@ pub fn echo_flood_raw_argv() -> Vec<String> {
 
 /// The holder process, with args after "holder".
 pub fn holder_command(args: &[&str]) -> Command {
-    osewa_paths::sandbox_home();
     let mut cmd = Command::new(std::env::current_exe().unwrap());
+    // The holder's sessions run in a sandbox home, never the real one.
+    osewa_paths::sandbox(&mut cmd);
     cmd.args(SELF_ARGS.split(' '));
     cmd.env("OSEWA_TEST_HOLDER", "1").env("OSEWA_TEST_ARGS", args.join("\x1f"));
     cmd

@@ -1107,7 +1107,11 @@ fn start_exec(fi: &Arc<FakeInner>, st: &mut FState, cid: u64, req: wire::Request
         return;
     }
     let mut cmd = tokio::process::Command::new(&req.argv[0]);
+    // As a server's exec would: in a home of its own, never the real one.
+    let home = osewa_paths::sandbox_home();
     cmd.args(&req.argv[1..])
+        .env("HOME", &home)
+        .current_dir(&home)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

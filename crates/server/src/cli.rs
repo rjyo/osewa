@@ -22,6 +22,16 @@ pub fn main(args: &[String]) -> i32 {
         }
     };
     cfg.trace_dir = std::env::var("OSEWA_TRACE").unwrap_or_default();
+    cfg.home = match osewa_paths::home_override() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("osewa server: {e}");
+            return 2;
+        }
+    };
+    if let Some(h) = &cfg.home {
+        eprintln!("osewa server: {}={}: sessions' home instead of the account's", osewa_paths::HOME_OVERRIDE, h.display());
+    }
     let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {

@@ -22,8 +22,6 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new() -> TempDir {
-        // Before anything starts: sessions run in a sandbox home.
-        osewa_paths::sandbox_home();
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
@@ -114,7 +112,6 @@ impl Host {
         let addr = ln.local_addr().unwrap().to_string();
         drop(ln);
         let run_dir = dir.path().join("run");
-        osewa_paths::sandbox_home();
         std::fs::create_dir_all(&run_dir).unwrap();
         std::fs::set_permissions(&run_dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
         let (ctl, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -134,6 +131,8 @@ impl Host {
                         name: "ffi".into(),
                         spawn: Some(inproc(&holders, sp.clone(), delay)),
                         shell: vec!["/bin/sh".into()],
+                        // Sessions run in a sandbox home, never the real one.
+                        home: Some(osewa_paths::sandbox_home()),
                         ..Default::default()
                     };
                     let s = osewa_server::Server::new(cfg).unwrap();

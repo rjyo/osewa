@@ -392,8 +392,8 @@ fn holder_args_line() {
         argv: argv.iter().map(|s| s.to_string()).collect(),
         ..Default::default()
     };
-    assert_eq!(holder_args(&cfg("", &["sh", "-c", "x"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 -- sh -c x");
-    assert_eq!(holder_args(&cfg("/c", &["sh"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --cwd /c -- sh");
+    assert_eq!(holder_args(&cfg("", &["sh", "-c", "x"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --env-stdin -- sh -c x");
+    assert_eq!(holder_args(&cfg("/c", &["sh"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --cwd /c --env-stdin -- sh");
 }
 
 #[test]
@@ -403,13 +403,19 @@ fn await_ready_lines() {
             let child = tokio::process::Command::new("/bin/sh")
                 .args(["-c", script])
                 .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
             await_ready(child, timeout)
         };
         assert!(ready("echo ready; echo more", Duration::from_secs(1)).await.is_ok());
-        assert_eq!(ready("echo nope", Duration::from_secs(1)).await, Err(r#"server: holder said "nope\n""#.into()));
-        assert_eq!(ready("printf nope", Duration::from_secs(1)).await, Err("server: holder exited before ready: EOF".into()));
+        assert_eq!(ready("echo nope", Duration::from_secs(1)).await, Err(r#"server: holder said "nope\n": exit status: 0"#.into()));
+        assert_eq!(ready("printf nope", Duration::from_secs(1)).await, Err("server: holder exited before ready: exit status: 0".into()));
+        // An early exit says how, and the end of what the holder said.
+        assert_eq!(
+            ready("echo starting >&2; echo 'holder: no pty' >&2; exit 3", Duration::from_secs(1)).await,
+            Err(r#"server: holder exited before ready: exit status: 3: "starting\nholder: no pty""#.into())
+        );
         assert!(ready("printf ready", Duration::from_secs(1)).await.is_ok(), "ready without a newline");
         assert!(ready("exit 1", Duration::from_secs(1)).await.is_err(), "early exit accepted");
         assert!(ready("sleep 10", Duration::from_millis(50)).await.is_err(), "timeout not reported");
@@ -431,7 +437,7 @@ fn new_and_defaults() {
         Some(v) => unsafe { std::env::set_var("SHELL", v) },
         None => unsafe { std::env::remove_var("SHELL") },
     }
-    assert!(s.cfg.shell == osewa_paths::account().login_shell() && !s.cfg.name.is_empty(), "defaults {:?} {:?}", s.cfg.shell, s.cfg.name);
+    assert!(s.cfg.shell == osewa_paths::account(None).login_shell() && !s.cfg.name.is_empty(), "defaults {:?} {:?}", s.cfg.shell, s.cfg.name);
 
     assert!(run_dir.is_dir());
     run(async {
@@ -553,7 +559,7 @@ fn session_env_is_the_accounts() {
             .await;
         assert!(resp.error.is_empty(), "create {resp:?}");
         c.attach(&resp.session_id, 1, true).await;
-        let (home, shell) = (e.home(), osewa_paths::account().shell);
+        let (home, shell) = (e.home(), osewa_paths::account(None).shell);
         c.output(1, &format!("[][][{shell}][vi][{home}] cwd={home}")).await;
     });
 }

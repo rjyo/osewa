@@ -360,8 +360,8 @@ fn exec_stdin_cwd_env() {
         let r = c
             .call(wire::Request {
                 cwd: dir.real(),
-                env: vec!["OSEWA_T=v".into()],
-                argv: ["sh", "-c", "pwd; echo $OSEWA_T; cat"].iter().map(|s| s.to_string()).collect(),
+                env: vec!["EXEC_T=v".into()],
+                argv: ["sh", "-c", "pwd; echo $EXEC_T; cat"].iter().map(|s| s.to_string()).collect(),
                 ..stream_req(wire::METHOD_EXEC_START, 2)
             })
             .await;
@@ -827,7 +827,7 @@ fn exec_env_is_the_accounts() {
             .await;
         assert!(r.error.is_empty(), "exec.start {r:?}");
         let res = c.drain(1).await;
-        let (home, shell) = (e.home(), osewa_paths::account().shell);
+        let (home, shell) = (e.home(), osewa_paths::account(None).shell);
         assert_eq!(res.out(1), format!("[][][{shell}][vi][{home}]\n{home}\n"));
     });
 }

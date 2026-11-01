@@ -192,7 +192,7 @@ fn catch_up_behind_buffering_relay() {
     let h = start(Config {
         cols: 200,
         rows: 60,
-        env: vec![format!("OSEWA_TEST_ECHOFLOOD={},{}", 10 * LINK, 8000)],
+        env: vec![format!("HOLDER_TEST_ECHOFLOOD={},{}", 10 * LINK, 8000)],
         ..cfg(echo_flood_argv())
     });
     let mut c = h.dial_via("dev1", buffered_link(LINK));
@@ -259,7 +259,7 @@ fn catch_up_exits_under_steady_output() {
     let h = start(Config {
         cols: 200,
         rows: 60,
-        env: vec![format!("OSEWA_TEST_ECHOFLOOD={},{},{}", 10 * LINK, 1500, LINK / 10)],
+        env: vec![format!("HOLDER_TEST_ECHOFLOOD={},{},{}", 10 * LINK, 1500, LINK / 10)],
         ..cfg(echo_flood_argv())
     });
     let mut c = h.dial_via("dev1", slow_link(LINK));
@@ -324,7 +324,7 @@ fn input_triggered_screen() {
     let h = start(Config {
         cols: 80,
         rows: 24,
-        env: vec![format!("OSEWA_TEST_ECHOFLOOD={},{},0,80,24", 10 * LINK, 60000)],
+        env: vec![format!("HOLDER_TEST_ECHOFLOOD={},{},0,80,24", 10 * LINK, 60000)],
         ..cfg(echo_flood_argv())
     });
     let mut c = h.dial_via("dev1", slow_delay_link(LINK, rtt));
@@ -372,7 +372,7 @@ fn input_screen_abandons_partial() {
     let h = start(Config {
         cols: 80,
         rows: 24,
-        env: vec![format!("OSEWA_TEST_ECHOFLOOD={},{},0,80,24,1", 10 * LINK, 60000)],
+        env: vec![format!("HOLDER_TEST_ECHOFLOOD={},{},0,80,24,1", 10 * LINK, 60000)],
         ..cfg(echo_flood_raw_argv())
     });
     let mut c = h.dial_via("dev1", slow_delay_link(LINK, rtt));

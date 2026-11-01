@@ -33,8 +33,6 @@ pub struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new() -> TempDir {
-        // Before anything starts: sessions run in a sandbox home.
-        osewa_paths::sandbox_home();
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let d = PathBuf::from(format!("/tmp/osw{}-{n}", std::process::id()));
@@ -147,8 +145,9 @@ impl Env {
         let device = Rc::new(osewa_auth::Identity::generate());
         let devices = osewa_auth::Devices::new(run_dir.0.join("config/devices"));
         devices.add(osewa_auth::Device { name: "test".into(), key: osewa_auth::encode_key(&device.public()) }).unwrap();
-        osewa_paths::sandbox_home();
         let mut cfg = Config {
+            // Sessions and exec run in a sandbox home, never the real one.
+            home: Some(osewa_paths::sandbox_home()),
             identity: Some(Rc::new(id)),
             devices: Some(devices),
             run_dir: run_dir.0.join("run"),
@@ -769,6 +768,7 @@ pub fn auth_config(dir: &Path) -> Config {
     Config {
         identity: Some(Rc::new(osewa_auth::Identity::generate())),
         devices: Some(osewa_auth::Devices::new(dir.join("devices"))),
+        home: Some(osewa_paths::sandbox_home()),
         ..Default::default()
     }
 }

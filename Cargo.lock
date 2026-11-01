@@ -523,6 +523,7 @@ dependencies = [
  "osewa-ghostty",
  "osewa-holder",
  "osewa-mirror",
+ "osewa-paths",
  "osewa-wire",
  "serde",
  "serde_json",

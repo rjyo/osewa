@@ -111,8 +111,12 @@ pub struct Config {
     pub cwd: String,
     /// KEY=value entries over the session's environment, which is the
     /// account's (osewa_paths::session_env), not the holder's; TERM
-    /// defaults to xterm-256color. The CLI takes them from SESSION_ENV.
+    /// defaults to xterm-256color. The CLI reads them from stdin with
+    /// --env-stdin.
     pub env: Vec<String>,
+    /// The session's home in place of the account's (OSEWA_HOME, which
+    /// the CLI reads at start).
+    pub home: Option<PathBuf>,
     /// Ring cap, default 8 MiB.
     pub log_bytes: usize,
     /// Per-client unsent threshold, default 4 MiB.
@@ -196,7 +200,8 @@ impl Config {
 }
 
 /// Runs `osewa holder --run <dir> --id <id> --cols <c> --rows <r> [--cwd
-/// <dir>] [--scrollback-bytes <n>] [--idle-timeout <d>] -- argv...`; args are
+/// <dir>] [--env-stdin] [--scrollback-bytes <n>] [--idle-timeout <d>] --
+/// argv...`; args are
 /// the arguments after "holder". Prints "ready" once the socket accepts
 /// connections and returns the process exit code.
 pub fn main(args: &[String]) -> i32 {
@@ -221,16 +226,23 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
-/// Where the server hands `osewa holder` the client's session env: a JSON
-/// array of KEY=value. In the environment rather than on the command line,
-/// which every user on the host can read.
-pub const SESSION_ENV: &str = "OSEWA_SESSION_ENV";
+/// Bounds the session env --env-stdin reads: a REQUEST frame's.
+const ENV_STDIN_MAX: u64 = wire::MAX_FRAME as u64;
 
-fn session_env_var() -> Result<Vec<String>, String> {
-    match std::env::var(SESSION_ENV) {
-        Ok(j) if !j.is_empty() => serde_json::from_str(&j).map_err(|e| format!("holder: {SESSION_ENV}: {e}")),
-        _ => Ok(Vec::new()),
+/// The client's session env, a JSON array of KEY=value, from stdin to EOF:
+/// not on the command line, which every user on the host can read, nor in
+/// one environment string, which Linux caps at 128 KiB.
+fn env_from_stdin() -> Result<Vec<String>, String> {
+    use std::io::Read;
+    let mut b = Vec::new();
+    io::stdin().take(ENV_STDIN_MAX + 1).read_to_end(&mut b).map_err(|e| format!("holder: --env-stdin: {e}"))?;
+    if b.len() as u64 > ENV_STDIN_MAX {
+        return Err(format!("holder: --env-stdin: more than {ENV_STDIN_MAX} bytes"));
     }
+    if b.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Vec::new());
+    }
+    serde_json::from_slice(&b).map_err(|e| format!("holder: --env-stdin: {e}"))
 }
 
 fn parse_flags(args: &[String]) -> Result<Config, String> {
@@ -242,6 +254,7 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         .value("width", "0", "width in pixels, 0 if unknown")
         .value("height", "0", "height in pixels, 0 if unknown")
         .value("cwd", "", "working directory")
+        .bool("env-stdin", false, "read the session env from stdin: a JSON array of KEY=value")
         .value("scrollback-bytes", &DEFAULT_SCROLLBACK_BYTES.to_string(), "scrollback cap in bytes")
         .value("idle-timeout", "24h0m0s", "end the session after this long unattached and silent; 0 disables");
     let p = fs.parse(args).map_err(|e| format!("{e}\n{}", fs.usage()))?;
@@ -262,7 +275,8 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
             None => p.duration("idle-timeout").map_err(|e| e.to_string())?,
         },
         argv: p.args.clone(),
-        env: session_env_var()?,
+        env: if p.bool("env-stdin") { env_from_stdin()? } else { Vec::new() },
+        home: osewa_paths::home_override().map_err(|e| format!("holder: {e}"))?,
         trace_dir: std::env::var("OSEWA_TRACE").unwrap_or_default(),
         ..Default::default()
     })
@@ -308,7 +322,7 @@ pub async fn serve(
 
     let tune = cfg.tune.clone();
     let (master, slave) = pty::open(cfg.cols as u16, cfg.rows as u16, cfg.width as u16, cfg.height as u16).map_err(|e| e.to_string())?;
-    let acct = osewa_paths::account();
+    let acct = osewa_paths::account(cfg.home.as_deref());
     let mut cmd = pty::command(&cfg.argv, &cfg.cwd, &cfg.env, &acct, &slave).map_err(|e| e.to_string())?;
     let mode_poll = if cfg.idle.is_zero() { tune.mode_poll } else { tune.mode_poll.min((cfg.idle / 4).max(Duration::from_millis(10))) };
     let s = Session::new(cfg, master.as_raw_fd(), real_clock())?;

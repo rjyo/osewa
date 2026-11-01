@@ -374,6 +374,7 @@ impl Client {
             argv,
             cwd: req.cwd,
             env: req.env,
+            home: self.srv.cfg.home.clone(),
             ..Default::default()
         };
         match (self.srv.spawn)(cfg).await {

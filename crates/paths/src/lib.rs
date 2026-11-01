@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 mod account;
 
-pub use account::{account, passwd_account, sandbox_home, session_env, session_env_from, Account, HOME_OVERRIDE};
+pub use account::{account, home_override, passwd_account, sandbox, sandbox_home, session_env, session_env_from, Account, HOME_OVERRIDE, RESERVED_PREFIX};
 
 fn var(k: &str) -> Option<String> {
     env::var(k).ok().filter(|v| !v.is_empty())

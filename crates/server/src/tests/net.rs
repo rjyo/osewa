@@ -220,6 +220,11 @@ struct ServerDirs {
     _dir: TempDir,
 }
 
+/// cfg with sessions in a sandbox home, never the real one.
+fn sandboxed(cfg: crate::Config) -> crate::Config {
+    crate::Config { home: Some(osewa_paths::sandbox_home()), ..cfg }
+}
+
 impl ServerDirs {
     fn new() -> ServerDirs {
         let g = super::ENV.lock().unwrap_or_else(|e| e.into_inner());
@@ -248,7 +253,7 @@ fn run_server() {
     assert_eq!(cli::main(&args(&["--listen", "256.0.0.1:x"])), 1, "bad listen address");
     run(async {
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::task::spawn_local(cli::serve("127.0.0.1:0".into(), Default::default(), async {
+        let serving = tokio::task::spawn_local(cli::serve("127.0.0.1:0".into(), sandboxed(Default::default()), async {
             let _ = stop_rx.await;
         }));
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -267,7 +272,7 @@ async fn negotiated_by(extra: &[&str]) -> bool {
     a.extend(args(extra));
     let (listen, cfg) = cli::parse(&a).unwrap();
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let serving = tokio::task::spawn_local(cli::serve(listen, cfg, async {
+    let serving = tokio::task::spawn_local(cli::serve(listen, sandboxed(cfg), async {
         let _ = stop_rx.await;
     }));
     let dev = osewa_auth::Identity::generate();
@@ -368,7 +373,7 @@ fn quic_on_stop() {
         let addr = format!("127.0.0.1:{port}");
         let (listen, cfg) = cli::parse(&args(&["--listen", &addr])).unwrap();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::task::spawn_local(cli::serve(listen, cfg, async {
+        let serving = tokio::task::spawn_local(cli::serve(listen, sandboxed(cfg), async {
             let _ = stop_rx.await;
         }));
         let dev = osewa_auth::Identity::generate();
