@@ -325,6 +325,14 @@ on the same connection.
 packets to fit a WireGuard MTU, and the Mac mini numbers above were taken
 over Tailscale.
 
+**Is it as safe as ssh?** The cryptography is: TLS 1.3 only, and both ends
+prove who they are with Ed25519 keys on every connection, no passwords. The
+server's key comes to you during enrollment over ssh, so there is no "trust
+this host?" prompt, and a revoked device is out on its next connect. Where
+ssh is ahead is age: OpenSSH has decades of audits and osewa has none yet,
+it adds a second open port, and its device key is a plain file (mode 0600),
+not one behind a passphrase or an agent.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
