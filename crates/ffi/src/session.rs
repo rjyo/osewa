@@ -641,9 +641,7 @@ pub fn kill_id(o: Opened) -> Result<(), String> {
     let id = o.session_id.ok_or("osewa: session_id is required")?;
     let r = osewa_client::block_on(osewa_client::timeout(KILL_ID_TIMEOUT, async {
         let c = osewa_client::Conn::dial(o.cfg).await?;
-        let r = c.kill(&id).await;
-        c.close().await;
-        r
+        kill_on(c, &id).await
     }));
     match r {
         None => Err("osewa: kill: timed out".into()),
@@ -651,6 +649,22 @@ pub fn kill_id(o: Opened) -> Result<(), String> {
         Some(Err(e)) => Err(fatal(&e).unwrap_or_else(|| e.to_string())),
         Some(Ok(())) => Ok(()),
     }
+}
+
+/// Kills session id over c, then closes c, however this ends: dropped by
+/// a timeout mid-kill included. Dropping a Conn alone leaves its tasks
+/// (and so the connection) running as long as the server answers pings.
+pub(crate) async fn kill_on(c: osewa_client::Conn, id: &str) -> Result<(), Error> {
+    struct CloseOnDrop(osewa_client::Conn);
+    impl Drop for CloseOnDrop {
+        fn drop(&mut self) {
+            self.0.close_now();
+        }
+    }
+    let c = CloseOnDrop(c);
+    let r = c.0.kill(id).await;
+    c.0.close().await;
+    r
 }
 
 /// Why the session ended, for CLOSED.

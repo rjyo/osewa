@@ -415,6 +415,20 @@ fn kill_id(o: &Open) -> Result<(), String> {
     }
 }
 
+impl Host {
+    /// A holder that accepts and reads, and never answers: a request to it
+    /// waits out the server's holder timeout.
+    fn mute_holder(&self, id: &str) -> JoinHandle<()> {
+        let ln = std::os::unix::net::UnixListener::bind(self.dir.path().join("run").join(format!("{id}.sock"))).unwrap();
+        std::thread::spawn(move || {
+            for conn in ln.incoming() {
+                let Ok(mut conn) = conn else { return };
+                std::thread::spawn(move || while wire::read(&mut conn).is_ok() {});
+            }
+        })
+    }
+}
+
 /// A holder of another build on the host's run directory, as one left
 /// behind by an update: it answers session.info with its old build, and
 /// counts the attaches and kills that reach it.

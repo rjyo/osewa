@@ -509,3 +509,23 @@ fn kill_id_ends_a_session() {
     let e = kill_id(&host.open_opts()).unwrap_err();
     assert!(e.contains("session_id is required"), "{e}");
 }
+
+/// A kill that doesn't come back in time still closes its connection: the
+/// timeout drops the kill mid-request, and with it the Conn, whose tasks
+/// would otherwise keep it open.
+#[test]
+fn kill_timed_out_closes_its_connection() {
+    let host = Host::new();
+    let id = "cd".repeat(16);
+    let _mute = host.mute_holder(&id);
+    let mut s = Strings::default();
+    let opts = c_opts(&host.open_opts(), &mut s);
+    let cfg = unsafe { crate::options::read(&opts) }.unwrap().cfg;
+    osewa_client::block_on(async {
+        let c = osewa_client::Conn::dial(cfg).await.unwrap();
+        let watch = c.clone();
+        let r = osewa_client::timeout(Duration::from_millis(300), crate::session::kill_on(c, &id)).await;
+        assert!(r.is_none(), "the kill came back: {r:?}");
+        assert!(osewa_client::timeout(Duration::from_secs(5), watch.done()).await.is_some(), "the connection outlived the timed-out kill");
+    });
+}
