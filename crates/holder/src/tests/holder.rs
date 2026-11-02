@@ -322,6 +322,54 @@ fn look_answers_from_the_start() {
     a.wait_for("the replies", |c| unwrapped(&c.text()).contains("R:]11;rgb:1010/2020/3030]4;5;rgb:abab/cdcd/efef?997;2n:END"));
 }
 
+/// --stdin-json hands the holder the env and the creator's look on stdin,
+/// off its command line: the program sees both from the start.
+#[test]
+fn cli_stdin_json() {
+    let dir = TempDir::new();
+    let d = dir.0.to_str().unwrap();
+    let script = r#"stty raw -echo; printf "E=$EDITOR "; printf '\033]11;?\033\\'; s=; while c=$(dd bs=1 count=1 2>/dev/null); [ "$c" != '\' ]; do s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033')"; sleep 30"#;
+    let mut cmd = holder_command(&["--run", d, "--id", "j1", "--stdin-json", "--", "/bin/sh", "-c", script]);
+    cmd.stdin(std::process::Stdio::piped());
+    let mut p = Proc::spawn(cmd);
+    {
+        use std::io::Write;
+        let mut stdin = p.child.stdin.take().unwrap();
+        stdin.write_all(br##"{"env":["EDITOR=vi"],"look":{"background":"#102030"}}"##).unwrap();
+    }
+    assert_eq!(p.line(), "ready\n", "stdout");
+    let mut c = Client::dial(&socket_path(&dir.0, "j1"), "dev1");
+    c.attach(wire::Request::default());
+    c.wait_for("env and look", |c| unwrapped(&c.text()).contains("E=vi R:]11;rgb:1010/2020/3030:END"));
+    p.signal(libc::SIGTERM);
+    assert_eq!(p.wait_exit(WAIT), 0, "code");
+}
+
+/// A server of the build before --stdin-json gives the look as --look; the
+/// holder still takes it.
+#[test]
+fn cli_legacy_look_flag() {
+    let dir = TempDir::new();
+    let d = dir.0.to_str().unwrap();
+    let script = r#"stty raw -echo; printf '\033]11;?\033\\'; s=; while c=$(dd bs=1 count=1 2>/dev/null); [ "$c" != '\' ]; do s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033')"; sleep 30"#;
+    let mut p = Proc::spawn(holder_command(&["--run", d, "--id", "l1", "--look", r##"{"background":"#102030"}"##, "--", "/bin/sh", "-c", script]));
+    assert_eq!(p.line(), "ready\n", "stdout");
+    let mut c = Client::dial(&socket_path(&dir.0, "l1"), "dev1");
+    c.attach(wire::Request::default());
+    c.wait_for("look", |c| unwrapped(&c.text()).contains("R:]11;rgb:1010/2020/3030:END"));
+    p.signal(libc::SIGTERM);
+    assert_eq!(p.wait_exit(WAIT), 0, "code");
+}
+
+/// SSH_TTY names the session's own PTY, as sshd's does a login's.
+#[test]
+fn ssh_tty_is_the_pty() {
+    let h = start(cfg(sh(r#"t=$(tty); [ "$SSH_TTY" = "$t" ] && echo "SAME:$SSH_TTY"; sleep 30"#)));
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.wait_for("SSH_TTY", |c| c.text().contains("SAME:/dev/"));
+}
+
 /// What a look can't be: a color other than #rrggbb, a short palette, an
 /// unknown scheme.
 #[test]

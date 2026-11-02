@@ -10,6 +10,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
@@ -161,7 +162,9 @@ pub struct Server {
 const QUIC_DRAIN: Duration = Duration::from_secs(1);
 
 /// The WebSocket carrier.
-struct WsConn<S>(osewa_carrier::ws::Conn<S>, Option<path::Probe>);
+/// The WebSocket carrier, with its TCP socket's probe and (client, ours)
+/// addresses.
+struct WsConn<S>(osewa_carrier::ws::Conn<S>, Option<path::Probe>, Option<(SocketAddr, SocketAddr)>);
 
 fn ws_err(e: osewa_carrier::ws::Error) -> io::Error {
     match e {
@@ -192,10 +195,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Conn for WsConn<S> {
     fn path(&self, now: std::time::Instant) -> Option<path::Sample> {
         self.1.as_ref()?.sample(now)
     }
+    fn addrs(&self) -> Option<(SocketAddr, SocketAddr)> {
+        self.2
+    }
 }
 
 /// The QUIC carrier.
-struct QuicConn(osewa_carrier::quic::Conn);
+/// The QUIC carrier, with its (client, ours) addresses.
+struct QuicConn(osewa_carrier::quic::Conn, Option<(SocketAddr, SocketAddr)>);
 
 impl Conn for QuicConn {
     fn read(&self) -> LocalBoxFuture<'_, io::Result<Vec<u8>>> {
@@ -207,6 +214,9 @@ impl Conn for QuicConn {
     fn close(&self, code: u16, reason: String) -> LocalBoxFuture<'_, ()> {
         self.0.close(code, &reason);
         Box::pin(async {})
+    }
+    fn addrs(&self) -> Option<(SocketAddr, SocketAddr)> {
+        self.1
     }
 }
 
@@ -321,6 +331,7 @@ impl Server {
             let _ = tcp.set_nodelay(true);
             lowat::tune(tcp.as_raw_fd());
             let probe = path::Probe::new(tcp.as_raw_fd());
+            let addrs = tcp.local_addr().ok().map(|local| (peer, local));
             let (srv, tls, ws) = (self.clone(), tls.clone(), ws.clone());
             tokio::task::spawn_local(async move {
                 let deadline = tokio::time::Instant::now() + srv.cfg.tune.handshake_timeout;
@@ -331,7 +342,7 @@ impl Server {
                 };
                 // A refused upgrade has had its answer; nothing to log.
                 let Ok(Ok(conn)) = tokio::time::timeout_at(deadline, ws.accept(stream)).await else { return };
-                srv.serve_conn(Rc::new(WsConn(conn, Some(probe)))).await;
+                srv.serve_conn(Rc::new(WsConn(conn, Some(probe), addrs))).await;
             });
         }
     }
@@ -363,11 +374,12 @@ impl Server {
                 // fails) and the main stream's first frame, as over TCP.
                 let deadline = tokio::time::Instant::now() + srv.cfg.tune.handshake_timeout;
                 let Ok(Ok(qc)) = tokio::time::timeout_at(deadline, incoming).await else { return };
+                let addrs = qc.local_ip().map(|ip| (qc.remote_address(), SocketAddr::new(ip, port)));
                 let Ok(Ok(conn)) = tokio::time::timeout_at(deadline, quic::accept(qc.clone())).await else {
                     qc.close(0u32.into(), b"");
                     return;
                 };
-                srv.serve_conn(Rc::new(QuicConn(conn))).await;
+                srv.serve_conn(Rc::new(QuicConn(conn, addrs))).await;
             });
         }
         // close is telling every client (going away); give their
@@ -626,14 +638,23 @@ fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
         a.push("--cwd".into());
         a.push(cfg.cwd.clone());
     }
-    if !cfg.look.is_empty() {
-        a.push("--look".into());
-        a.push(serde_json::to_string(&cfg.look).unwrap_or_default());
-    }
-    a.push("--env-stdin".into());
+    // The env (and a look) go on stdin (holder_stdin), never on this line,
+    // which every user on the host can read. The env alone keeps the array
+    // a holder of another build ($OSEWA_HOLDER) reads.
+    a.push(if cfg.look.is_empty() { "--env-stdin" } else { "--stdin-json" }.into());
     a.push("--".into());
     a.extend(cfg.argv.iter().cloned());
     a
+}
+
+/// What the holder reads on stdin (holder_args' flag): the env as a JSON
+/// array (--env-stdin), or with a look an object {env, look}
+/// (--stdin-json).
+fn holder_stdin(cfg: &osewa_holder::Config) -> serde_json::Result<Vec<u8>> {
+    if cfg.look.is_empty() {
+        return serde_json::to_vec(&cfg.env);
+    }
+    serde_json::to_vec(&serde_json::json!({"env": cfg.env, "look": cfg.look}))
 }
 
 /// The binary whose holder runs a session: $OSEWA_HOLDER, which lets one
@@ -647,7 +668,13 @@ fn holder_binary() -> io::Result<PathBuf> {
 
 /// Runs `<binary> holder ...` in its own session, so the holder outlives
 /// the server, and waits for its "ready" line.
-async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(), String> {
+async fn spawn_process(mut cfg: osewa_holder::Config, timeout: Duration) -> Result<(), String> {
+    if std::env::var_os("OSEWA_HOLDER").is_some_and(|p| !p.is_empty()) {
+        // Another build's holder may predate --stdin-json; the look is
+        // cosmetic, so it goes, and the env takes the array every build
+        // reads.
+        cfg.look = Default::default();
+    }
     let mut cmd = tokio::process::Command::new(holder_binary().map_err(|e| e.to_string())?);
     cmd.args(holder_args(&cfg)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // The home is the server's to give, not whatever its environment has.
@@ -664,10 +691,10 @@ async fn spawn_process(cfg: osewa_holder::Config, timeout: Duration) -> Result<(
         });
     }
     let mut child = cmd.spawn().map_err(|e| format!("server: start holder: {e}"))?;
-    // The client's env goes in on stdin (holder --env-stdin), while
-    // await_ready drains stdout and stderr, under its one deadline: a
-    // holder that writes first, or never reads, can't hang the create.
-    let env = serde_json::to_vec(&cfg.env).map_err(|e| e.to_string())?;
+    // The client's env (and look) go in on stdin, while await_ready drains
+    // stdout and stderr, under its one deadline: a holder that writes
+    // first, or never reads, can't hang the create.
+    let env = holder_stdin(&cfg).map_err(|e| e.to_string())?;
     let stdin = child.stdin.take();
     let deliver = async move {
         let Some(mut stdin) = stdin else { return Ok(()) };

@@ -28,6 +28,10 @@ pub trait Conn {
     fn path(&self, _now: std::time::Instant) -> Option<crate::path::Sample> {
         None
     }
+    /// The client's address and ours, as the carrier sees them.
+    fn addrs(&self) -> Option<(std::net::SocketAddr, std::net::SocketAddr)> {
+        None
+    }
 }
 
 /// A connection that goes nowhere, for clients built without a peer.

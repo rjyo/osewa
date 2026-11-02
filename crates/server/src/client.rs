@@ -367,6 +367,12 @@ impl Client {
             return self.fail(req.id, wire::ERR_BAD_REQUEST, &e);
         }
         let argv = if req.argv.is_empty() { self.srv.cfg.shell.clone() } else { req.argv };
+        // A remote login's, as sshd sets them (and mosh's sessions inherit):
+        // programs take them to mean the user is on another machine, and
+        // copy to the user's clipboard (OSC 52) rather than this one's.
+        // The client's own entries come after, so they win.
+        let mut env = login_env(self.conn.addrs());
+        env.extend(req.env);
         let id = new_session_id();
         let cfg = osewa_holder::Config {
             run_dir: self.srv.cfg.run_dir.clone(),
@@ -377,7 +383,7 @@ impl Client {
             height: req.height,
             argv,
             cwd: req.cwd,
-            env: req.env,
+            env,
             look,
             home: self.srv.cfg.home.clone(),
             ..Default::default()
@@ -785,4 +791,18 @@ impl Stream {
 
 pub(crate) fn end_frame(stream: u32, reason: &str) -> wire::Frame {
     wire::json(wire::TYPE_STREAM_END, stream, &wire::StreamEnd { reason: reason.into(), exit_code: None })
+}
+
+/// SSH_CONNECTION and SSH_CLIENT for a session created over a connection
+/// from client to ours, in sshd's format: "client_ip client_port
+/// server_ip server_port" and "client_ip client_port server_port". None
+/// without the addresses.
+pub(crate) fn login_env(addrs: Option<(std::net::SocketAddr, std::net::SocketAddr)>) -> Vec<String> {
+    let Some((client, ours)) = addrs else { return Vec::new() };
+    // A v4 client on a v6 socket reads as v4, as sshd prints it.
+    let ip = |a: std::net::SocketAddr| a.ip().to_canonical();
+    vec![
+        format!("SSH_CONNECTION={} {} {} {}", ip(client), client.port(), ip(ours), ours.port()),
+        format!("SSH_CLIENT={} {} {}", ip(client), client.port(), ours.port()),
+    ]
 }

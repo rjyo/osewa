@@ -12,9 +12,9 @@ fn cvt(r: libc::c_int) -> io::Result<libc::c_int> {
     }
 }
 
-/// Opens a PTY pair: the master (non-blocking, close-on-exec) and the
-/// slave.
-pub(crate) fn open(cols: u16, rows: u16, width: u16, height: u16) -> io::Result<(OwnedFd, OwnedFd)> {
+/// Opens a PTY pair: the master (non-blocking, close-on-exec), the slave
+/// and its device path.
+pub(crate) fn open(cols: u16, rows: u16, width: u16, height: u16) -> io::Result<(OwnedFd, OwnedFd, String)> {
     unsafe {
         let m = cvt(libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY))?;
         let master = OwnedFd::from_raw_fd(m);
@@ -33,7 +33,7 @@ pub(crate) fn open(cols: u16, rows: u16, width: u16, height: u16) -> io::Result<
         cvt(libc::fcntl(m, libc::F_SETFL, flags | libc::O_NONBLOCK))?;
         cvt(libc::fcntl(m, libc::F_SETFD, libc::FD_CLOEXEC))?;
         set_size(m, cols, rows, width, height)?;
-        Ok((master, slave))
+        Ok((master, slave, path.to_string_lossy().into_owned()))
     }
 }
 
@@ -62,13 +62,16 @@ pub(crate) fn read_mode(fd: RawFd) -> io::Result<InputMode> {
 /// Builds the child's command: its own session with the PTY as its
 /// controlling terminal and stdio, the account's environment with env on
 /// top (osewa_paths::session_env), and the account's home when no cwd is
-/// given; nothing of the holder's own environment or cwd.
+/// given; nothing of the holder's own environment or cwd. SSH_TTY names
+/// the PTY (tty, its device), as sshd sets it for a remote login, beside
+/// the SSH_CONNECTION the server puts in env.
 pub(crate) fn command(
     argv: &[String],
     cwd: &str,
     env: &[String],
     acct: &osewa_paths::Account,
     slave: &OwnedFd,
+    tty: &str,
 ) -> io::Result<tokio::process::Command> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
@@ -77,7 +80,7 @@ pub(crate) fn command(
     } else {
         cmd.current_dir(Path::new(cwd));
     }
-    cmd.env_clear().envs(osewa_paths::session_env(acct, &[("TERM", "xterm-256color")], env));
+    cmd.env_clear().envs(osewa_paths::session_env(acct, &[("TERM", "xterm-256color"), ("SSH_TTY", tty)], env));
     cmd.stdin(slave.try_clone()?);
     cmd.stdout(slave.try_clone()?);
     cmd.stderr(slave.try_clone()?);

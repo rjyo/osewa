@@ -121,8 +121,8 @@ pub struct Config {
     pub env: Vec<String>,
     /// The creating client's look (session.create): applied before the
     /// child starts, so a program that asks for colors as it starts gets
-    /// the client's rather than libghostty's. The CLI reads it from --look,
-    /// JSON.
+    /// the client's rather than libghostty's. The CLI reads it from stdin
+    /// with --stdin-json.
     pub look: wire::Look,
     /// The session's home in place of the account's (OSEWA_HOME, which
     /// the CLI reads at start).
@@ -243,23 +243,48 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
-/// Bounds the session env --env-stdin reads: a REQUEST frame's.
-const ENV_STDIN_MAX: u64 = wire::MAX_FRAME as u64;
+/// Bounds what --env-stdin and --stdin-json read: a REQUEST frame's, and
+/// room for what the server adds to the create's env and look
+/// (SSH_CONNECTION, the JSON around them).
+const ENV_STDIN_MAX: u64 = wire::MAX_FRAME as u64 + (64 << 10);
 
-/// The client's session env, a JSON array of KEY=value, from stdin to EOF:
-/// not on the command line, which every user on the host can read, nor in
-/// one environment string, which Linux caps at 128 KiB.
-fn env_from_stdin() -> Result<Vec<String>, String> {
+/// What --stdin-json reads: the session env and the creator's look.
+#[derive(Default)]
+struct StdinJson {
+    env: Vec<String>,
+    look: wire::Look,
+}
+
+/// What the server hands the holder on stdin, to EOF: not on the command
+/// line, which every user on the host can read (and a look's palette would
+/// fill), nor in one environment string, which Linux caps at 128 KiB.
+/// --env-stdin is the env alone, a JSON array of KEY=value; --stdin-json an
+/// object with the env and the look.
+fn from_stdin(flag: &str) -> Result<StdinJson, String> {
     use std::io::Read;
     let mut b = Vec::new();
-    io::stdin().take(ENV_STDIN_MAX + 1).read_to_end(&mut b).map_err(|e| format!("holder: --env-stdin: {e}"))?;
+    io::stdin().take(ENV_STDIN_MAX + 1).read_to_end(&mut b).map_err(|e| format!("holder: --{flag}: {e}"))?;
     if b.len() as u64 > ENV_STDIN_MAX {
-        return Err(format!("holder: --env-stdin: more than {ENV_STDIN_MAX} bytes"));
+        return Err(format!("holder: --{flag}: more than {ENV_STDIN_MAX} bytes"));
     }
     if b.iter().all(u8::is_ascii_whitespace) {
-        return Ok(Vec::new());
+        return Ok(StdinJson::default());
     }
-    serde_json::from_slice(&b).map_err(|e| format!("holder: --env-stdin: {e}"))
+    let bad = |e: serde_json::Error| format!("holder: --{flag}: {e}");
+    if flag == "env-stdin" {
+        return Ok(StdinJson { env: serde_json::from_slice(&b).map_err(bad)?, ..Default::default() });
+    }
+    let mut v: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&b).map_err(bad)?;
+    let mut field = |k: &str| v.remove(k).unwrap_or(serde_json::Value::Null);
+    let env = match field("env") {
+        serde_json::Value::Null => Vec::new(),
+        e => serde_json::from_value(e).map_err(bad)?,
+    };
+    let look = match field("look") {
+        serde_json::Value::Null => wire::Look::default(),
+        l => serde_json::from_value(l).map_err(bad)?,
+    };
+    Ok(StdinJson { env, look })
 }
 
 fn parse_flags(args: &[String]) -> Result<Config, String> {
@@ -272,11 +297,18 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         .value("height", "0", "height in pixels, 0 if unknown")
         .value("cwd", "", "working directory")
         .bool("env-stdin", false, "read the session env from stdin: a JSON array of KEY=value")
-        .value("look", "", "the creating client's colors, JSON: color_scheme, foreground, background, cursor, palette")
+        .bool("stdin-json", false, "read the session env and the creator's look from stdin: a JSON object {env, look}")
+        // A server of the build before --stdin-json gives the look here.
+        .value("look", "", "the creator's look as JSON (servers before --stdin-json)")
         .value("scrollback-bytes", &DEFAULT_SCROLLBACK_BYTES.to_string(), "scrollback cap in bytes")
         .value("idle-timeout", "24h0m0s", "end the session after this long unattached and silent; 0 disables");
     let p = fs.parse(args).map_err(|e| format!("{e}\n{}", fs.usage()))?;
     let int = |n: &str| p.int(n).map_err(|e| e.to_string());
+    let stdin = match (p.bool("stdin-json"), p.bool("env-stdin")) {
+        (true, _) => from_stdin("stdin-json")?,
+        (false, true) => from_stdin("env-stdin")?,
+        _ => StdinJson::default(),
+    };
     Ok(Config {
         run_dir: p.str("run").into(),
         id: p.str("id"),
@@ -293,9 +325,9 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
             None => p.duration("idle-timeout").map_err(|e| e.to_string())?,
         },
         argv: p.args.clone(),
-        env: if p.bool("env-stdin") { env_from_stdin()? } else { Vec::new() },
+        env: stdin.env,
         look: match p.str("look").as_str() {
-            "" => wire::Look::default(),
+            "" => stdin.look,
             j => serde_json::from_str(j).map_err(|e| format!("holder: --look: {e}"))?,
         },
         home: osewa_paths::home_override().map_err(|e| format!("holder: {e}"))?,
@@ -345,9 +377,9 @@ pub async fn serve(
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600)).map_err(|e| e.to_string())?;
 
     let tune = cfg.tune.clone();
-    let (master, slave) = pty::open(cfg.cols as u16, cfg.rows as u16, cfg.width as u16, cfg.height as u16).map_err(|e| e.to_string())?;
+    let (master, slave, tty) = pty::open(cfg.cols as u16, cfg.rows as u16, cfg.width as u16, cfg.height as u16).map_err(|e| e.to_string())?;
     let acct = osewa_paths::account(cfg.home.as_deref());
-    let mut cmd = pty::command(&cfg.argv, &cfg.cwd, &cfg.env, &acct, &slave).map_err(|e| e.to_string())?;
+    let mut cmd = pty::command(&cfg.argv, &cfg.cwd, &cfg.env, &acct, &slave, &tty).map_err(|e| e.to_string())?;
     let mode_poll = if cfg.idle.is_zero() { tune.mode_poll } else { tune.mode_poll.min((cfg.idle / 4).max(Duration::from_millis(10))) };
     let s = Session::new(cfg, master.as_raw_fd(), real_clock())?;
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;

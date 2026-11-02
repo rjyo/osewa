@@ -191,6 +191,25 @@ fn appearance_answers_a_program_at_start() {
     unsafe { osewa_close(h) };
 }
 
+/// A session is a remote login to its programs: SSH_CONNECTION and
+/// SSH_CLIENT name this connection, as sshd's would, so a program copies to
+/// this device's clipboard (OSC 52) rather than the host's.
+#[test]
+fn session_env_says_remote_login() {
+    let host = Host::new();
+    let r = Rec::new(120, 24);
+    let mut o = host.open_opts();
+    o.cols = 120;
+    let argv = serde_json::to_string(&["/bin/sh", "-c", "echo \"C=$SSH_CONNECTION|L=$SSH_CLIENT|T=${SSH_TTY%%[0-9]*}\"; sleep 30"]).unwrap();
+    o.argv = Some(&argv);
+    let h = open(&o, &r);
+    let port = host.addr.rsplit(':').next().unwrap().to_string();
+    let want = format!(" 127.0.0.1 {port}|L=127.0.0.1 ");
+    r.wait_screen(&want);
+    r.wait_screen(&format!(" {port}|T=/dev/"));
+    unsafe { osewa_close(h) };
+}
+
 /// A device the server doesn't know is told so once, not retried forever.
 #[test]
 fn unenrolled_device_is_unauthorized() {

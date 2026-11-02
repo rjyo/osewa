@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use osewa_wire as wire;
 
 use super::helpers::*;
-use crate::client::{new_session_id, Client};
+use crate::client::{login_env, new_session_id, Client};
 use crate::conn::{NullConn, CLOSE_GOING_AWAY};
-use crate::{await_ready, holder_args, Config, Server};
+use crate::{await_ready, holder_args, holder_stdin, Config, Server};
 
 #[test]
 fn welcome() {
@@ -397,12 +397,15 @@ fn holder_args_line() {
     };
     assert_eq!(holder_args(&cfg("", &["sh", "-c", "x"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --env-stdin -- sh -c x");
     assert_eq!(holder_args(&cfg("/c", &["sh"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --cwd /c --env-stdin -- sh");
-    // The creator's look goes as JSON.
+    // A look goes on stdin with the env, never on the line.
     let mut c = cfg("", &["sh"]);
+    c.env = vec!["A=1".into()];
+    assert_eq!(String::from_utf8(holder_stdin(&c).unwrap()).unwrap(), r#"["A=1"]"#);
     c.look = osewa_wire::Look { color_scheme: "dark".into(), background: "#102030".into(), ..Default::default() };
+    assert_eq!(holder_args(&c).join(" "), "holder --run /r --id i --cols 1 --rows 2 --stdin-json -- sh");
     assert_eq!(
-        holder_args(&c).join(" "),
-        r##"holder --run /r --id i --cols 1 --rows 2 --look {"color_scheme":"dark","background":"#102030"} --env-stdin -- sh"##
+        String::from_utf8(holder_stdin(&c).unwrap()).unwrap(),
+        r##"{"env":["A=1"],"look":{"background":"#102030","color_scheme":"dark"}}"##
     );
 }
 
@@ -748,4 +751,21 @@ fn unsandboxed_refuses() {
     assert!(osewa_execproc::Proc::start(opts).is_err(), "exec without a home");
     let cfg = osewa_holder::Config { argv: vec!["/bin/true".into()], ..Default::default() };
     assert!(osewa_holder::run(cfg, || {}, false).err().is_some_and(|e| e.contains(osewa_paths::REQUIRE_SANDBOX)), "holder without a home");
+}
+
+/// A session's SSH_CONNECTION and SSH_CLIENT are sshd's, from the
+/// connection that created it: a v4 client on a v6 socket reads as v4.
+#[test]
+fn login_env_lines() {
+    let a = |s: &str| s.parse::<std::net::SocketAddr>().unwrap();
+    assert_eq!(
+        login_env(Some((a("192.0.2.7:51234"), a("192.0.2.1:7322")))),
+        ["SSH_CONNECTION=192.0.2.7 51234 192.0.2.1 7322", "SSH_CLIENT=192.0.2.7 51234 7322"]
+    );
+    assert_eq!(
+        login_env(Some((a("[::ffff:100.64.0.9]:40000"), a("[::ffff:100.64.0.1]:7322")))),
+        ["SSH_CONNECTION=100.64.0.9 40000 100.64.0.1 7322", "SSH_CLIENT=100.64.0.9 40000 7322"]
+    );
+    assert_eq!(login_env(Some((a("[fd00::9]:40000"), a("[fd00::1]:7322"))))[0], "SSH_CONNECTION=fd00::9 40000 fd00::1 7322");
+    assert!(login_env(None).is_empty());
 }

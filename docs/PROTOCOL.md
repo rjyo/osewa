@@ -24,10 +24,12 @@ frames; it never parses snapshot or output payloads.
 Holders listen at `<run>/<session id>.sock`, where `<run>` is
 `$XDG_RUNTIME_DIR/osewa` if set, else `~/.local/state/osewa/run`, mode 0700.
 The server spawns a holder with `osewa holder --run <run> --id <id> --cols
-<c> --rows <r> [--cwd <dir>] [--look <json>] --env-stdin -- <argv...>`,
-detached with setsid,
+<c> --rows <r> [--cwd <dir>] --env-stdin -- <argv...>` (`--stdin-json`
+for a session created with a look), detached with setsid,
 and writes `session.create` `env` to its stdin as a JSON array of
-`KEY=value` (not on its command line, which every user can read, nor in one
+`KEY=value`, or with `--stdin-json` an object `{"env", "look"}` with the
+create's look fields (a holder of another build, `$OSEWA_HOLDER`, always
+gets the array, without the look: it may predate `--stdin-json`) (not on its command line, which every user can read, nor in one
 environment string, which Linux caps at 128 KiB; a create request's 1 MiB
 bounds it), while it drains the holder's stdout and stderr; delivery and
 readiness share one deadline. The holder prints one line `ready` on stdout
@@ -50,6 +52,12 @@ bare PATH, a terminal multiplexer's or an agent's variables):
   `/opt/homebrew/bin:/opt/homebrew/sbin` first when present; the login
   shell's profile extends it.
 - `TERM=xterm-256color`, in PTY sessions only: exec.start gets none.
+- A remote login's, as sshd sets them, in PTY sessions only:
+  `SSH_CONNECTION` (`client_ip client_port server_ip server_port`) and
+  `SSH_CLIENT` (`client_ip client_port server_port`) from the connection
+  that created the session, and `SSH_TTY`, its PTY. Programs take them to
+  mean the user is on another machine: a copy goes to the user's clipboard
+  (OSC 52) rather than the host's.
 - From the server's environment when set and non-empty (an empty one
   counts as unset): `LANG`, `LANGUAGE`, `LC_*`, `TZ`; on macOS
   `__CF_USER_TEXT_ENCODING`; on Linux `XDG_RUNTIME_DIR`.
@@ -214,8 +222,8 @@ Error codes: `bad_request`, `not_found`, `not_owner`, `ended`, `unavailable`,
 `internal`.
 
 The look fields of `session.create` are `session.color_scheme`'s and
-`session.colors`'s, applied before the child starts (the holder's
-`--look`, their JSON): a program that asks for colors as it starts gets
+`session.colors`'s, applied before the child starts (on the holder's
+stdin, `--stdin-json`): a program that asks for colors as it starts gets
 the creating client's instead of libghostty's defaults, which an attach's
 `session.colors` would arrive after. A bad one is `bad_request`; servers
 before them ignore them.
