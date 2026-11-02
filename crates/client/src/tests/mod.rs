@@ -25,6 +25,8 @@ mod link;
 mod manual;
 mod nomirror;
 mod recover;
+#[cfg(feature = "process")]
+mod release;
 mod robust;
 mod trace;
 mod visible;

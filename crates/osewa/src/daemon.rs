@@ -61,6 +61,7 @@ pub(crate) fn server_main(args: &[String], mut stdout: Out, mut stderr: Out) -> 
             return 1;
         }
     };
+    crate::autoupdate::spawn_server_updater(&mut stderr);
     osewa_server::main(&rest)
 }
 

@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
-# Host binaries for moshi-hook to download: osewa for linux and darwin,
-# amd64 and arm64, under one build id.
+# Releases osewa: linux and darwin, amd64 and arm64, as a GitHub release
+# tagged vX.Y.Z.
 #
-#   scripts/release.sh build     dist/<buildId>/, uploading nothing
-#   scripts/release.sh publish   build unless dist/ has this commit's, then
-#                                upload to R2 osewa/<buildId>/
+#   scripts/release.sh notes [vX.Y.Z]    docs/releases/vX.Y.Z.md from the commits
+#                                        since the last tag, to edit and commit
+#   scripts/release.sh build [vX.Y.Z]    dist/vX.Y.Z/, publishing nothing
+#   scripts/release.sh publish [vX.Y.Z]  build unless dist/ has this commit's,
+#                                        then tag HEAD and create the release
 #
-# The build id is p<protocol version>-s<snapshot version>, read from each
-# binary's `osewa version --json`: binaries with the same id interoperate,
-# so a client picks one by id alone. dist/<buildId>/
-# holds osewa-<os>-<arch>.gz (a gzip of the bare executable), SHA256SUMS
-# over the .gz files, and build.json (the `version --json` object).
+# The version defaults to the patch after the latest vX.Y.Z tag (v0.1.0
+# with none), and is built in as OSEWA_VERSION: `osewa version` prints it,
+# and install.sh and auto-update compare it. dist/vX.Y.Z/ holds
+# osewa-<os>-<arch>.gz (a gzip of the bare executable), SHA256SUMS over the
+# .gz files, and build.json (the `version --json` object); those are the
+# release's assets.
 #
-# Each binary must be the right arch per `file` (Linux: static) and carry
-# the build id marker (osewa_client::BUILD_ID_MARKER). Those that can run
-# here also print `version --json`, which must be identical: natively,
-# darwin-amd64 under Rosetta, linux in Docker (plus a holder start). The
-# rest get only the static checks, and the build says which got which.
+# The build id (p<protocol version>-s<snapshot version>) says which builds
+# interoperate. Each binary must be the right arch per `file` (Linux:
+# static) and carry the build id marker (osewa_client::BUILD_ID_MARKER).
+# Those that can run here also print `version --json`, which must be
+# identical and name this version: natively, darwin-amd64 under Rosetta,
+# linux in Docker (plus a holder start). The rest get only the static
+# checks, and the build says which got which.
 #
 # Linux binaries are static musl (cargo-zigbuild), so they run on any
 # distribution. Darwin binaries target macOS 13 and are signed with the
@@ -25,14 +30,17 @@
 #
 #   SKIP_MACOS_SIGN=1        unsigned darwin binaries (local dry runs)
 #   SKIP_MACOS_NOTARIZE=1    signed, not notarized (local dry runs)
-#   OSEWA_VERSION            the release name `version --json` reports as "osewa"
 #
-# publish uploads with AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-# R2_S3_ENDPOINT and R2_PUBLIC_URL from the environment. It refuses
-# unsigned or unnotarized darwin binaries. Every object is uploaded
-# create-only, and one already there must hold the same bytes: a published
-# path never changes.
+# publish needs gh, logged in with push access, HEAD on origin/main, and
+# docs/releases/vX.Y.Z.md committed: those are the release notes. It
+# refuses unsigned or unnotarized darwin binaries, and a version already
+# released: a published version never changes.
 set -euo pipefail
+# macOS's /bin/bash is 3.2, which has no inherit_errexit.
+((BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4))) || {
+	echo "release: needs bash 4.4 or later (brew install bash), not $BASH_VERSION" >&2
+	exit 1
+}
 # build runs in $(...), which must stop at the first failure too.
 shopt -s inherit_errexit
 
@@ -41,15 +49,14 @@ cd "$root"
 
 mode=${1:-}
 case $mode in
-build | publish) ;;
+notes | build | publish) ;;
 *)
-	echo "usage: scripts/release.sh build|publish" >&2
+	echo "usage: scripts/release.sh notes|build|publish [vX.Y.Z]" >&2
 	exit 2
 	;;
 esac
 
-bucket=moshi-ota
-prefix=osewa
+repo=rjyo/osewa
 targets="linux-amd64 linux-arm64 darwin-amd64 darwin-arm64"
 dist=$root/dist
 work=$root/target/release-dist
@@ -77,7 +84,7 @@ die() {
 }
 
 # Build inputs only: other trees (site/) may be mid-edit in another session.
-inputs=(crates Cargo.toml Cargo.lock .cargo scripts/libghostty.sh scripts/release.sh)
+inputs=(crates Cargo.toml Cargo.lock .cargo scripts/libghostty.sh scripts/release.sh scripts/sign-darwin.sh)
 source_state() {
 	local dirty=""
 	[[ -n $(git status --porcelain -- "${inputs[@]}") ]] && dirty="-dirty"
@@ -164,14 +171,54 @@ compile() {
 	[[ $t == linux-* ]] && cargo=(cargo zigbuild)
 	# Stripped, but not the proc macros cargo builds for the host: rustc
 	# can't load those stripped.
-	OSEWA_LIBGHOSTTY=$lib MACOSX_DEPLOYMENT_TARGET=13.0 \
+	OSEWA_VERSION=${version#v} OSEWA_LIBGHOSTTY=$lib MACOSX_DEPLOYMENT_TARGET=13.0 \
 		CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none \
 		"${cargo[@]}" --release --locked -p osewa --target "$rust" --target-dir "$work/cargo" >&2
 	mkdir -p "$work/stage/$t"
 	cp "$work/cargo/$rust/release/osewa" "$work/stage/$t/osewa"
 }
 
-# Builds every target into dist/<buildId>/ and prints the build id.
+latest_tag() {
+	git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true
+}
+
+# The version named on the command line, else a release tag already on
+# HEAD (a publish to finish), else the patch after the latest tag, else
+# v0.1.0.
+resolve_version() {
+	local v=${1:-} latest
+	[[ -z $v ]] && v=$(git tag --points-at HEAD --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+	if [[ -z $v ]]; then
+		latest=$(latest_tag)
+		if [[ $latest =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+			v="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+		else
+			v=v0.1.0
+		fi
+	fi
+	[[ $v == v* ]] || v=v$v
+	[[ $v =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version $v is not vX.Y.Z"
+	echo "$v"
+}
+
+notes() {
+	local out=docs/releases/$version.md prev subjects
+	[[ -f $out ]] && die "$out exists; edit it, or delete it to start over"
+	prev=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$version" | head -1 || true)
+	mkdir -p docs/releases
+	if [[ -z $prev ]]; then
+		printf -- '- First release.\n' >"$out"
+	else
+		# Subjects are a starting point: rewrite them for people who use
+		# osewa, and drop what they won't notice.
+		subjects=$(git log --format=%s --reverse "$prev..HEAD")
+		[[ -n $subjects ]] || die "no commits since $prev"
+		sed 's/^/- /' <<<"$subjects" >"$out"
+	fi
+	echo "release: wrote $out${prev:+ from $prev..HEAD}; edit it and commit it before publish" >&2
+}
+
+# Builds every target into dist/<version>/.
 build() {
 	[[ $(zig version) == "$want_zig" ]] || die "zig $(zig version), want $want_zig"
 	command -v cargo-zigbuild >/dev/null || die "cargo-zigbuild missing (brew install cargo-zigbuild)"
@@ -192,8 +239,8 @@ build() {
 
 	# Every target: the right arch (and static linking) per `file`, and the
 	# marker's build id. Those that run here must also print the same
-	# `version --json` (and linux holders start). With neither Rosetta nor
-	# Docker, a target gets only the static checks.
+	# `version --json`, naming this version (and linux holders start). With
+	# neither Rosetta nor Docker, a target gets only the static checks.
 	local ran=() static=()
 	for t in $targets; do
 		bin=$work/stage/$t/osewa
@@ -204,6 +251,7 @@ build() {
 		[[ $t == linux-* ]] && smoke_holder "$t" "$bin"
 		if [[ -z $first ]]; then
 			first=$json id=$(build_id "$json")
+			[[ $json == *"\"osewa\":\"${version#v}\""* ]] || die "$t reports $json, not osewa ${version#v}"
 		elif [[ $json != "$first" ]]; then
 			die "$t reports $json, not $first"
 		fi
@@ -216,7 +264,7 @@ build() {
 	done
 	echo "release: ran version --json: ${ran[*]}; checked by file + marker only: ${static[*]:-none}" >&2
 
-	local out=$dist/$id
+	local out=$dist/$version
 	rm -rf "$out"
 	mkdir -p "$out"
 	for t in $targets; do
@@ -231,132 +279,104 @@ build() {
 	[[ ${SKIP_MACOS_SIGN:-} != 1 ]] && signed=1
 	[[ $signed == 1 && ${SKIP_MACOS_NOTARIZE:-} != 1 ]] && notarized=1
 	# Not uploaded (dotfile): what publish needs to reuse this build.
-	printf 'source=%s\nsigned=%s\nnotarized=%s\n' "$state" "$signed" "$notarized" >"$out/.release"
-	echo "$id"
+	printf 'version=%s\nsource=%s\nsigned=%s\nnotarized=%s\nbuild=%s\n' "$version" "$state" "$signed" "$notarized" "$id" >"$out/.release"
 }
 
-# The dist/<buildId> built from this exact commit, signed and notarized.
+# Whether dist/<version> was built as this version from this exact commit,
+# signed and notarized, and is intact: every asset, and build.json naming
+# this version.
 reusable() {
-	local state f
+	local d=$dist/$version f=$dist/$version/.release state t
 	state=$(source_state)
-	[[ $state == *-dirty ]] && return 1
-	for f in "$dist"/*/.release; do
-		[[ -f $f ]] || continue
-		grep -qx "source=$state" "$f" && grep -qx signed=1 "$f" && grep -qx notarized=1 "$f" || continue
-		(cd "$(dirname "$f")" && shasum -a 256 -c --quiet SHA256SUMS) || continue
-		basename "$(dirname "$f")"
-		return 0
+	[[ $state != *-dirty && -f $f ]] || return 1
+	grep -qx "version=$version" "$f" && grep -qx "source=$state" "$f" &&
+		grep -qx signed=1 "$f" && grep -qx notarized=1 "$f" || return 1
+	for t in $targets; do
+		grep -q " osewa-$t.gz\$" "$d/SHA256SUMS" || return 1
 	done
-	return 1
+	[[ $(cat "$d/build.json" 2>/dev/null) == *"\"osewa\":\"${version#v}\""* ]] || return 1
+	(cd "$d" && shasum -a 256 -c --quiet SHA256SUMS)
 }
 
-require_r2_env() {
-	local k
-	for k in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_S3_ENDPOINT R2_PUBLIC_URL; do
-		[[ -n ${!k:-} ]] || die "$k is not set"
+# What will be uploaded, checked whatever .release says: the darwin
+# binaries signed with the hardened runtime and notarized, by Gatekeeper's
+# own assessment.
+verify_darwin() {
+	local t bin chk=$work/verify
+	rm -rf "$chk"
+	mkdir -p "$chk"
+	for t in darwin-amd64 darwin-arm64; do
+		bin=$chk/osewa-$t
+		gzip -dc "$dist/$version/osewa-$t.gz" >"$bin"
+		codesign --verify --strict "$bin" 2>/dev/null || die "$t: not validly signed"
+		[[ $(codesign -dv "$bin" 2>&1) == *flags=*'(runtime)'* ]] || die "$t: no hardened runtime"
+		[[ $(spctl -a -vvv -t install "$bin" 2>&1) == *"source=Notarized Developer ID"* ]] || die "$t: Gatekeeper doesn't see it notarized"
 	done
-}
-
-s3() {
-	aws --endpoint-url "$R2_S3_ENDPOINT" --region auto "$@"
-}
-
-# Create-only uploads (If-None-Match: *) arrived in aws-cli 2.23.
-require_conditional_put() {
-	local v
-	v=$(aws --version 2>&1)
-	[[ $v =~ aws-cli/([0-9]+)\.([0-9]+) ]] || die "can't read the aws CLI version: $v"
-	((BASH_REMATCH[1] > 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] >= 23))) ||
-		die "aws CLI ${v%% *} can't upload create-only (put-object --if-none-match); need aws-cli >= 2.23"
-}
-
-# Whether $key/$1 already holds what dist has: 0 equal, 1 absent, and any
-# other content is fatal, for a published path never changes.
-same_remote() {
-	local name=$1 got=$fetch/$1 err
-	if err=$(s3 s3api get-object --bucket "$bucket" --key "$key/$name" "$got" 2>&1 >/dev/null); then
-		cmp -s "$got" "$out/$name" || die "$key/$name is already published with other bytes; published paths never change"
-		return 0
-	fi
-	grep -qE 'NoSuchKey|404|Not Found' <<<"$err" || die "can't read s3://$bucket/$key/$name: $err"
-	return 1
-}
-
-# Uploads $1 only if nothing is at its key; if something got there first, it
-# must be these bytes. So two publishers of one build id, or a resumed
-# publish that rebuilt, can't replace an object anyone may have cached.
-put_once() {
-	local name=$1 type=$2 err
-	if err=$(s3 s3api put-object --bucket "$bucket" --key "$key/$name" --body "$out/$name" \
-		--content-type "$type" --cache-control "public, max-age=31536000, immutable" \
-		--if-none-match '*' 2>&1 >/dev/null); then
-		echo "release: uploaded $key/$name" >&2
-		return
-	fi
-	grep -qE 'PreconditionFailed|412' <<<"$err" || die "uploading $key/$name: $err"
-	same_remote "$name" || die "$key/$name: precondition failed but nothing is there: $err"
-	echo "release: $key/$name was already there, the same" >&2
+	rm -rf "$chk"
 }
 
 publish() {
+	local notes_file=docs/releases/$version.md
 	[[ ${SKIP_MACOS_SIGN:-} == 1 || ${SKIP_MACOS_NOTARIZE:-} == 1 ]] &&
 		die "refusing to publish with SKIP_MACOS_SIGN or SKIP_MACOS_NOTARIZE: darwin binaries must be signed and notarized"
 	[[ $(uname -s) == Darwin ]] || die "publish must run on macOS to sign and notarize the darwin binaries"
+	command -v gh >/dev/null || die "gh missing (brew install gh)"
+	gh auth status >/dev/null 2>&1 || die "gh is not logged in (gh auth login)"
 	[[ $(source_state) == *-dirty ]] &&
 		die "uncommitted changes in build inputs: $(git status --porcelain -- "${inputs[@]}" | tr '\n' ' ')"
-	command -v aws >/dev/null || die "aws CLI missing"
-	require_conditional_put
-	require_r2_env
+	git ls-files --error-unmatch "$notes_file" >/dev/null 2>&1 && [[ -z $(git status --porcelain -- "$notes_file") ]] ||
+		die "$notes_file isn't committed (scripts/release.sh notes $version writes one)"
+	# The release must be a commit everyone can get.
+	git fetch -q origin main
+	git merge-base --is-ancestor HEAD origin/main || die "HEAD isn't on origin/main; push it first"
+	local draft
+	if draft=$(gh release view "$version" -R "$repo" --json isDraft -q .isDraft 2>/dev/null); then
+		[[ $draft == true ]] || die "$version is already released; a published version never changes"
+		# What an interrupted create leaves: nobody can see a draft, so it
+		# goes, and the release is made again from dist.
+		echo "release: deleting the unfinished draft of $version" >&2
+		gh release delete "$version" -R "$repo" --yes
+	fi
+	if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+		[[ $(git rev-parse "$version^{commit}") == $(git rev-parse HEAD) ]] || die "tag $version exists on another commit"
+	fi
 
-	local id
-	if id=$(reusable); then
-		echo "release: reusing dist/$id" >&2
+	if reusable; then
+		echo "release: reusing dist/$version" >&2
 	else
-		id=$(build)
+		build
 	fi
-	out=$dist/$id key=$prefix/$id
-	grep -qx notarized=1 "$out/.release" || die "dist/$id is not notarized"
-	fetch=$work/fetch
-	rm -rf "$fetch"
-	mkdir -p "$fetch"
+	local out=$dist/$version
+	grep -qx notarized=1 "$out/.release" || die "dist/$version is not notarized"
+	verify_darwin
 
-	# SHA256SUMS goes last: its presence marks the build id published.
-	local names=() types=() t i present=0
-	for t in $targets; do
-		names+=("osewa-$t.gz") types+=(application/gzip)
-	done
-	names+=(build.json SHA256SUMS) types+=(application/json "text/plain; charset=utf-8")
-
-	# Everything already there must match before anything is added: a
-	# resumed publish of other bytes stops here, not halfway.
-	for i in "${!names[@]}"; do
-		same_remote "${names[i]}" && present=$((present + 1))
-	done
-	if ((present == ${#names[@]})); then
-		echo "release: $key already published with these binaries" >&2
-		summary "$id"
-		return
+	if ! git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+		git tag -a "$version" -m "osewa $version"
 	fi
-	for i in "${!names[@]}"; do
-		put_once "${names[i]}" "${types[i]}"
-	done
+	git push -q origin "refs/tags/$version"
 
-	local url=${R2_PUBLIC_URL%/}/$key
-	[[ $(curl -fsS "$url/SHA256SUMS") == "$(cat "$out/SHA256SUMS")" ]] ||
-		die "$url/SHA256SUMS doesn't match what was uploaded"
-	echo "release: published $url/" >&2
-	summary "$id"
+	local assets=() t
+	for t in $targets; do assets+=("$out/osewa-$t.gz"); done
+	assets+=("$out/build.json" "$out/SHA256SUMS")
+	gh release create "$version" "${assets[@]}" -R "$repo" --verify-tag --title "osewa $version" --notes-file "$notes_file"
+
+	[[ $(gh release download "$version" -R "$repo" -p SHA256SUMS -O -) == "$(cat "$out/SHA256SUMS")" ]] ||
+		die "the release's SHA256SUMS doesn't match dist/$version"
+	echo "release: published https://github.com/$repo/releases/tag/$version" >&2
+	summary
 }
 
 summary() {
-	echo "buildId: $1"
-	cat "$dist/$1/SHA256SUMS"
+	echo "osewa $version ($(sed -n 's/^build=//p' "$dist/$version/.release"))"
+	cat "$dist/$version/SHA256SUMS"
 }
 
+version=$(resolve_version "${2:-}")
 case $mode in
+notes) notes ;;
 build)
-	id=$(build)
-	summary "$id"
+	build
+	summary
 	;;
 publish) publish ;;
 esac

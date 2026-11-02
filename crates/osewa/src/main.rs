@@ -4,6 +4,7 @@
 use std::process::ExitCode;
 
 mod attach;
+mod autoupdate;
 mod channels;
 mod cli;
 mod commands;

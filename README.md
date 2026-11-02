@@ -171,6 +171,12 @@ links bulk speed swings run to run for both.*
 
 ## Quick start
 
+Install osewa (Linux and macOS, amd64 and arm64) into `~/.local/bin`:
+
+    curl -fsSL https://osewa.dev/install.sh | sh
+
+Then:
+
     osewa login --service me@devbox   # install on the host, enroll this device, run as a user service
     osewa attach devbox               # attach to (or create) a session
     osewa forward devbox 3000         # forward localhost:3000
@@ -183,17 +189,18 @@ Build from source (needs Rust and Zig for libghostty-vt):
     make check        # clippy + tests
     make build        # bin/osewa
     make ios-framework  # target/Osewa.xcframework: the C API (crates/ffi/include/osewa.h) for iOS apps
-    make release      # dist/<buildId>/: linux (static musl) and darwin binaries, amd64 and arm64
+    make release      # dist/vX.Y.Z/: linux (static musl) and darwin binaries, amd64 and arm64
 
-Releasing host binaries: `scripts/release.sh publish` signs and notarizes
-the darwin builds, then uploads `dist/<buildId>/` to
-`https://cdn.getmoshi.app/osewa/<buildId>/`, where moshi-hook finds them.
-The build id (`p<protocol>-g<ghostty>-s<snapshot>`, from `osewa version
---json`) names binaries that interoperate; a published one never changes.
-Binaries it can run here (Docker for linux, Rosetta for darwin-amd64)
-must print the same `version --json`; the others are checked by arch and
-the build id baked into them. Signing (`scripts/sign-darwin.sh`) and
-upload credentials come from the environment (see the script headers).
+Releasing: `scripts/release.sh notes` drafts `docs/releases/vX.Y.Z.md`
+(the patch after the latest tag) to edit and commit; `scripts/release.sh
+publish` then builds with that version built in, signs and notarizes the
+darwin binaries, tags HEAD and creates the GitHub release, which
+install.sh downloads. A published version never changes. Binaries it can
+run here (Docker for linux, Rosetta for darwin-amd64) must print the same
+`version --json`; the others are checked by arch and the build id
+(`p<protocol>-s<snapshot>`) baked into them. Signing
+(`scripts/sign-darwin.sh`) reads its identity and notary profile from the
+environment (see the script headers).
 
 ## Roadmap
 
@@ -262,7 +269,8 @@ to command it.
 - **Device keys:** Ed25519 per device, TLS 1.3, pinned server key. No
   passwords, no trust on first use.
 - **Self-hosting:** `osewa login` installs over ssh once; `osewa update`
-  upgrades over osewa.
+  upgrades over osewa, and released builds keep themselves up to date
+  (`osewa set auto-update auto|ask|off`).
 - **Open protocol and a client library,** built on Ghostty's
   terminal engine. Linux and macOS hosts.
 

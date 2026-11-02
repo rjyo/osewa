@@ -47,6 +47,8 @@ pub mod hosts;
 pub mod install;
 #[cfg(feature = "process")]
 pub mod login;
+#[cfg(feature = "process")]
+pub mod release;
 
 #[cfg(test)]
 mod tests;

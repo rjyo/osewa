@@ -487,6 +487,7 @@ dependencies = [
  "rand 0.8.8",
  "ring",
  "rustls",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-rustls",
@@ -553,6 +554,7 @@ dependencies = [
 name = "osewa-client"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "hex",
  "libc",
  "osewa-auth",

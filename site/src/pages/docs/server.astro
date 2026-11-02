@@ -61,12 +61,21 @@ devbox's server restarted with it`;
 <h2>Firewalls</h2>
 <p>Open the port for TCP and UDP. With only TCP open, everything works over the TLS WebSocket, but each connection takes about 300 ms longer while QUIC is tried first, and you lose QUIC's separate streams. If the UDP port can't be bound, the server logs <code>osewa server: no QUIC: listen udp ...</code> and serves TCP alone.</p>
 
-<h2>Updating</h2>
+<h2 id="updating">Updating</h2>
 <p>Update a host from your machine, over osewa, without ssh:</p>
 <pre><code>{update}</code></pre>
 <p>It copies your build of osewa to the host's <code>~/.local/bin/osewa</code>, checks its hash, and restarts the server with it. Sessions keep running across the restart, and your attached windows reconnect. If the new build has a different protocol or snapshot version, older sessions keep running but can't be attached any more; see <a href="/docs/sessions">Sessions</a>. The host gets the build for its own platform, found the same way as at <a href="/docs/install">login</a>.</p>
 <div class="note"><p>A server started with <code>--daemon</code> comes back from an update with default flags: a custom <code>--listen</code> is lost. Run it as a service to keep its flags.</p></div>
 <p>Your machine and the host must run compatible builds: the same protocol version and the same snapshot version (they may link different libghostty-vt commits). When they don't, commands fail with <code>update osewa on the host or here</code>.</p>
+
+<h3 id="auto-update">Auto-update</h3>
+<p>A released osewa keeps itself up to date from the <a href="https://github.com/rjyo/osewa/releases">GitHub releases</a>, unless you turn it off:</p>
+<ul>
+  <li><strong>On your machine</strong>, after a command run in a terminal, osewa checks at most once a day, in the background. A newer release that works with this one is installed over it; you get it from the next command.</li>
+  <li><strong>A server</strong> run as a service or with <code>--daemon</code> checks every hour. It installs a newer release that works with this one, waits until no port forward or command is running (a restart would end them; sessions survive it), and restarts into it. Attached windows reconnect.</li>
+  <li><strong>A release that can't talk to this one</strong> (another protocol or snapshot version) is never installed by itself: it would leave every running session unattachable and lock out devices still on this build. osewa says it's out, after commands and in the server log. Update everything together when you're ready: <code>osewa update</code> here, then <code>osewa update &lt;host&gt;</code>.</li>
+</ul>
+<p><code>osewa set auto-update ask</code> only tells you about releases; <code>osewa set auto-update off</code> stops checking. A host's setting is its own: run it there. <code>OSEWA_AUTO_UPDATE=off</code> in the environment overrides the setting. Builds from source never update themselves.</p>
 
 <h2>Logs</h2>
 <div class="tbl"><table>

@@ -13,9 +13,9 @@ build: libghostty
 ios-framework:
 	./scripts/build-ios-framework.sh
 
-# dist/<buildId>/: osewa for linux and darwin, amd64 and arm64, gzipped with
-# SHA256SUMS and build.json; see scripts/release.sh. release-publish
-# uploads them to the CDN for moshi-hook.
+# dist/vX.Y.Z/: osewa for linux and darwin, amd64 and arm64, gzipped with
+# SHA256SUMS and build.json; see scripts/release.sh. release-publish tags
+# HEAD and publishes them as a GitHub release.
 release:
 	./scripts/release.sh build
 

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use crate::cli::{self, Ctx, Env};
 
 mod attach;
+mod autoupdate;
 mod channels;
 mod daemon;
 mod incompat;

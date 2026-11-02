@@ -282,7 +282,15 @@ pub fn local_platform() -> (&'static str, &'static str) {
 /// program or in $OSEWA_DIST, else this program itself when it is osewa
 /// for the host's platform (a dev build of the CLI).
 pub fn local_binaries(os_name: &str, arch_name: &str) -> Result<Vec<u8>, Error> {
-    local_binaries_with(os_name, arch_name, is_osewa)
+    let e = match local_binaries_with(os_name, arch_name, is_osewa) {
+        Ok(b) => return Ok(b),
+        Err(e) => e,
+    };
+    // A released build can fetch its own release's build for another
+    // platform: install.sh puts only this machine's on it.
+    let Some(v) = crate::release::current() else { return Err(e) };
+    crate::release::binary(&crate::release::fetch(), v, os_name, arch_name)
+        .map_err(|r| Error::Other(format!("{e}; and downloading osewa {v} for {os_name}/{arch_name} failed: {r}")))
 }
 
 fn local_binaries_with(os_name: &str, arch_name: &str, is_osewa: fn(&Path) -> bool) -> Result<Vec<u8>, Error> {

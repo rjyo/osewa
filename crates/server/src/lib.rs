@@ -38,6 +38,7 @@ mod trace;
 
 pub use conn::{Conn, LocalBoxFuture};
 pub use cli::{check_args, main};
+pub use channel::open_channels;
 
 use client::Client;
 

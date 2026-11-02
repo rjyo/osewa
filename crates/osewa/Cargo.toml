@@ -23,6 +23,7 @@ libc.workspace = true
 base64.workspace = true
 hex.workspace = true
 rand.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt", "net", "time", "signal", "macros", "io-util", "sync"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

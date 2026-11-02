@@ -1,5 +1,6 @@
-//! `osewa update`: this build onto a host over osewa
-//! itself, then the host's server restarted with it.
+//! `osewa update <host>`: this build onto a host over osewa
+//! itself, then the host's server restarted with it. Without a host,
+//! update installs the latest release here (autoupdate.rs).
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -47,8 +48,11 @@ impl Env {
     /// osewa has open). The restart goes from a process of its own session,
     /// which outlives the server it stops (service restart --detach).
     pub(crate) async fn update(&self, ctx: &Ctx, args: &[String]) -> Result<()> {
-        if args.len() != 1 {
-            return Err(Error::Usage);
+        match args {
+            [] => return crate::autoupdate::update_self(self, false),
+            [a] if a == "--background" => return crate::autoupdate::update_self(self, true),
+            [_] => {}
+            _ => return Err(Error::Usage),
         }
         let h = hosts::find(&self.dir, &args[0])?;
         let c = self.dial(ctx, &h).await?;

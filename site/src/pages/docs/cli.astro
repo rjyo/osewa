@@ -3,7 +3,7 @@ import Docs from "../../layouts/Docs.astro";
 const versionOut = `osewa 0.1.0 (protocol 0, ghostty 83fb9562…, snapshot v1)`;
 const versionJson = `{"ghostty":"83fb9562…","osewa":"0.1.0","snapshot_version":1,"version":0}`;
 ---
-<Docs slug="cli" description="Every osewa command and flag: login, attach, ls, new, kill, exec, forward, update, version, server, service and enroll.">
+<Docs slug="cli" description="Every osewa command and flag: login, attach, ls, new, kill, exec, forward, update, set, version, server, service and enroll.">
 <p class="lede">One binary, two sets of commands: client commands on your machine, host commands on the server. Flags may go anywhere among the arguments, and <code>-flag</code> works as well as <code>--flag</code>.</p>
 
 <h2>Client commands</h2>
@@ -45,8 +45,11 @@ const versionJson = `{"ghostty":"83fb9562…","osewa":"0.1.0","snapshot_version"
 <h3 id="forward">osewa forward &lt;host&gt; [bind:]port[:host:hostport]...</h3>
 <p>Forward local ports through the host, as <code>ssh -L</code>, until Ctrl-C.</p>
 
-<h3 id="update">osewa update &lt;host&gt;</h3>
-<p>Copy this build to the host over osewa and restart its server with it. See <a href="/docs/server">Running the server</a>.</p>
+<h3 id="update">osewa update [host]</h3>
+<p>Without a host: install the latest <a href="https://github.com/rjyo/osewa/releases">release</a> over this osewa, checked against the release's <code>SHA256SUMS</code>, and restart the server here with it if one runs. With a host: copy this build to the host over osewa and restart its server with it. See <a href="/docs/server#updating">Updating</a>.</p>
+
+<h3 id="set">osewa set [auto-update [auto|ask|off]]</h3>
+<p>Show or change how osewa updates itself. <code>auto</code>, the default, installs a newer release that works with this one by itself: on your machine after a command, and on a server, which restarts into it once no forward or command is running. <code>ask</code> only says when a release is out. <code>off</code> doesn't check. A release that can't talk to this one is never installed by itself. See <a href="/docs/server#auto-update">Auto-update</a>.</p>
 
 <h3 id="version">osewa version [--json]</h3>
 <pre><code><span class="p">$ </span>osewa version

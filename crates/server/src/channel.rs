@@ -131,8 +131,25 @@ impl Drop for ExecGuard {
     }
 }
 
+/// Forward and exec streams alive in this process. A server restart ends
+/// them (unlike sessions, which live in their holders), so auto-update
+/// waits for none.
+static OPEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many forward and exec streams this process has open.
+pub fn open_channels() -> usize {
+    OPEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for Channel {
+    fn drop(&mut self) {
+        OPEN.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl Channel {
     pub fn new(c: Rc<Client>, id: u32, cls: Class) -> Rc<Channel> {
+        OPEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Rc::new(Channel {
             c,
             id,

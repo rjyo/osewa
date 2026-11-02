@@ -45,7 +45,7 @@ OSEWA_CARRIER=quic osewa ls devbox   # UDP only`;
 <p>The session was started by an older build, before an update that changed the protocol or the snapshot version. It's still running, but this server can't show its screen. <code>osewa ls</code> marks it <code>incompatible</code>. Finish or save what runs in it, then <code>osewa kill devbox &lt;id&gt;</code> and start a new one. A plain <code>osewa attach devbox</code> skips such sessions.</p>
 
 <h3>no osewa build for linux/amd64</h3>
-<p>The host is a different platform from your machine, and login or update has no build for it. Put an <code>osewa-linux-amd64</code> (or the platform named) next to your <code>osewa</code>, or in a directory named by <code>$OSEWA_DIST</code>.</p>
+<p>The host is a different platform from your machine, and login or update has no build for it. A released osewa downloads its own release's build for the host, so this happens with a build from source, or when the download failed (the message says why). Put an <code>osewa-linux-amd64</code> (or the platform named) next to your <code>osewa</code>, or in a directory named by <code>$OSEWA_DIST</code>.</p>
 
 <h2>The server</h2>
 

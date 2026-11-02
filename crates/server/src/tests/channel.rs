@@ -599,6 +599,8 @@ fn close_kills_exec() {
         let script = format!("trap '' HUP; echo $$ > {}; while :; do sleep 0.1; done", pid_file.display());
         assert!(c.exec(1, &["sh", "-c", &script]).await.error.is_empty());
         let pid = read_pid(&pid_file).await;
+        // Process-wide, and other tests run beside this one: at least ours.
+        assert!(crate::open_channels() >= 1, "a running exec is an open channel");
         e.srv.close().await;
         assert!(!alive(pid), "process {pid} alive after close");
     });

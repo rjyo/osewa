@@ -36,6 +36,8 @@ const hosts = `[
   <tbody>
     <tr><td><code>~/.local/bin/osewa</code></td><td>The binary login and update install.</td></tr>
     <tr><td><code>~/.local/state/osewa/server.log</code></td><td>The server's log, for a daemon or a macOS service.</td></tr>
+    <tr><td><code>~/.local/state/osewa/update.json</code></td><td>When osewa last checked for a release, and what it found.</td></tr>
+    <tr><td><code>~/.config/osewa/settings.json</code></td><td>Settings from <code>osewa set</code>.</td></tr>
     <tr><td><code>$XDG_RUNTIME_DIR/osewa/</code></td><td>Session sockets and <code>server.pid</code>. Without <code>XDG_RUNTIME_DIR</code> (macOS): <code>~/.local/state/osewa/run/</code>.</td></tr>
     <tr><td><code>~/.config/systemd/user/osewa.service</code></td><td>The Linux service.</td></tr>
     <tr><td><code>~/Library/LaunchAgents/dev.osewa.server.plist</code></td><td>The macOS service.</td></tr>
@@ -52,7 +54,9 @@ const hosts = `[
     <tr><td><code>XDG_STATE_HOME</code></td><td>When set, the log is <code>$XDG_STATE_HOME/osewa/server.log</code>.</td></tr>
     <tr><td><code>OSEWA_CARRIER</code></td><td><code>quic</code> or <code>ws</code> to use only that carrier, instead of racing both. Handy for testing a firewall.</td></tr>
     <tr><td><code>OSEWA_QUIC_CC</code></td><td>QUIC congestion control: <code>cubic</code> (default), <code>bbr</code> or <code>newreno</code>.</td></tr>
-    <tr><td><code>OSEWA_DIST</code></td><td>A directory of <code>osewa-&lt;os&gt;-&lt;arch&gt;</code> builds for login and update to send to hosts.</td></tr>
+    <tr><td><code>OSEWA_DIST</code></td><td>A directory of <code>osewa-&lt;os&gt;-&lt;arch&gt;</code> builds for login and update to send to hosts. A released osewa downloads its own release's build when there's none.</td></tr>
+    <tr><td><code>OSEWA_AUTO_UPDATE</code></td><td><code>auto</code>, <code>ask</code> or <code>off</code>, over <code>osewa set auto-update</code>.</td></tr>
+    <tr><td><code>OSEWA_RELEASES</code></td><td>Where releases are, instead of <code>https://github.com/rjyo/osewa/releases</code>: a mirror with the same layout.</td></tr>
     <tr><td><code>OSEWA_TRACE</code></td><td>A directory to write JSON-lines traces to, for debugging.</td></tr>
     <tr><td><code>OSEWA_HOME</code></td><td>On the host: an absolute path to use as sessions' home instead of the account's. For sandboxes and tests.</td></tr>
   </tbody>

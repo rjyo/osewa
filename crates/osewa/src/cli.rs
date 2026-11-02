@@ -39,8 +39,13 @@ client commands:
                                        run a command on the host without a terminal;
                                        stdin, stdout and stderr pass through, and osewa
                                        exits with its code
-  update <host>                        put this build on a host over osewa (no ssh)
+  update [host]                        without a host: install the latest release here
+                                       (and restart the server here with it); with one:
+                                       put this build on the host over osewa (no ssh)
                                        and restart its server with it
+  set [auto-update [auto|ask|off]]     auto (default) installs releases that work with
+                                       this one by itself, here and on servers; ask only
+                                       says when one is out
   forward <host> [bind:]port[:host:hostport]...
                                        forward local ports through the host, as ssh -L
                                        (bind defaults to 127.0.0.1, the target to the
@@ -108,6 +113,9 @@ pub(crate) struct Env {
     /// What update runs on the host to restart its server; tests on this
     /// machine replace it, which would restart the real one.
     pub update_restart: String,
+    /// Says when a newer release is out, after a command, and starts the
+    /// daily check: a person's terminal on stderr, never a test or script.
+    pub notices: bool,
 }
 
 impl Env {
@@ -116,6 +124,7 @@ impl Env {
         let mut e = Env::new(io::stdin(), io::stdout(), io::stderr(), osewa_client::hosts::default_dir());
         // Raw mode when stdin is a terminal.
         e.raw = Some(Arc::new(|| if crate::tty::is_terminal(0) { crate::tty::make_raw(0).map(Some) } else { Ok(None) }));
+        e.notices = crate::tty::is_terminal(2);
         e
     }
 
@@ -133,6 +142,7 @@ impl Env {
             id: String::new(),
             carrier: None,
             update_restart: crate::update::UPDATE_RESTART.into(),
+            notices: false,
         }
     }
 
@@ -288,6 +298,7 @@ pub(crate) fn run(args: &[String], env: Env) -> i32 {
         "service" => return crate::service::service_main(rest, env.out(), env.err()),
         "holder" => return osewa_holder::main(rest),
         "enroll" => return osewa_auth::enroll_main(rest),
+        "set" => return crate::autoupdate::set_main(rest, env.out(), env.err()),
         "-h" | "--help" | "help" => {
             let _ = write!(env.out(), "{USAGE}");
             return 0;
@@ -334,6 +345,9 @@ pub(crate) async fn run_client(ctx: &Ctx, cmd: &str, rest: &[String], env: &Env)
         "update" => env.update(ctx, rest).await.map(|_| 0),
         _ => Err(Error::Usage),
     };
+    if cmd != "update" {
+        crate::autoupdate::after_command(env);
+    }
     match r {
         Ok(code) => code,
         Err(Error::Usage) => {
