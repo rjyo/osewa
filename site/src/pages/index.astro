@@ -164,7 +164,7 @@ p { line-height: 1.5; margin: 0; }
 .hud.tl .lv b { color: var(--red); }
 .hud.tr { right: 20px; top: 20px; display: flex; gap: 18px; align-items: baseline; }
 /* A decoration takes no layout room, so the word keeps the same baseline as the ping. */
-.hud .paper { text-decoration: underline 2px var(--red); text-underline-offset: 6px; }
+.hud .paper:hover { text-decoration: underline 2px var(--red); text-underline-offset: 6px; }
 .sig { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; } .sig i { width: 3px; background: var(--red); }
 .idx { position: fixed; z-index: 10; left: 20px; top: 50%; transform: translateY(-50%); display: grid; gap: 4px; }
 .idx .hl { position: absolute; left: 0; right: 0; top: 0; background: var(--fg); pointer-events: none; z-index: 0; transition: transform .22s cubic-bezier(.3,.7,.3,1); }
