@@ -608,6 +608,14 @@ pub fn fatal(e: &Error) -> Option<String> {
     if e.is_incompatible() {
         return Some(format!("incompatible: {e}"));
     }
+    // The session's holder is another build than the server: the message
+    // says so ("session <id> can't be attached: ..."), and the app can
+    // only kill it (osewa_kill_id).
+    if let Error::Response { code, message } = e {
+        if code == wire::ERR_INCOMPATIBLE {
+            return Some(format!("incompatible: {message}"));
+        }
+    }
     if unauthorized(e) {
         return Some(format!("unauthorized: {e}"));
     }
@@ -621,6 +629,28 @@ fn unauthorized(e: &Error) -> bool {
     // words the pin check; rustls the server's refusal).
     let s = e.to_string();
     s.contains("does not match pin") || s.contains("received fatal alert")
+}
+
+/// Bounds osewa_kill_id: a dial, then one request.
+const KILL_ID_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Kills session o.session_id over a connection of its own, without
+/// attaching: the only way to end a session this server can't attach (its
+/// holder is another build). A session already gone counts as killed.
+pub fn kill_id(o: Opened) -> Result<(), String> {
+    let id = o.session_id.ok_or("osewa: session_id is required")?;
+    let r = osewa_client::block_on(osewa_client::timeout(KILL_ID_TIMEOUT, async {
+        let c = osewa_client::Conn::dial(o.cfg).await?;
+        let r = c.kill(&id).await;
+        c.close().await;
+        r
+    }));
+    match r {
+        None => Err("osewa: kill: timed out".into()),
+        Some(Err(e)) if e.is_code(wire::ERR_NOT_FOUND) => Ok(()),
+        Some(Err(e)) => Err(fatal(&e).unwrap_or_else(|| e.to_string())),
+        Some(Ok(())) => Ok(()),
+    }
 }
 
 /// Why the session ended, for CLOSED.

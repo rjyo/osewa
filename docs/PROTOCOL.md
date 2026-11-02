@@ -188,8 +188,10 @@ Methods (REQUEST `method`):
 fields of WELCOME. A holder outlives the server that started it, so after
 an update a server may find holders of another build, whose snapshots are
 not in the format its WELCOME promised: it lists them with `incompatible`,
-why, and answers `session.attach` for them `unavailable` without relaying
-anything; they can still be killed. A holder that reports no `build`
+why, and answers `session.attach` for them with the error code
+`incompatible` (message `session <id> can't be attached: ...`) without
+relaying anything; they can still be killed. Retrying that attach can't
+help; a client that doesn't know the code takes it as any other error. A holder that reports no `build`
 counts as another build.
 
 `status` is the session's latest root OSC 7501 record
@@ -205,7 +207,8 @@ reports by it, and the PTY reports them to the program. A client connection
 may hold at most 64 streams.
 
 Error codes: `bad_request`, `not_found`, `not_owner`, `ended`, `unavailable`,
-`unreachable` (forward.open), `internal`.
+`unreachable` (forward.open), `incompatible` (session.attach, above),
+`internal`.
 
 `argv` defaults to the account's login shell from passwd (not the server's
 `$SHELL`), run with `-l`. `own: true` claims ownership on

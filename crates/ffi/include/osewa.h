@@ -34,7 +34,9 @@ typedef struct osewa_callbacks {
      then incremental). Borrowed for the call only. */
   void (*output)(void *ctx, const uint8_t *bytes, size_t len);
   /* state: OSEWA_*; detail NULL or UTF-8 (on CLOSED: why, e.g. "exit 0",
-     "incompatible: ...", "unauthorized: ..."). */
+     "incompatible: ...", "unauthorized: ..."). "incompatible: session <id>
+     can't be attached: ..." is a session whose host process is another
+     build than the server: it never attaches, but osewa_kill_id ends it. */
   void (*state)(void *ctx, int32_t state, const char *detail);
   /* smoothed RTT in microseconds and the carrier: "quic" or "ws". */
   void (*stats)(void *ctx, uint32_t srtt_us, const char *carrier);
@@ -88,6 +90,12 @@ void osewa_wake(osewa_session *s);
 void osewa_close(osewa_session *s);
 /* Ask the host to end the session (kill), then close. Frees s. */
 void osewa_kill(osewa_session *s);
+/* Ask the host to end session opts->session_id (required) without opening
+   it, e.g. one that closed "incompatible: ...". Uses opts' addr, keys,
+   client_id and device_name; the rest is ignored. Blocks for the network
+   (up to 15 s): call it off the main thread. 0 (also when the session is
+   already gone), or OSEWA_ERR + *err (free with osewa_string_free). */
+int32_t osewa_kill_id(const osewa_open_options *opts, char **err);
 
 /* Device keys. */
 int32_t osewa_generate_key(uint8_t *out, size_t cap, size_t *len); /* PKCS#8 DER into out */

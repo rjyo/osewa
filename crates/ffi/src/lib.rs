@@ -190,6 +190,30 @@ pub unsafe extern "C" fn osewa_kill(s: *mut OsewaSession) {
     unsafe { close(s, true) }
 }
 
+/// Kills the session opts.session_id on the host without attaching it,
+/// over a connection of its own: blocks for the network (up to 15 s).
+/// Returns 0, or ERR with *err set.
+///
+/// # Safety
+/// opts points to a valid osewa_open_options; err is NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_kill_id(opts: *const OpenOptions, err: *mut *mut c_char) -> i32 {
+    guard(ERR, || {
+        let fail = |msg: &str| {
+            if !err.is_null() {
+                unsafe { *err = into_c(msg) };
+            }
+            ERR
+        };
+        let Some(o) = (unsafe { opts.as_ref() }) else { return fail("osewa: no options") };
+        let r = unsafe { options::read(o) }.and_then(session::kill_id);
+        match r {
+            Ok(()) => 0,
+            Err(e) => fail(&e),
+        }
+    })
+}
+
 /// Writes a new device key, PKCS#8 DER, into out. When cap is too small
 /// nothing is written, *len says how much is needed, and it returns -1.
 ///

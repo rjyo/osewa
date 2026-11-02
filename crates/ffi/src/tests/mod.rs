@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use osewa_ghostty::{Options, Terminal};
+use osewa_wire as wire;
 
 use crate::*;
 
@@ -352,10 +353,9 @@ impl Host {
     }
 }
 
-/// Opens through osewa_open: the session, or the error.
-fn try_open(o: &Open, r: &Arc<Rec>) -> Result<*mut OsewaSession, String> {
-    let mut s = Strings::default();
-    let opts = OpenOptions {
+/// o as osewa_open_options, its strings kept in s.
+fn c_opts(o: &Open, s: &mut Strings) -> OpenOptions {
+    OpenOptions {
         addr: s.add(&o.addr),
         server_key: s.add(&o.server_key),
         quic_port: 0,
@@ -372,7 +372,13 @@ fn try_open(o: &Open, r: &Arc<Rec>) -> Result<*mut OsewaSession, String> {
         height_px: 0,
         predict: o.predict,
         appearance_json: s.opt(o.appearance),
-    };
+    }
+}
+
+/// Opens through osewa_open: the session, or the error.
+fn try_open(o: &Open, r: &Arc<Rec>) -> Result<*mut OsewaSession, String> {
+    let mut s = Strings::default();
+    let opts = c_opts(o, &mut s);
     let mut err: *mut c_char = std::ptr::null_mut();
     let h = unsafe { osewa_open(&opts, r.callbacks(), &mut err) };
     if h.is_null() {
@@ -387,6 +393,69 @@ fn try_open(o: &Open, r: &Arc<Rec>) -> Result<*mut OsewaSession, String> {
 
 fn open(o: &Open, r: &Arc<Rec>) -> *mut OsewaSession {
     try_open(o, r).unwrap()
+}
+
+/// Kills through osewa_kill_id: Ok, or the error.
+fn kill_id(o: &Open) -> Result<(), String> {
+    let mut s = Strings::default();
+    let opts = c_opts(o, &mut s);
+    let mut err: *mut c_char = std::ptr::null_mut();
+    match unsafe { osewa_kill_id(&opts, &mut err) } {
+        0 => {
+            assert!(err.is_null(), "an error with 0");
+            Ok(())
+        }
+        ERR => {
+            assert!(!err.is_null(), "ERR without an error");
+            let e = unsafe { CStr::from_ptr(err) }.to_string_lossy().into_owned();
+            unsafe { osewa_string_free(err) };
+            Err(e)
+        }
+        n => panic!("osewa_kill_id returned {n}"),
+    }
+}
+
+/// A holder of another build on the host's run directory, as one left
+/// behind by an update: it answers session.info with its old build, and
+/// counts the attaches and kills that reach it.
+struct OldHolder {
+    attaches: Arc<std::sync::atomic::AtomicUsize>,
+    killed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Host {
+    fn old_holder(&self, id: &str) -> OldHolder {
+        use std::sync::atomic::Ordering::SeqCst;
+        let ln = std::os::unix::net::UnixListener::bind(self.dir.path().join("run").join(format!("{id}.sock"))).unwrap();
+        let (attaches, killed): (Arc<std::sync::atomic::AtomicUsize>, Arc<std::sync::atomic::AtomicBool>) = Default::default();
+        let (a, k, id) = (attaches.clone(), killed.clone(), id.to_string());
+        std::thread::spawn(move || {
+            for conn in ln.incoming() {
+                let Ok(mut conn) = conn else { return };
+                let (a, k, id) = (a.clone(), k.clone(), id.clone());
+                std::thread::spawn(move || {
+                    while let Ok(f) = wire::read(&mut conn) {
+                        if f.ty != wire::TYPE_REQUEST {
+                            continue;
+                        }
+                        let Ok(r) = f.decode::<wire::Request>() else { continue };
+                        match r.method.as_str() {
+                            wire::METHOD_ATTACH => drop(a.fetch_add(1, SeqCst)),
+                            wire::METHOD_KILL => k.store(true, SeqCst),
+                            _ => {}
+                        }
+                        let build = wire::Build { version: wire::VERSION, ghostty: "0".repeat(40), snapshot_version: 1 };
+                        let info = wire::SessionInfo { id: id.clone(), cols: 80, rows: 24, build: Some(build), ..Default::default() };
+                        let resp = wire::Response { id: r.id, sessions: vec![info], ..Default::default() };
+                        if wire::write(&mut conn, &wire::json(wire::TYPE_RESPONSE, 0, &resp)).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        OldHolder { attaches, killed }
+    }
 }
 
 fn send(h: *mut OsewaSession, s: &str) {

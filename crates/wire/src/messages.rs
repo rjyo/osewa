@@ -158,6 +158,10 @@ pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_INTERNAL: &str = "internal";
 /// forward.open could not connect.
 pub const ERR_UNREACHABLE: &str = "unreachable";
+/// session.attach: the session's holder is another build than the server,
+/// so it can't be attached through this server however often it is tried;
+/// it can still be killed. Older clients take it as any other error.
+pub const ERR_INCOMPATIBLE: &str = "incompatible";
 
 /// A RESPONSE payload.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]

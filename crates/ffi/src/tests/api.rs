@@ -450,3 +450,62 @@ fn revoked_during_create_closes_unauthorized() {
     assert!(!r.states.lock().unwrap().iter().any(|s| s.0 == CONNECTED), "{:?}", r.states.lock().unwrap());
     unsafe { osewa_close(h) };
 }
+
+/// A session whose holder is another build than the server (left behind by
+/// an update) closes at once, saying it can't be attached, rather than
+/// retrying forever; nothing it would send reaches the app, and
+/// osewa_kill_id ends it.
+#[test]
+fn other_build_session_closes_and_kill_id_ends_it() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let host = Host::new();
+    let id = "ab".repeat(16);
+    let old = host.old_holder(&id);
+    let r = Rec::new(80, 24);
+    let mut o = host.open_opts();
+    o.session_id = Some(id.clone());
+    let h = open(&o, &r);
+    assert_eq!(r.wait_state_any(&[CLOSED]), CLOSED);
+    let why = r.last_state().unwrap().1.unwrap_or_default();
+    assert!(why.starts_with("incompatible: ") && why.contains("can't be attached"), "detail {why:?}");
+    unsafe { osewa_close(h) };
+    assert_eq!(old.attaches.load(SeqCst), 0, "an attach reached the other build's holder");
+
+    kill_id(&o).unwrap();
+    assert!(old.killed.load(SeqCst), "the kill didn't reach the holder");
+}
+
+/// osewa_kill_id ends a session by id, no attach needed; a session already
+/// gone counts as killed, and the id is required.
+#[test]
+fn kill_id_ends_a_session() {
+    let host = Host::new();
+    let r = Rec::new(80, 24);
+    let h = open(&host.open_opts(), &r);
+    r.wait_state(CONNECTED);
+    let id = r.wait_event("session")["id"].as_str().unwrap().to_string();
+    unsafe { osewa_close(h) };
+
+    let mut o = host.open_opts();
+    o.session_id = Some(id);
+    kill_id(&o).unwrap();
+    let last = Mutex::new(None);
+    eventually(
+        "the session gone",
+        || {
+            let r = Rec::new(80, 24);
+            let h = open(&o, &r);
+            let st = r.wait_state_any(&[CONNECTED, CLOSED]);
+            unsafe { osewa_close(h) };
+            *last.lock().unwrap() = r.last_state();
+            st == CLOSED
+        },
+        || format!("{:?}", last.lock().unwrap()),
+    );
+    let why = last.lock().unwrap().clone().unwrap().1.unwrap_or_default();
+    assert!(why.starts_with("ended: ") || why.starts_with("exit "), "detail {why:?}");
+    eventually("kill_id of a gone session", || kill_id(&o).is_ok(), String::new);
+
+    let e = kill_id(&host.open_opts()).unwrap_err();
+    assert!(e.contains("session_id is required"), "{e}");
+}

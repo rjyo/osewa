@@ -631,7 +631,7 @@ impl Stream {
         };
         if !why.is_empty() {
             self.end();
-            return self.c.fail(self.req_id, wire::ERR_UNAVAILABLE, &format!("session {session} can't be attached: {why}; kill it and start a new one"));
+            return self.c.fail(self.req_id, wire::ERR_INCOMPATIBLE, &format!("session {session} can't be attached: {why}; kill it and start a new one"));
         }
         let conn = tokio::select! {
             r = self.c.srv.dial_holder(&session, &client_id) => r,

@@ -368,9 +368,10 @@ impl SessionInner {
             self.abandon(c, stream, &flags, &e);
             if e.is_code(wire::ERR_ENDED) || e.is_code(wire::ERR_NOT_FOUND) {
                 self.finish(Some(Error::Ended(Some(e.to_string()))));
-            } else if e.is_incompatible() {
-                // No server of this build will ever serve us; retrying can't
-                // help.
+            } else if e.is_incompatible() || e.is_code(wire::ERR_INCOMPATIBLE) {
+                // No server of this build will ever serve us, or this server
+                // this session (its holder is another build): retrying
+                // can't help.
                 self.finish(Some(e.clone()));
             }
             return Err(e);

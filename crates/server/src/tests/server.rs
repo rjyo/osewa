@@ -613,7 +613,7 @@ fn other_build_holders_are_listed_not_attached() {
         assert!(r.sessions.iter().any(|s| s.incompatible.contains(&old.id())), "{r:?}");
         for (i, id) in ["78".repeat(16), "9a".repeat(16)].iter().enumerate() {
             let resp = c.attach(id, i as u32 + 1, true).await;
-            assert!(resp.error == wire::ERR_UNAVAILABLE && resp.message.contains("can't be attached"), "attach {resp:?}");
+            assert!(resp.error == wire::ERR_INCOMPATIBLE && resp.message.contains("can't be attached"), "attach {resp:?}");
         }
         assert_eq!(attaches.get(), 0, "an attach reached another build's holder");
     });
