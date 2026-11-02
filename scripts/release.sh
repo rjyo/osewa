@@ -31,8 +31,9 @@
 #
 # publish reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, R2_S3_ENDPOINT and
 # R2_PUBLIC_URL from app-hook's .env (or its encrypted copy). It refuses
-# unsigned or unnotarized darwin binaries, and a build id whose published
-# SHA256SUMS differ: a published path never changes.
+# unsigned or unnotarized darwin binaries. Every object is uploaded
+# create-only, and one already there must hold the same bytes: a published
+# path never changes.
 set -euo pipefail
 # build runs in $(...), which must stop at the first failure too.
 shopt -s inherit_errexit
@@ -286,6 +287,43 @@ s3() {
 	aws --endpoint-url "$R2_S3_ENDPOINT" --region auto "$@"
 }
 
+# Create-only uploads (If-None-Match: *) arrived in aws-cli 2.23.
+require_conditional_put() {
+	local v
+	v=$(aws --version 2>&1)
+	[[ $v =~ aws-cli/([0-9]+)\.([0-9]+) ]] || die "can't read the aws CLI version: $v"
+	((BASH_REMATCH[1] > 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] >= 23))) ||
+		die "aws CLI ${v%% *} can't upload create-only (put-object --if-none-match); need aws-cli >= 2.23"
+}
+
+# Whether $key/$1 already holds what dist has: 0 equal, 1 absent, and any
+# other content is fatal, for a published path never changes.
+same_remote() {
+	local name=$1 got=$fetch/$1 err
+	if err=$(s3 s3api get-object --bucket "$bucket" --key "$key/$name" "$got" 2>&1 >/dev/null); then
+		cmp -s "$got" "$out/$name" || die "$key/$name is already published with other bytes; published paths never change"
+		return 0
+	fi
+	grep -qE 'NoSuchKey|404|Not Found' <<<"$err" || die "can't read s3://$bucket/$key/$name: $err"
+	return 1
+}
+
+# Uploads $1 only if nothing is at its key; if something got there first, it
+# must be these bytes. So two publishers of one build id, or a resumed
+# publish that rebuilt, can't replace an object anyone may have cached.
+put_once() {
+	local name=$1 type=$2 err
+	if err=$(s3 s3api put-object --bucket "$bucket" --key "$key/$name" --body "$out/$name" \
+		--content-type "$type" --cache-control "public, max-age=31536000, immutable" \
+		--if-none-match '*' 2>&1 >/dev/null); then
+		echo "release: uploaded $key/$name" >&2
+		return
+	fi
+	grep -qE 'PreconditionFailed|412' <<<"$err" || die "uploading $key/$name: $err"
+	same_remote "$name" || die "$key/$name: precondition failed but nothing is there: $err"
+	echo "release: $key/$name was already there, the same" >&2
+}
+
 publish() {
 	[[ ${SKIP_MACOS_SIGN:-} == 1 || ${SKIP_MACOS_NOTARIZE:-} == 1 ]] &&
 		die "refusing to publish with SKIP_MACOS_SIGN or SKIP_MACOS_NOTARIZE: darwin binaries must be signed and notarized"
@@ -293,6 +331,7 @@ publish() {
 	[[ $(source_state) == *-dirty ]] &&
 		die "uncommitted changes in build inputs: $(git status --porcelain -- "${inputs[@]}" | tr '\n' ' ')"
 	command -v aws >/dev/null || die "aws CLI missing"
+	require_conditional_put
 	load_r2_env
 
 	local id
@@ -301,33 +340,32 @@ publish() {
 	else
 		id=$(build)
 	fi
-	local out=$dist/$id key=$prefix/$id
+	out=$dist/$id key=$prefix/$id
 	grep -qx notarized=1 "$out/.release" || die "dist/$id is not notarized"
+	fetch=$work/fetch
+	rm -rf "$fetch"
+	mkdir -p "$fetch"
 
-	local head remote
-	if head=$(s3 s3api head-object --bucket "$bucket" --key "$key/SHA256SUMS" 2>&1); then
-		remote=$(s3 s3 cp "s3://$bucket/$key/SHA256SUMS" -)
-		if [[ $remote == "$(cat "$out/SHA256SUMS")" ]]; then
-			echo "release: $key already published with these binaries" >&2
-			summary "$id"
-			return
-		fi
-		printf 'published:\n%s\nlocal:\n%s\n' "$remote" "$(cat "$out/SHA256SUMS")" >&2
-		die "$key is already published with other binaries; published paths never change"
-	elif ! grep -qE '404|Not Found' <<<"$head"; then
-		die "can't check s3://$bucket/$key/SHA256SUMS: $head"
-	fi
-
-	local immutable="public, max-age=31536000, immutable" t
+	# SHA256SUMS goes last: its presence marks the build id published.
+	local names=() types=() t i present=0
 	for t in $targets; do
-		s3 s3 cp --only-show-errors --content-type application/gzip --cache-control "$immutable" \
-			"$out/osewa-$t.gz" "s3://$bucket/$key/osewa-$t.gz"
+		names+=("osewa-$t.gz") types+=(application/gzip)
 	done
-	s3 s3 cp --only-show-errors --content-type application/json --cache-control "$immutable" \
-		"$out/build.json" "s3://$bucket/$key/build.json"
-	# Last: its presence marks the build id published.
-	s3 s3 cp --only-show-errors --content-type "text/plain; charset=utf-8" --cache-control "$immutable" \
-		"$out/SHA256SUMS" "s3://$bucket/$key/SHA256SUMS"
+	names+=(build.json SHA256SUMS) types+=(application/json "text/plain; charset=utf-8")
+
+	# Everything already there must match before anything is added: a
+	# resumed publish of other bytes stops here, not halfway.
+	for i in "${!names[@]}"; do
+		same_remote "${names[i]}" && present=$((present + 1))
+	done
+	if ((present == ${#names[@]})); then
+		echo "release: $key already published with these binaries" >&2
+		summary "$id"
+		return
+	fi
+	for i in "${!names[@]}"; do
+		put_once "${names[i]}" "${types[i]}"
+	done
 
 	local url=${R2_PUBLIC_URL%/}/$key
 	[[ $(curl -fsS "$url/SHA256SUMS") == "$(cat "$out/SHA256SUMS")" ]] ||
