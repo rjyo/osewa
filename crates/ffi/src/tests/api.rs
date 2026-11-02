@@ -120,6 +120,27 @@ fn reconnects_across_server_restart() {
     unsafe { osewa_close(h) };
 }
 
+/// A pause drops the connection without reporting it; wake resumes the
+/// session, output made meanwhile included.
+#[test]
+fn pause_and_wake() {
+    let host = Host::new();
+    let r = Rec::new(80, 24);
+    let h = open(&host.open_opts(), &r);
+    r.wait_state(CONNECTED);
+    send(h, "(sleep 1; echo paused-$((40+2))) &\r");
+    let states = r.states.lock().unwrap().len();
+    unsafe { osewa_pause(h) };
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!r.screen().contains("paused-42"), "output while paused:\n{}", r.screen());
+    unsafe { osewa_wake(h) };
+    r.wait_screen("paused-42");
+    r.wait_state(CONNECTED);
+    let after = r.states.lock().unwrap()[states..].to_vec();
+    assert!(after.iter().all(|s| s.0 == CONNECTED), "states for a pause: {after:?}");
+    unsafe { osewa_close(h) };
+}
+
 /// redraw repaints everything for a new view: a fresh terminal fed only
 /// what came after it shows the screen.
 #[test]

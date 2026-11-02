@@ -350,3 +350,51 @@ fn link_check_pings_now() {
     assert!(gone.is_some(), "check didn't ping");
     assert!(t0.elapsed() < Duration::from_secs(3), "suspect only after {:?}", t0.elapsed());
 }
+
+/// A paused link closes its connection and dials nothing until woken, and
+/// says it is paused rather than lost; wake resumes its sessions.
+#[test]
+fn link_pause_wake() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let l = new_link(f.config("a"));
+    let s = link_attach(&l, &id);
+    s.wait_text("");
+    let c1 = run(l.conn()).unwrap();
+    l.pause();
+    wait_for("conn closed", c1.done());
+    eventually("server let go", || f.lock().conns.is_empty());
+    let st = l.state();
+    assert!(!st.up && st.paused && st.err.is_none(), "{st:?}");
+    f.output(&id, "meanwhile");
+    sleep(Duration::from_millis(300));
+    assert!(f.lock().conns.is_empty(), "dialed while paused");
+    assert!(run_for(Duration::from_millis(100), l.conn()).is_none(), "conn while paused");
+
+    l.wake();
+    s.wait_text("meanwhile");
+    eventually("woken", || {
+        let st = l.state();
+        st.up && !st.paused
+    });
+    assert!(run(l.conn()).unwrap() != c1, "same conn after wake");
+    // Pausing twice, or waking an awake link, changes nothing.
+    l.wake();
+    l.pause();
+    l.pause();
+    eventually("paused again", || f.lock().conns.is_empty());
+    l.wake();
+    f.output(&id, "again");
+    s.wait_text("again");
+}
+
+/// A link closed while paused stops.
+#[test]
+fn link_close_while_paused() {
+    let f = Fake::new();
+    let l = Link::new(f.config("a"));
+    run(l.conn()).unwrap();
+    l.pause();
+    run_for(Duration::from_secs(4), l.close()).expect("close hung while paused");
+    assert!(matches!(run(l.conn()), Err(Error::LinkClosed)), "conn after close");
+}

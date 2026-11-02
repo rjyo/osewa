@@ -73,6 +73,11 @@ void osewa_resize(osewa_session *s, uint16_t cols, uint16_t rows, uint32_t width
 void osewa_redraw(osewa_session *s);
 /* Wake/foreground hint: probe the link now instead of waiting for keepalive. */
 void osewa_network_changed(osewa_session *s);
+/* Background/hidden: close the connection and stop keepalive and redials
+   until osewa_wake. The session stays resumable; no state change is
+   reported for the pause. osewa_wake dials at once and resumes it. */
+void osewa_pause(osewa_session *s);
+void osewa_wake(osewa_session *s);
 /* Close locally; the session stays alive and resumable on the host. Frees s.
    No callbacks fire after it returns.
    Threads: osewa_* calls on one handle may come from any thread, but none

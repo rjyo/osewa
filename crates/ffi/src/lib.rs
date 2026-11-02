@@ -141,6 +141,28 @@ pub unsafe extern "C" fn osewa_network_changed(s: *mut OsewaSession) {
     })
 }
 
+/// # Safety
+/// s is from osewa_open and not yet closed.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_pause(s: *mut OsewaSession) {
+    guard((), || {
+        if let Some(s) = unsafe { s.as_ref() } {
+            s.0.pause();
+        }
+    })
+}
+
+/// # Safety
+/// s is from osewa_open and not yet closed.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_wake(s: *mut OsewaSession) {
+    guard((), || {
+        if let Some(s) = unsafe { s.as_ref() } {
+            s.0.wake();
+        }
+    })
+}
+
 /// Quiesces the callbacks through a shared reference, then frees s: a
 /// callback still running may be calling osewa_send on it meanwhile.
 ///

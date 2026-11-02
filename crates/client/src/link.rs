@@ -23,6 +23,8 @@ use crate::{Config, Error, Result};
 const BACKOFF_MIN: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(1);
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Bounds the closing handshake on pause: the connection may be half-open.
+const PAUSE_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 pub(crate) type DialFn = Arc<dyn Fn(Config) -> BoxFuture<Result<Conn>> + Send + Sync>;
@@ -46,6 +48,8 @@ pub(crate) struct LinkInner {
     changed: Changed,
     /// A session needs resuming.
     kick: Notify,
+    /// pause or wake was called.
+    toggle: Notify,
     cancel: Latch,
     done: Latch,
 }
@@ -63,6 +67,9 @@ pub struct LinkState {
     pub err: Option<Error>,
     /// Why the link stopped for good: closed, or an incompatible server.
     pub fin: Option<Error>,
+    /// Paused, or redialing after a wake and not yet failed: the link is
+    /// down because it was asked to be, not lost.
+    pub paused: bool,
 }
 
 struct LState {
@@ -73,6 +80,10 @@ struct LState {
     fin: Option<Error>,
     /// A dial has succeeded.
     connected: bool,
+    /// pause was called and wake not since.
+    paused: bool,
+    /// Woken, and the first redial since has no outcome yet.
+    waking: bool,
     sessions: HashMap<usize, Session>,
 }
 
@@ -91,9 +102,10 @@ impl Link {
             quic_port: AtomicU16::new(cfg.quic_port),
             cfg,
             dial,
-            st: Mutex::new(LState { conn: None, err: None, fin: None, connected: false, sessions: HashMap::new() }),
+            st: Mutex::new(LState { conn: None, err: None, fin: None, connected: false, paused: false, waking: false, sessions: HashMap::new() }),
             changed: Changed::default(),
             kick: Notify::new(),
+            toggle: Notify::new(),
             cancel: Latch::default(),
             done: Latch::default(),
         });
@@ -149,7 +161,14 @@ impl Link {
     pub fn state(&self) -> LinkState {
         let st = self.0.lock();
         let conn = st.conn.as_ref().filter(|c| !c.is_done() && st.fin.is_none());
-        LinkState { up: conn.is_some(), connected: st.connected, carrier: conn.map(|c| c.carrier()), err: st.err.clone(), fin: st.fin.clone() }
+        LinkState {
+            up: conn.is_some(),
+            connected: st.connected,
+            carrier: conn.map(|c| c.carrier()),
+            err: st.err.clone(),
+            fin: st.fin.clone(),
+            paused: st.paused || st.waking,
+        }
     }
 
     /// Hears every change of [`Link::state`]: a connection up or lost, a
@@ -166,6 +185,31 @@ impl Link {
         if let Some(c) = c {
             c.check();
         }
+    }
+
+    /// Closes the connection and stops reconnecting until [`Link::wake`]:
+    /// no keepalive and no dials meanwhile, for an app in the background.
+    /// Sessions stay attached to the link and resume on wake; conn and
+    /// attach wait for it.
+    pub fn pause(&self) {
+        let mut st = self.0.lock();
+        if st.paused || st.fin.is_some() {
+            return;
+        }
+        (st.paused, st.waking) = (true, false);
+        self.0.changed.notify();
+        self.0.toggle.notify_one();
+    }
+
+    /// Ends a pause: dials at once and resumes the sessions.
+    pub fn wake(&self) {
+        let mut st = self.0.lock();
+        if !st.paused {
+            return;
+        }
+        (st.paused, st.waking) = (false, true);
+        self.0.changed.notify();
+        self.0.toggle.notify_one();
     }
 
     /// Attaches to session id on the current connection. The link resumes
@@ -263,10 +307,18 @@ impl LinkInner {
         let mut c: Option<Conn> = None;
         let mut wait = Duration::ZERO;
         loop {
+            if self.lock().paused {
+                if !self.sit_out(&mut c).await {
+                    return;
+                }
+                wait = Duration::ZERO;
+            }
             let retry;
             if c.as_ref().is_none_or(|c| c.is_done() || c.is_suspect()) {
                 tokio::select! {
                     _ = tokio::time::sleep(wait) => {}
+                    // A pause: don't dial.
+                    _ = self.toggle.notified() => continue,
                     _ = self.cancel.wait() => return,
                 }
                 wait = (wait * 2).clamp(BACKOFF_MIN, BACKOFF_MAX);
@@ -316,6 +368,7 @@ impl LinkInner {
                         {
                             let mut st = self.lock();
                             st.err = Some(e.clone());
+                            st.waking = false;
                             if incompatible {
                                 // No server of this build will serve us;
                                 // retrying can't help, and the sessions end
@@ -341,11 +394,14 @@ impl LinkInner {
                     self.changed.notify();
                 }
                 retry = resumed.await.unwrap_or(None);
+                self.woken();
                 // The old connection may be half-open: don't wait on it.
                 if let Some(old) = old {
                     old.close_now();
                 }
             } else {
+                // Woken before the pause was acted on.
+                self.woken();
                 retry = self.clone().resume_all(c.clone().unwrap()).await;
             }
             let c = c.clone().unwrap();
@@ -353,6 +409,7 @@ impl LinkInner {
                 _ = c.done() => {}
                 _ = c.suspect() => {}
                 _ = self.kick.notified() => {}
+                _ = self.toggle.notified() => {}
                 _ = async { match retry { Some(d) => tokio::time::sleep(d).await, None => std::future::pending().await } } => {}
                 _ = self.cancel.wait() => return,
             }
@@ -361,6 +418,39 @@ impl LinkInner {
             if c.is_done() {
                 self.changed.notify();
             }
+        }
+    }
+
+    /// Closes c and waits out the pause; false when the link is cancelled.
+    async fn sit_out(&self, c: &mut Option<Conn>) -> bool {
+        if let Some(old) = c.take() {
+            {
+                let mut st = self.lock();
+                st.conn = None;
+                self.changed.notify();
+            }
+            // Gracefully, so the server lets go of it now rather than at
+            // its idle timeout.
+            let _ = tokio::time::timeout(PAUSE_CLOSE_TIMEOUT, old.close()).await;
+            old.close_now();
+        }
+        loop {
+            if !self.lock().paused {
+                return true;
+            }
+            tokio::select! {
+                _ = self.toggle.notified() => {}
+                _ = self.cancel.wait() => return false,
+            }
+        }
+    }
+
+    /// The sessions are back after a wake, or as back as they will get.
+    fn woken(&self) {
+        let mut st = self.lock();
+        if st.waking {
+            st.waking = false;
+            self.changed.notify();
         }
     }
 

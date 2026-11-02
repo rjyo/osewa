@@ -271,6 +271,14 @@ impl Handle {
         self.link.check();
     }
 
+    pub fn pause(&self) {
+        self.link.pause();
+    }
+
+    pub fn wake(&self) {
+        self.link.wake();
+    }
+
     /// Stops the callbacks, waiting out one that is running. Through a
     /// shared reference, before the handle is freed: a running callback may
     /// still be using it (osewa_send from inside one).
@@ -503,6 +511,8 @@ impl Worker {
             }
             if st.up && s.connected() {
                 self.sink.state(CONNECTED, None);
+            } else if st.paused {
+                // Asked for, not lost: the app keeps the state it had.
             } else {
                 self.sink.state(RECONNECTING, st.err.as_ref().map(|e| e.to_string()).as_deref());
             }
