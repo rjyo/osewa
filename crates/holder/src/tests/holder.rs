@@ -547,6 +547,27 @@ fn kill() {
     h.done(Duration::from_secs(5)).unwrap();
 }
 
+/// A killed session doesn't stay for the exit retention (a day by
+/// default): its holder ends soon after, whether the kill ended the child
+/// or the child had exited already.
+#[test]
+fn killed_sessions_end_soon() {
+    for exited in [false, true] {
+        let script = if exited { "echo up; exit 3" } else { "echo up; while :; do sleep 0.1; done" };
+        let mut h = start(Config { exit_retention: Duration::from_secs(3600), ..cfg(sh(script)) });
+        let mut c = h.dial("dev1");
+        c.attach(own());
+        c.wait_text("up");
+        if exited {
+            c.wait_for("stream end", |c| c.ended.is_some());
+        }
+        let mut k = h.dial("");
+        let resp = k.request(method(wire::METHOD_KILL));
+        assert!(resp.error.is_empty(), "kill: {resp:?}");
+        h.done(crate::KILLED_RETENTION + Duration::from_secs(3)).unwrap_or_else(|e| panic!("exited={exited}: {e}"));
+    }
+}
+
 #[test]
 fn ownership_lapse() {
     let h = start(Config { owner_grace: Duration::from_millis(300), ..cfg(sh("sleep 30")) });

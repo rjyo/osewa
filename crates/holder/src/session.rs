@@ -974,8 +974,17 @@ impl Session {
         if !req.session.is_empty() && req.session != self.core.cfg.id {
             return Err((wire::ERR_NOT_FOUND, format!("no session {}", req.session)));
         }
+        let cfg = &mut self.core.cfg;
+        cfg.exit_retention = cfg.exit_retention.min(crate::KILLED_RETENTION);
         if !self.core.exited {
             self.core.terminate();
+        } else {
+            // Exited already, its retention running: end it soon instead.
+            let (retention, wait) = (self.core.retention.clone(), self.core.cfg.exit_retention);
+            tokio::task::spawn_local(async move {
+                tokio::time::sleep(wait).await;
+                retention.notify_one();
+            });
         }
         Ok(())
     }

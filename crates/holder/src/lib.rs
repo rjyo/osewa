@@ -33,6 +33,11 @@ use session::{Conn, Session};
 pub const DEFAULT_LOG_BYTES: usize = 8 << 20;
 pub const DEFAULT_LAG_BYTES: usize = 4 << 20;
 pub const DEFAULT_EXIT_RETENTION: Duration = Duration::from_secs(24 * 3600);
+/// How long a killed session stays after its exit: long enough for the
+/// clients attached to see it end. Nobody comes back for a killed one's
+/// exit code, and a day of each would pile up (an app kills a session per
+/// closed terminal).
+pub const KILLED_RETENTION: Duration = Duration::from_secs(2);
 pub const DEFAULT_OWNER_GRACE: Duration = Duration::from_secs(30);
 pub const DEFAULT_CATCH_UP_DELAY: Duration = Duration::from_millis(200);
 pub const DEFAULT_IDLE: Duration = Duration::from_secs(24 * 3600);

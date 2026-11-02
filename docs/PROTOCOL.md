@@ -99,7 +99,9 @@ resume.
 
 A holder whose child has exited keeps its socket for the exit-retention time
 (default 24 h) so clients can read the final screen and exit code, then
-exits.
+exits. A killed session (`session.kill`) keeps it 2 s at most, enough for
+the clients attached to see it end, whether the kill ended the child or the
+child had exited already.
 
 ## Frames
 
