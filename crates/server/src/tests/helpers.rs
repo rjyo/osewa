@@ -592,6 +592,23 @@ pub async fn read_request(conn: &mut UnixStream) -> std::io::Result<wire::Reques
     }
 }
 
+/// A session.info answer as a holder of this build gives it.
+pub fn info_response(r: &wire::Request) -> wire::Response {
+    let info = wire::SessionInfo { cols: 80, rows: 24, build: Some(crate::own_build()), ..Default::default() };
+    wire::Response { id: r.id, sessions: vec![info], ..Default::default() }
+}
+
+/// Answers the server's build check as a holder of this build, and returns
+/// the request after it: what a holder sees first on an attach.
+pub async fn read_attach(conn: &mut UnixStream) -> std::io::Result<wire::Request> {
+    let r = read_request(conn).await?;
+    if r.method != wire::METHOD_INFO {
+        return Ok(r);
+    }
+    write_frame(conn, wire::json(wire::TYPE_RESPONSE, 0, &info_response(&r))).await?;
+    read_request(conn).await
+}
+
 pub async fn write_frame(conn: &mut UnixStream, f: wire::Frame) -> std::io::Result<()> {
     let mut b = Vec::new();
     f.encode_to(&mut b)?;
@@ -609,7 +626,7 @@ pub fn stalled_holder(dir: &Path, id: &str) -> FakeHolder {
         dir,
         id,
         handler(|mut conn| async move {
-            let Ok(r) = read_request(&mut conn).await else { return };
+            let Ok(r) = read_attach(&mut conn).await else { return };
             let resp = wire::Response { id: r.id, epoch: "e".into(), ..Default::default() };
             let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &resp)).await;
             tokio::time::sleep(Duration::from_secs(60)).await;
@@ -629,6 +646,10 @@ pub fn echo_holder(dir: &Path, id: &str) -> FakeHolder {
                 match f.ty {
                     wire::TYPE_REQUEST => {
                         let r: wire::Request = f.decode().unwrap();
+                        if r.method == wire::METHOD_INFO {
+                            let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &info_response(&r))).await;
+                            continue;
+                        }
                         if r.method == wire::METHOD_DETACH {
                             let se = wire::StreamEnd { reason: wire::END_DETACHED.into(), exit_code: None };
                             let _ = write_frame(&mut conn, wire::json(wire::TYPE_STREAM_END, r.stream, &se)).await;

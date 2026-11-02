@@ -1,6 +1,7 @@
 //! Sessions through the server: welcome, lifecycle, detach, resume,
 //! errors.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -310,7 +311,7 @@ fn holder_dies() {
             e.dir(),
             &attach_then_die,
             handler(|mut conn| async move {
-                let Ok(r) = read_request(&mut conn).await else { return };
+                let Ok(r) = read_attach(&mut conn).await else { return };
                 assert_eq!(r.client_id, "phone", "forwarded client_id");
                 let _ = write_frame(&mut conn, wire::json(wire::TYPE_WELCOME, 0, &wire::Welcome::default())).await;
                 let resp = wire::Response { id: r.id, epoch: "e".into(), ..Default::default() };
@@ -348,9 +349,11 @@ fn holder_dies() {
         assert_eq!(r.error, wire::ERR_UNAVAILABLE, "kill dying holder {r:?}");
         let r = c.call(wire::Request { session: misbehave.clone(), stream: 3, ..req(wire::METHOD_ATTACH) }).await;
         assert_eq!(r.error, wire::ERR_UNAVAILABLE, "attach to misbehaving holder {r:?}");
-        // None of them show up in a list, and the sockets stay: they accept.
+        // Only attach_then_die, which still answers session.info, shows up
+        // in a list (the others die or misanswer), and the sockets stay:
+        // they accept.
         let r = c.list().await;
-        assert!(r.sessions.is_empty(), "list {r:?}");
+        assert!(r.sessions.len() == 1 && r.sessions[0].incompatible.is_empty(), "list {r:?}");
     });
 }
 
@@ -367,7 +370,7 @@ fn disconnect_closes_holder_conns() {
             handler(move |mut conn| {
                 let cl = cl.clone();
                 async move {
-                    let Ok(r) = read_request(&mut conn).await else { return };
+                    let Ok(r) = read_attach(&mut conn).await else { return };
                     let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &response(r.id))).await;
                     while crate::read_frame(&mut conn).await.is_ok() {}
                     cl.notify_one();
@@ -616,6 +619,64 @@ fn other_build_holders_are_listed_not_attached() {
             assert!(resp.error == wire::ERR_INCOMPATIBLE && resp.message.contains("can't be attached"), "attach {resp:?}");
         }
         assert_eq!(attaches.get(), 0, "an attach reached another build's holder");
+    });
+}
+
+/// The build check is on the attach's own holder connection, so a holder
+/// that takes the socket between a check and the attach can't slip
+/// through; and a holder whose info doesn't come back counts as another
+/// build.
+#[test]
+fn build_check_is_on_the_attach_connection() {
+    run(async {
+        let e = Env::new();
+        let id = "bc".repeat(16);
+        let conns: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
+        let cs = conns.clone();
+        let _h = fake_holder(
+            e.dir(),
+            &id,
+            handler(move |mut conn| {
+                let cs = cs.clone();
+                async move {
+                    let n = {
+                        let mut cs = cs.borrow_mut();
+                        cs.push(Vec::new());
+                        cs.len() - 1
+                    };
+                    while let Ok(r) = read_request(&mut conn).await {
+                        cs.borrow_mut()[n].push(r.method.clone());
+                        let resp = if r.method == wire::METHOD_INFO { info_response(&r) } else { wire::Response { id: r.id, epoch: "e".into(), ..Default::default() } };
+                        let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &resp)).await;
+                    }
+                }
+            }),
+        );
+        let mut c = e.connect("phone").await;
+        let r = c.attach(&id, 1, true).await;
+        assert!(r.error.is_empty(), "attach {r:?}");
+        let got = conns.borrow().clone();
+        assert_eq!(got, vec![vec![wire::METHOD_INFO.to_string(), wire::METHOD_ATTACH.to_string()]], "holder connections");
+
+        for (n, answer) in [("no sessions", wire::Response::default()), ("an error", wire::Response::error(0, wire::ERR_INTERNAL, "boom"))] {
+            let id = format!("{:02x}", 0xd0 + answer.error.len()).repeat(16);
+            let a = answer.clone();
+            let _h = fake_holder(
+                e.dir(),
+                &id,
+                handler(move |mut conn| {
+                    let a = a.clone();
+                    async move {
+                        while let Ok(r) = read_request(&mut conn).await {
+                            let resp = wire::Response { id: r.id, ..a.clone() };
+                            let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &resp)).await;
+                        }
+                    }
+                }),
+            );
+            let r = c.attach(&id, 2, true).await;
+            assert!(r.error == wire::ERR_INCOMPATIBLE && r.message.contains("can't be attached"), "info with {n}: attach {r:?}");
+        }
     });
 }
 

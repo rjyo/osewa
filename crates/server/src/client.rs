@@ -615,24 +615,6 @@ impl Stream {
 
     async fn run(self: Rc<Self>, session: String) {
         let client_id = self.c.id.borrow().clone();
-        // Before any of the holder's frames can reach the client: a holder
-        // of another build would send snapshots it can't decode.
-        let info = tokio::select! {
-            r = self.c.srv.holder_info(&session, &client_id) => r,
-            _ = self.until(|s| s.dead) => return,
-        };
-        let why = match info {
-            Ok(Some(s)) => s.incompatible,
-            Ok(None) => String::new(),
-            Err(e) => {
-                self.end();
-                return self.c.fail_dial(self.req_id, &e);
-            }
-        };
-        if !why.is_empty() {
-            self.end();
-            return self.c.fail(self.req_id, wire::ERR_INCOMPATIBLE, &format!("session {session} can't be attached: {why}; kill it and start a new one"));
-        }
         let conn = tokio::select! {
             r = self.c.srv.dial_holder(&session, &client_id) => r,
             _ = self.until(|s| s.dead) => return,
@@ -644,7 +626,26 @@ impl Stream {
                 return self.c.fail_dial(self.req_id, &e);
             }
         };
-        let (rd, wr) = conn.into_split();
+        let (rd, mut wr) = conn.into_split();
+        let mut rd = BufReader::with_capacity(64 << 10, rd);
+        // On this connection, before any of the holder's frames can reach
+        // the client: a holder of another build would send snapshots it
+        // can't decode.
+        let checked = tokio::select! {
+            r = self.c.srv.check_build(&mut rd, &mut wr, &client_id) => r,
+            _ = self.until(|s| s.dead) => return,
+        };
+        match checked {
+            Ok(why) if why.is_empty() => {}
+            Ok(why) => {
+                self.end();
+                return self.c.fail(self.req_id, wire::ERR_INCOMPATIBLE, &format!("session {session} can't be attached: {why}; kill it and start a new one"));
+            }
+            Err(e) => {
+                self.end();
+                return self.c.fail(self.req_id, wire::ERR_UNAVAILABLE, &e.to_string());
+            }
+        }
         tokio::task::spawn_local(self.clone().relay(rd));
         self.write_holder(wr).await;
     }
@@ -692,8 +693,7 @@ impl Stream {
 
     /// Copies holder frames to the client unchanged. It looks only at frame
     /// types and response ids, never at data payloads.
-    async fn relay(self: Rc<Self>, rd: OwnedReadHalf) {
-        let mut rd = BufReader::with_capacity(64 << 10, rd);
+    async fn relay(self: Rc<Self>, mut rd: BufReader<OwnedReadHalf>) {
         let mut attached = false;
         let mut deadline: Option<tokio::time::Instant> = None;
         let c = &self.c;

@@ -504,6 +504,43 @@ impl Server {
         }))
     }
 
+    /// Asks the holder at the other end of a fresh connection for its
+    /// session's info, over that connection, before anything else goes
+    /// over it: why this server can't serve it, or empty. Checking on
+    /// another connection would let a holder that took the socket in
+    /// between through. No answer with the session's info counts as
+    /// another build.
+    async fn check_build<R, W>(&self, rd: &mut R, wr: &mut W, client_id: &str) -> io::Result<String>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let req = wire::Request { id: 1, method: wire::METHOD_INFO.into(), client_id: client_id.into(), ..Default::default() };
+        let call = async {
+            let mut b = Vec::new();
+            wire::json(wire::TYPE_REQUEST, 0, &req).encode_to(&mut b)?;
+            wr.write_all(&b).await?;
+            loop {
+                let f = read_frame(rd).await?;
+                if f.ty != wire::TYPE_RESPONSE {
+                    continue;
+                }
+                let r: wire::Response = f.decode()?;
+                if r.id == req.id {
+                    return Ok::<_, io::Error>(r);
+                }
+            }
+        };
+        let r: wire::Response = tokio::time::timeout(self.cfg.tune.holder_timeout, call)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "holder: i/o timeout"))??;
+        Ok(match r.sessions.into_iter().next() {
+            Some(s) if r.error.is_empty() => incompatible(s.build.as_ref()),
+            _ if r.error.is_empty() => "its holder didn't report the session".into(),
+            _ => format!("its holder didn't report the session: {}: {}", r.error, r.message),
+        })
+    }
+
     /// Unlinks a socket that refused a connection, but only if it is older
     /// than any holder still starting up and refuses again after a pause.
     /// Unlinking a live holder's socket would orphan it.

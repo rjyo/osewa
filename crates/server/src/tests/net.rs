@@ -124,7 +124,7 @@ fn flood_holder(dir: &std::path::Path, id: &str, text: Rc<String>) -> FakeHolder
         handler(move |mut conn| {
             let text = text.clone();
             async move {
-                let Ok(r) = read_request(&mut conn).await else { return };
+                let Ok(r) = read_attach(&mut conn).await else { return };
                 let resp = wire::Response { id: r.id, epoch: "e".into(), ..Default::default() };
                 let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &resp)).await;
                 let mut end = 0u64;
