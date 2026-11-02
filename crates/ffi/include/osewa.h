@@ -131,7 +131,9 @@ void osewa_link_network_changed(osewa_link *l);
 void osewa_link_pause(osewa_link *l);
 void osewa_link_wake(osewa_link *l);
 /* Ends the forwards and closes the connection; close its sessions first.
-   Frees l; no callbacks fire after it returns. */
+   Waits (3 s at most) for those closes to reach the server, so sessions
+   killed just before (as an app quits) end on the host. Frees l; no
+   callbacks fire after it returns. */
 void osewa_link_close(osewa_link *l);
 
 /* Device keys. */

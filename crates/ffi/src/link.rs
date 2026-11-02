@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -29,6 +29,42 @@ use crate::session::{fatal, Callbacks, Sink, CLOSED, CONNECTED, CONNECTING, RECO
 const FORWARD_TIMEOUT: Duration = Duration::from_secs(15);
 /// Between attempts at a connection that isn't up yet, within FORWARD_TIMEOUT.
 const RETRY_AFTER: Duration = Duration::from_millis(250);
+/// How long closing a link waits for its sessions' closes (a kill) to
+/// reach the server.
+const CLOSE_WAIT: Duration = Duration::from_secs(3);
+
+/// The closes of a link's sessions still talking to the server: a kill or
+/// a detach runs in the background, on the link's connection, so closing
+/// the link waits for them (CLOSE_WAIT at most) rather than cutting them
+/// off. An app that kills its sessions as it quits leaves none behind.
+#[derive(Default)]
+pub struct Pending {
+    n: Mutex<usize>,
+    cv: Condvar,
+}
+
+/// One close in flight; dropping it ends it.
+pub struct PendingClose(Arc<Pending>);
+
+impl Pending {
+    pub fn start(self: &Arc<Self>) -> PendingClose {
+        *self.n.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        PendingClose(self.clone())
+    }
+
+    fn wait(&self, d: Duration) {
+        let n = self.n.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = self.cv.wait_timeout_while(n, d, |n| *n > 0);
+    }
+}
+
+impl Drop for PendingClose {
+    fn drop(&mut self) {
+        let mut n = self.0.n.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        self.0.cv.notify_all();
+    }
+}
 
 /// An open link (osewa_link).
 pub struct LinkHandle {
@@ -36,6 +72,7 @@ pub struct LinkHandle {
     link: Link,
     /// Sessions opened on the link name themselves by it.
     client_id: String,
+    pending: Arc<Pending>,
     stop: Option<oneshot::Sender<()>>,
     watcher: Option<JoinHandle<()>>,
     forwards: Mutex<HashMap<u16, Listener>>,
@@ -69,7 +106,7 @@ impl LinkHandle {
                 })
             })
             .expect("osewa: link thread");
-        LinkHandle { sink, link, client_id, stop: Some(stop), watcher: Some(watcher), forwards: Mutex::default() }
+        LinkHandle { sink, link, client_id, pending: Arc::default(), stop: Some(stop), watcher: Some(watcher), forwards: Mutex::default() }
     }
 
     pub fn link(&self) -> &Link {
@@ -78,6 +115,11 @@ impl LinkHandle {
 
     pub fn client_id(&self) -> &str {
         &self.client_id
+    }
+
+    /// Where the link's sessions report their closes.
+    pub fn pending(&self) -> Arc<Pending> {
+        self.pending.clone()
     }
 
     /// Listens on 127.0.0.1:local_port (0 picks one) and forwards each
@@ -109,8 +151,9 @@ impl LinkHandle {
         self.sink.off();
     }
 
-    /// Stops following, ends every forward, and closes the link in the
-    /// background. Sessions opened on it end with it. Call quiesce first.
+    /// Stops following, ends every forward, waits for its sessions' closes
+    /// (CLOSE_WAIT at most), and closes the link in the background.
+    /// Sessions still open on it end with it. Call quiesce first.
     pub fn close(mut self) {
         self.sink.off();
         if let Some(stop) = self.stop.take() {
@@ -123,6 +166,7 @@ impl LinkHandle {
         for (_, l) in forwards {
             l.stop();
         }
+        self.pending.wait(CLOSE_WAIT);
         let link = self.link.clone();
         // The network may be gone: the app's thread must not wait on it.
         std::thread::spawn(move || {

@@ -97,7 +97,7 @@ pub unsafe extern "C" fn osewa_open_on(l: *mut OsewaLink, opts: *const OpenOptio
         match unsafe { options::read_on(o) } {
             Ok(mut o) => {
                 o.cfg.client_id = l.0.client_id().to_string();
-                Box::into_raw(Box::new(OsewaSession(Handle::open(o, cb, Some(l.0.link().clone())))))
+                Box::into_raw(Box::new(OsewaSession(Handle::open(o, cb, Some((l.0.link().clone(), l.0.pending()))))))
             }
             Err(e) => fail(&e),
         }

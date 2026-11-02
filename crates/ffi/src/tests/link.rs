@@ -183,3 +183,34 @@ fn link_bad_options_fail_open() {
     unsafe { osewa_string_free(err) };
     assert!(e.contains("server_key"), "{e}");
 }
+
+/// A session killed just before its link closes still ends on the host:
+/// the link's close waits for the kill.
+#[test]
+fn link_close_waits_for_kills() {
+    let host = Host::new();
+    let lr = Rec::new(80, 24);
+    let l = open_link(&host, &lr);
+    lr.wait_state(CONNECTED);
+    let r = Rec::new(80, 24);
+    let mut s = Strings::default();
+    let mut o = c_opts(&host.open_opts(), &mut s);
+    (o.addr, o.server_key, o.client_id) = (std::ptr::null(), std::ptr::null(), std::ptr::null());
+    let mut err: *mut c_char = std::ptr::null_mut();
+    let h = unsafe { osewa_open_on(l, &o, r.callbacks(), &mut err) };
+    assert!(!h.is_null());
+    r.wait_state(CONNECTED);
+    let id = r.wait_event("session")["id"].as_str().unwrap().to_string();
+    unsafe { osewa_kill(h) };
+    unsafe { osewa_link_close(l) };
+
+    // Reopened, it is gone or (within the holder's exit retention) seen
+    // exiting, never running.
+    let r2 = Rec::new(80, 24);
+    let mut o = host.open_opts();
+    o.session_id = Some(id);
+    let h2 = open(&o, &r2);
+    let why = r2.wait_state(CLOSED).unwrap_or_default();
+    assert!(why.starts_with("ended: ") || why.starts_with("exit "), "{why}");
+    unsafe { osewa_close(h2) };
+}

@@ -198,13 +198,15 @@ pub struct Handle {
     /// The link is this session's alone (osewa_open), not an osewa_link's
     /// (osewa_open_on): closing the session closes it.
     own_link: bool,
+    /// An osewa_link's: closing the link waits for this session's close.
+    pending: Option<Arc<crate::link::Pending>>,
     live: Arc<Mutex<Live>>,
 }
 
 impl Handle {
     /// Starts connecting in the background, on a link of its own or on
     /// shared, an osewa_link's.
-    pub fn open(o: Opened, cb: Callbacks, shared: Option<Link>) -> Handle {
+    pub fn open(o: Opened, cb: Callbacks, shared: Option<(Link, Arc<crate::link::Pending>)>) -> Handle {
         let sink = Arc::new(Sink::new(cb));
         let (cmds, cmd_rx) = mpsc::unbounded_channel();
         let size = Size { cols: o.cols, rows: o.rows, width: o.width, height: o.height };
@@ -224,7 +226,10 @@ impl Handle {
             }
         }));
         let own_link = shared.is_none();
-        let link = shared.unwrap_or_else(|| Link::new(cfg));
+        let (link, pending) = match shared {
+            Some((l, p)) => (l, Some(p)),
+            None => (Link::new(cfg), None),
+        };
         let backlog = Arc::new(Backlog::default());
         let w = Worker { o, link: link.clone(), sink: sink.clone(), live: live.clone(), backlog: backlog.clone() };
         let thread = std::thread::Builder::new()
@@ -240,7 +245,7 @@ impl Handle {
                 })
             })
             .expect("osewa: session thread");
-        Handle { sink, backlog, cmds, size, stop: Some(stop), thread: Some(thread), link, own_link, live }
+        Handle { sink, backlog, cmds, size, stop: Some(stop), thread: Some(thread), link, own_link, pending, live }
     }
 
     pub fn send(&self, b: &[u8]) -> Result<(), Refused> {
@@ -304,8 +309,10 @@ impl Handle {
         }
         let live = std::mem::take(&mut *self.live.lock().unwrap_or_else(|e| e.into_inner()));
         let (link, own_link) = (self.link.clone(), self.own_link);
+        let closing = self.pending.as_ref().map(|p| p.start());
         // The network may be gone: the app's thread must not wait on it.
         std::thread::spawn(move || {
+            let _closing = closing;
             osewa_client::block_on(async {
                 if kill {
                     if let Some(id) = &live.id {
