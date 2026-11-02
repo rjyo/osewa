@@ -20,7 +20,7 @@ const versionJson = `{"ghostty":"83fb9562…","osewa":"0.1.0","snapshot_version"
 </tbody></table></div>
 
 <h3 id="attach">osewa attach [flags] &lt;host&gt; [id]</h3>
-<p>Attach to a session. Without an id: the only session, or a new one if there are none. See <a href="/docs/sessions">Sessions</a>.</p>
+<p>Attach to a session. Without an id: the only running session it can attach, or a new one if there are none. See <a href="/docs/sessions">Sessions</a>.</p>
 <div class="tbl"><table><tbody>
   <tr><td><code>--take</code></td><td>Take ownership from another device.</td></tr>
   <tr><td><code>--predict auto|always|never</code></td><td>Local echo prediction. Default <code>auto</code>.</td></tr>
@@ -31,13 +31,13 @@ const versionJson = `{"ghostty":"83fb9562…","osewa":"0.1.0","snapshot_version"
 <p>Inside: <code>~.</code> detaches, <code>~t</code> or Ctrl-T (as a viewer) takes ownership, <code>~~</code> sends a <code>~</code>. Escapes work after Enter.</p>
 
 <h3 id="ls">osewa ls &lt;host&gt;</h3>
-<p>List sessions: <code>ID TITLE SIZE OWNER ATTACHED IDLE STATUS STATE</code>. Columns are padded with spaces, so scripts can split them.</p>
+<p>List sessions: <code>ID TITLE SIZE OWNER ATTACHED IDLE STATUS STATE</code>, where STATE is <code>running</code>, <code>exited N</code> or <code>incompatible</code>. Columns are padded with spaces, so scripts can split them.</p>
 
 <h3 id="new">osewa new &lt;host&gt; [-- argv...]</h3>
 <p>Start a session without attaching, and print its id. Runs your login shell, or <code>argv</code>.</p>
 
 <h3 id="kill">osewa kill &lt;host&gt; &lt;id&gt;</h3>
-<p>End a session.</p>
+<p>End a session. This works on <code>incompatible</code> sessions too, which can't be attached.</p>
 
 <h3 id="exec">osewa exec [--cwd dir] [--env K=V]... &lt;host&gt; -- argv...</h3>
 <p>Run a command on the host without a terminal; exits with its code. See <a href="/docs/forward-exec">Forwards and exec</a>.</p>

@@ -13,7 +13,7 @@ import { docs, docPath } from "../../data/docs.js";
   <dt>the server</dt>
   <dd>On the host: <code>osewa server</code> listens on port 7322, TCP for the TLS WebSocket and UDP for QUIC. It checks each device's key and relays its traffic to sessions. Usually it runs as a user service.</dd>
   <dt>the holders</dt>
-  <dd>One process per session, started by the server. A holder owns the shell's PTY and keeps the real screen in libghostty-vt, Ghostty's terminal engine. Holders don't depend on the server: restart or update the server and every session keeps running.</dd>
+  <dd>One process per session, started by the server. A holder owns the shell's PTY and keeps the real screen in libghostty-vt, Ghostty's terminal engine. Holders don't depend on the server: restart or update the server and every session keeps running. (After an update to an incompatible build, older sessions run on but can't be attached.)</dd>
 </dl>
 
 <h2>What happens when you connect</h2>
