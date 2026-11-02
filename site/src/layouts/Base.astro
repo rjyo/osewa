@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import { ClientRouter } from "astro:transitions";
 // The same hashed files global.css's @font-face points at, preloaded so
 // text paints in the real fonts on first load.
 import sans from "../fonts/inter-tight.woff2?url";
@@ -13,6 +14,10 @@ interface Props {
   noindex?: boolean;
   // JSON-LD for this page, if any.
   schema?: object;
+  // Client-side navigation between pages. The corridor opts out: its
+  // inline script owns window listeners and a render loop that would
+  // outlive a swap.
+  router?: boolean;
 }
 const {
   title = "osewa — faster than ssh, survives like mosh, never garbles",
@@ -20,6 +25,7 @@ const {
   path = "/",
   noindex = false,
   schema,
+  router = true,
 } = Astro.props;
 const url = new URL(path, "https://osewa.dev").href;
 // Card images must be absolute URLs. Source: og/og.html.
@@ -29,10 +35,14 @@ const imageAlt =
   "osewa: faster than ssh, survives like mosh, never garbles. A white maneki-neko with a red collar and gold bell beside the headline, and ssh 1995, mosh 2012, osewa 2026.";
 ---
 <!doctype html>
-<html lang="en">
+<html lang="en" data-router={router ? "" : undefined}>
   <head>
     <meta charset="utf-8" />
-    <script is:inline>document.documentElement.classList.add("js")</script>
+    <script is:inline>
+      document.documentElement.classList.add("js");
+      // A swap replaces <html>'s attributes, class included.
+      document.addEventListener("astro:after-swap", () => document.documentElement.classList.add("js"));
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
@@ -59,91 +69,115 @@ const imageAlt =
     {schema && <script type="application/ld+json" set:html={JSON.stringify(schema)} />}
     <link rel="preload" href={sans} as="font" type="font/woff2" crossorigin />
     <link rel="preload" href={mono} as="font" type="font/woff2" crossorigin />
+    {router && <ClientRouter />}
+    {import.meta.env.PROD && (
+      <>
+        <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-NE4CXSMB07"></script>
+        <script is:inline>
+          // GA4 property "osewa web". Page views after a ClientRouter swap
+          // come from the stream's enhanced measurement (browser history
+          // events), so nothing here listens for astro:page-load.
+          window.dataLayer = window.dataLayer || [];
+          function gtag() { dataLayer.push(arguments); }
+          gtag("js", new Date());
+          gtag("config", "G-NE4CXSMB07");
+        </script>
+      </>
+    )}
   </head>
   <body style="font-family: var(--sans); color: #111111">
     <slot />
     <script>
-      // Toggles: a button sets one key ("udp", "mode"); elements tagged
-      // data-when="key:value" show only for the current value.
-      for (const b of document.querySelectorAll<HTMLButtonElement>("[data-set]")) {
-        b.addEventListener("click", () => {
-          const [key, val] = b.dataset.set!.split(":");
-          for (const o of document.querySelectorAll<HTMLButtonElement>(`[data-set^="${key}:"]`)) {
-            o.setAttribute("aria-pressed", String(o === b));
-          }
-          for (const el of document.querySelectorAll<HTMLElement>(`[data-when^="${key}:"]`)) {
-            el.hidden = el.dataset.when !== `${key}:${val}`;
-          }
-        });
-      }
-      // Logo: the paw is a pendulum, angle = A·sin(phase). The phase always
-      // advances, so the motion never jumps; only the swing A changes.
-      // Hovering feeds A up to its full swing, leaving lets it decay, and the
-      // page load gives it one push. The word flies out the first time the
-      // paw reaches its right-hand peak.
-      const neko = document.querySelector<HTMLElement>(".neko-link");
-      const paw = neko?.querySelector<SVGElement>(".neko-paw");
-      const word = neko?.querySelector<HTMLElement>(".neko-word");
-      const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (!neko || !paw || !word || still) {
-        word?.classList.add("out");
-      } else {
-        const FULL = 12; // degrees
-        const PERIOD = 1.4; // seconds per back-and-forth
-        const GROW = 0.25; // time constant while fed
-        const FADE = 0.6; // time constant while dying down
-        let amp = 0, phase = 0, feed = true, hovering = false, last = 0, raf = 0;
-        let pushUntil = performance.now() + 1300; // the load push
-        const frame = (now: number) => {
-          const dt = Math.min(0.05, (now - last) / 1000);
-          last = now;
-          feed = hovering || now < pushUntil;
-          amp = feed ? amp + (FULL - amp) * (1 - Math.exp(-dt / GROW)) : amp * Math.exp(-dt / FADE);
-          const before = phase;
-          phase += (2 * Math.PI * dt) / PERIOD;
-          // First pass through the right-hand peak (phase = π/2).
-          if (before < Math.PI / 2 && phase >= Math.PI / 2) word.classList.add("out");
-          paw.style.transform = `rotate(${amp * Math.sin(phase)}deg)`;
-          if (!feed && amp < 0.05) {
-            amp = 0;
-            paw.style.transform = "";
-            raf = 0;
-            return;
-          }
-          raf = requestAnimationFrame(frame);
-        };
-        const start = () => {
-          if (raf) return;
-          last = performance.now();
-          raf = requestAnimationFrame(frame);
-        };
-        neko.addEventListener("mouseenter", () => {
-          hovering = true;
+      // With the router, scripts run once; astro:page-load fires on the
+      // first load and after every swap.
+      const init = () => {
+        // Toggles: a button sets one key ("udp", "mode"); elements tagged
+        // data-when="key:value" show only for the current value.
+        for (const b of document.querySelectorAll<HTMLButtonElement>("[data-set]")) {
+          b.addEventListener("click", () => {
+            const [key, val] = b.dataset.set!.split(":");
+            for (const o of document.querySelectorAll<HTMLButtonElement>(`[data-set^="${key}:"]`)) {
+              o.setAttribute("aria-pressed", String(o === b));
+            }
+            for (const el of document.querySelectorAll<HTMLElement>(`[data-when^="${key}:"]`)) {
+              el.hidden = el.dataset.when !== `${key}:${val}`;
+            }
+          });
+        }
+        // Logo: the paw is a pendulum, angle = A·sin(phase). The phase always
+        // advances, so the motion never jumps; only the swing A changes.
+        // Hovering feeds A up to its full swing, leaving lets it decay, and the
+        // page load gives it one push. The word flies out the first time the
+        // paw reaches its right-hand peak.
+        const neko = document.querySelector<HTMLElement>(".neko-link");
+        const paw = neko?.querySelector<SVGElement>(".neko-paw");
+        const word = neko?.querySelector<HTMLElement>(".neko-word");
+        const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (neko?.dataset.bound) {
+          // The logo persists across swaps and is already wired.
+        } else if (!neko || !paw || !word || still) {
+          word?.classList.add("out");
+        } else {
+          neko.dataset.bound = "1";
+          const FULL = 12; // degrees
+          const PERIOD = 1.4; // seconds per back-and-forth
+          const GROW = 0.25; // time constant while fed
+          const FADE = 0.6; // time constant while dying down
+          let amp = 0, phase = 0, feed = true, hovering = false, last = 0, raf = 0;
+          let pushUntil = performance.now() + 1300; // the load push
+          const frame = (now: number) => {
+            const dt = Math.min(0.05, (now - last) / 1000);
+            last = now;
+            feed = hovering || now < pushUntil;
+            amp = feed ? amp + (FULL - amp) * (1 - Math.exp(-dt / GROW)) : amp * Math.exp(-dt / FADE);
+            const before = phase;
+            phase += (2 * Math.PI * dt) / PERIOD;
+            // First pass through the right-hand peak (phase = π/2).
+            if (before < Math.PI / 2 && phase >= Math.PI / 2) word.classList.add("out");
+            paw.style.transform = `rotate(${amp * Math.sin(phase)}deg)`;
+            if (!feed && amp < 0.05) {
+              amp = 0;
+              paw.style.transform = "";
+              raf = 0;
+              return;
+            }
+            raf = requestAnimationFrame(frame);
+          };
+          const start = () => {
+            if (raf) return;
+            last = performance.now();
+            raf = requestAnimationFrame(frame);
+          };
+          neko.addEventListener("mouseenter", () => {
+            hovering = true;
+            start();
+          });
+          neko.addEventListener("mouseleave", () => (hovering = false));
           start();
+        }
+        // Copy buttons.
+        for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
+          btn.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(btn.dataset.copy!);
+              btn.textContent = "copied";
+            } catch {
+              btn.textContent = "select it";
+            }
+            setTimeout(() => (btn.textContent = "copy"), 1600);
+          });
+        }
+        // Replay: re-inserting the bars restarts their CSS animations.
+        const bars = document.getElementById("replay-bars");
+        document.querySelector("[data-replay]")?.addEventListener("click", () => {
+          if (!bars) return;
+          const fresh = bars.cloneNode(true);
+          bars.replaceWith(fresh);
+          (fresh as HTMLElement).id = "replay-bars";
         });
-        neko.addEventListener("mouseleave", () => (hovering = false));
-        start();
-      }
-      // Copy buttons.
-      for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
-        btn.addEventListener("click", async () => {
-          try {
-            await navigator.clipboard.writeText(btn.dataset.copy!);
-            btn.textContent = "copied";
-          } catch {
-            btn.textContent = "select it";
-          }
-          setTimeout(() => (btn.textContent = "copy"), 1600);
-        });
-      }
-      // Replay: re-inserting the bars restarts their CSS animations.
-      const bars = document.getElementById("replay-bars");
-      document.querySelector("[data-replay]")?.addEventListener("click", () => {
-        if (!bars) return;
-        const fresh = bars.cloneNode(true);
-        bars.replaceWith(fresh);
-        (fresh as HTMLElement).id = "replay-bars";
-      });
+      };
+      if (document.documentElement.hasAttribute("data-router")) document.addEventListener("astro:page-load", init);
+      else init();
     </script>
   </body>
 </html>

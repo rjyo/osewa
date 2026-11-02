@@ -11,5 +11,8 @@ export default defineConfig({
   // "file" writes paper.html, which Workers assets serve at /paper, the
   // canonical URL; the default paper/index.html would 307 to /paper/.
   build: { inlineStylesheets: "always", format: "file" },
+  // Pages swap client-side (Base.astro's ClientRouter); fetching on hover
+  // makes the swap land at once.
+  prefetch: { prefetchAll: true, defaultStrategy: "hover" },
   integrations: [sitemap()],
 });
