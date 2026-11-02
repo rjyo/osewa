@@ -80,6 +80,58 @@ pub fn build_info() -> String {
     .to_string()
 }
 
+/// `osewa-build-id:p<version>-g<ghostty, 12>-s<snapshot_version>`, the
+/// build id hosts are released under (scripts/release.sh), as plain bytes
+/// in the binary: a release checks a binary it can't run, such as an x86_64
+/// one without Rosetta, by finding it.
+#[used]
+pub static BUILD_ID_MARKER: [u8; 64] = build_id_marker();
+
+const fn build_id_marker() -> [u8; 64] {
+    const fn put(b: &mut [u8; 64], mut n: usize, s: &[u8]) -> usize {
+        let mut i = 0;
+        while i < s.len() {
+            b[n] = s[i];
+            n += 1;
+            i += 1;
+        }
+        n
+    }
+    const fn put_int(b: &mut [u8; 64], n: usize, v: i32) -> usize {
+        assert!(v >= 0);
+        let mut digits = [0u8; 10];
+        let (mut len, mut v) = (0, v);
+        loop {
+            digits[len] = b'0' + (v % 10) as u8;
+            len += 1;
+            v /= 10;
+            if v == 0 {
+                break;
+            }
+        }
+        let mut i = 0;
+        while i < len {
+            b[n + i] = digits[len - 1 - i];
+            i += 1;
+        }
+        n + len
+    }
+    let mut b = [0u8; 64];
+    let mut n = put(&mut b, 0, b"osewa-build-id:p");
+    n = put_int(&mut b, n, wire::VERSION);
+    n = put(&mut b, n, b"-g");
+    let g = GHOSTTY_COMMIT.as_bytes();
+    let mut i = 0;
+    while i < 12 {
+        b[n] = g[i];
+        n += 1;
+        i += 1;
+    }
+    n = put(&mut b, n, b"-s");
+    put_int(&mut b, n, SNAPSHOT_VERSION);
+    b
+}
+
 /// Hears each WELCOME's carriers, to remember them (hosts.json keeps the
 /// QUIC port).
 pub type OnCarriers = Arc<dyn Fn(&[wire::Carrier]) + Send + Sync>;

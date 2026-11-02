@@ -6,6 +6,10 @@
 # TARGET=<zig triple> (e.g. x86_64-linux-musl) cross-builds into
 # .cache/libghostty/<os>-<arch> for that triple, where crates/ghostty/build.rs
 # looks for that target.
+#
+# LIBGHOSTTY_OUT=<dir> builds there instead (cargo reads it as
+# OSEWA_LIBGHOSTTY), so release builds for a baseline CPU never replace the
+# development ones.
 set -euo pipefail
 
 GHOSTTY_COMMIT=83fb95624b0439ee660c2679b43b38c8b63769cd
@@ -24,7 +28,7 @@ if [[ -n "${TARGET:-}" ]]; then
 	zigflags=("-Dtarget=$TARGET")
 fi
 src="$root/.cache/ghostty-src"
-out="$root/.cache/libghostty/$platform"
+out=${LIBGHOSTTY_OUT:-"$root/.cache/libghostty/$platform"}
 
 if [[ -f "$out/lib/libghostty-vt.a" && "$(cat "$out/COMMIT" 2>/dev/null)" == "$GHOSTTY_COMMIT" &&
 	"$(cat "$out/TARGET" 2>/dev/null)" == "${TARGET:-}" ]]; then

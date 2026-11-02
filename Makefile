@@ -1,4 +1,4 @@
-.PHONY: libghostty build check test cover clean ios-framework
+.PHONY: libghostty build check test cover clean ios-framework release release-publish
 
 CARGO ?= cargo
 
@@ -12,6 +12,15 @@ build: libghostty
 # target/Osewa.xcframework: the C API for iOS apps (macOS with Xcode).
 ios-framework:
 	./scripts/build-ios-framework.sh
+
+# dist/<buildId>/: osewa for linux and darwin, amd64 and arm64, gzipped with
+# SHA256SUMS and build.json; see scripts/release.sh. release-publish
+# uploads them to the CDN for moshi-hook.
+release:
+	./scripts/release.sh build
+
+release-publish:
+	./scripts/release.sh publish
 
 check: libghostty
 	$(CARGO) clippy --all-targets -- -D warnings

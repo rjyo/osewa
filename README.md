@@ -183,6 +183,17 @@ Build from source (needs Rust and Zig for libghostty-vt):
     make check        # clippy + tests
     make build        # bin/osewa
     make ios-framework  # target/Osewa.xcframework: the C API (crates/ffi/include/osewa.h) for iOS apps
+    make release      # dist/<buildId>/: linux (static musl) and darwin binaries, amd64 and arm64
+
+Releasing host binaries: `scripts/release.sh publish` signs and notarizes
+the darwin builds, then uploads `dist/<buildId>/` to
+`https://cdn.getmoshi.app/osewa/<buildId>/`, where moshi-hook finds them.
+The build id (`p<protocol>-g<ghostty>-s<snapshot>`, from `osewa version
+--json`) names binaries that interoperate; a published one never changes.
+Binaries it can run here (Docker for linux, Rosetta for darwin-amd64)
+must print the same `version --json`; the others are checked by arch and
+the build id baked into them. It uses app-hook's signing and R2
+credentials (see the script's header).
 
 ## Roadmap
 

@@ -209,6 +209,15 @@ fn build_info_shape() {
     assert_eq!(v.as_object().unwrap().len(), 4, "{v}");
 }
 
+/// The marker release.sh greps for is the build id `version --json` gives.
+#[test]
+fn build_id_marker_matches_build_info() {
+    let v: serde_json::Value = serde_json::from_str(&build_info()).unwrap();
+    let id = format!("p{}-g{}-s{}", v["version"], &v["ghostty"].as_str().unwrap()[..12], v["snapshot_version"]);
+    let marker = std::str::from_utf8(&BUILD_ID_MARKER).unwrap().trim_end_matches('\0');
+    assert_eq!(marker, format!("osewa-build-id:{id}"));
+}
+
 #[test]
 fn ghostty_commit_matches() {
     assert_eq!(crate::GHOSTTY_COMMIT, ghostty::COMMIT);
