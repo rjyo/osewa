@@ -130,12 +130,13 @@ fn service_systemd() {
     let mut sv = service("linux", home.path(), "/home/u/.local/bin/osewa", out.clone(), ran.clone(), never);
     sv.install(&args(&["--listen", ":7400", "--no-compress", "--no-forward", "--no-exec"])).unwrap();
     let unit = std::fs::read_to_string(home.path().join(".config/systemd/user/osewa.service")).unwrap();
-    // Byte for byte the v0 unit, so a reinstall by any osewa is a no-op.
+    // KillMode=process, or stopping the server kills every holder in its
+    // cgroup, and every session with it.
     assert_eq!(
         unit,
         "[Unit]\nDescription=osewa server (persistent terminals)\n\n[Service]\n\
          ExecStart=\"/home/u/.local/bin/osewa\" \"server\" \"--listen\" \":7400\" \"--no-compress\" \"--no-forward\" \"--no-exec\"\n\
-         Restart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n"
+         KillMode=process\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n"
     );
     assert_eq!(ran.lock().unwrap().join("; "), "systemctl --user daemon-reload; systemctl --user enable --now osewa.service");
     assert!(out.string().contains("enabled, started") && out.string().contains("enable-linger"), "output {:?}", out.string());

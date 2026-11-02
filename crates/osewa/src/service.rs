@@ -102,8 +102,12 @@ impl Service {
 
     fn install_systemd(&mut self, argv: &[String]) -> Result<(), String> {
         let quoted: Vec<String> = argv.iter().map(|a| osewa_wire::quote(a)).collect();
+        // KillMode=process: the holders the server starts stay in its
+        // cgroup (setsid doesn't leave it), and systemd's default kills the
+        // whole cgroup on stop, restart, disable --now and whenever the
+        // server exits, ending every session. Only the server goes.
         let unit = format!(
-            "[Unit]\nDescription=osewa server (persistent terminals)\n\n[Service]\nExecStart={}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+            "[Unit]\nDescription=osewa server (persistent terminals)\n\n[Service]\nExecStart={}\nKillMode=process\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
             quoted.join(" ")
         );
         write_private(&self.unit_path(), &unit)?;
