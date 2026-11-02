@@ -550,6 +550,7 @@ fn list_relays_attached_and_idle() {
             owner: "phone".into(),
             attached: 2,
             idle_seconds: 3600,
+            build: Some(crate::own_build()),
             ..Default::default()
         };
         let w = want.clone();
@@ -571,6 +572,50 @@ fn list_relays_attached_and_idle() {
         let mut c = e.connect("phone").await;
         let r = c.list().await;
         assert!(r.error.is_empty() && r.sessions == vec![want], "list {r:?}");
+    });
+}
+
+/// A holder outlives its server: after an update, the new server finds the
+/// old build's holders. It lists them as incompatible and never relays
+/// their frames (snapshots in a format the client wasn't promised), and a
+/// holder too old to report its build counts as another build.
+#[test]
+fn other_build_holders_are_listed_not_attached() {
+    run(async {
+        let e = Env::new();
+        let old = wire::Build { ghostty: "0123456789ab".repeat(4)[..40].into(), ..crate::own_build() };
+        let attaches = Rc::new(std::cell::Cell::new(0));
+        let mut holders = Vec::new();
+        for (id, build) in [("78".repeat(16), Some(old.clone())), ("9a".repeat(16), None)] {
+            let (n, info) = (attaches.clone(), wire::SessionInfo { id: id.clone(), cols: 80, rows: 24, build, ..Default::default() });
+            holders.push(fake_holder(
+                e.dir(),
+                &id,
+                handler(move |mut conn| {
+                    let (n, info) = (n.clone(), info.clone());
+                    async move {
+                        let Ok(r) = read_request(&mut conn).await else { return };
+                        if r.method == wire::METHOD_ATTACH {
+                            n.set(n.get() + 1);
+                        }
+                        let resp = wire::Response { id: r.id, sessions: vec![info], epoch: "e".into(), ..Default::default() };
+                        let _ = write_frame(&mut conn, wire::json(wire::TYPE_RESPONSE, 0, &resp)).await;
+                    }
+                }),
+            ));
+        }
+        let mut c = e.connect("phone").await;
+        let r = c.list().await;
+        assert_eq!(r.sessions.len(), 2, "list {r:?}");
+        for s in &r.sessions {
+            assert!(!s.incompatible.is_empty() && s.incompatible.contains(&crate::own_build().id()), "{s:?}");
+        }
+        assert!(r.sessions.iter().any(|s| s.incompatible.contains(&old.id())), "{r:?}");
+        for (i, id) in ["78".repeat(16), "9a".repeat(16)].iter().enumerate() {
+            let resp = c.attach(id, i as u32 + 1, true).await;
+            assert!(resp.error == wire::ERR_UNAVAILABLE && resp.message.contains("can't be attached"), "attach {resp:?}");
+        }
+        assert_eq!(attaches.get(), 0, "an attach reached another build's holder");
     });
 }
 

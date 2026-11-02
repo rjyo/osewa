@@ -33,6 +33,9 @@ fn attach_output() {
     let info = c.info();
     assert_eq!((info.id.as_str(), info.cols, info.rows, info.owner.as_str()), ("s1", 50, 12, "dev1"));
     assert!(!info.exited && info.created != 0);
+    // What the server checks against its own build before serving it.
+    let b = info.build.expect("info without the holder's build");
+    assert_eq!((b.version, b.ghostty.as_str(), b.snapshot_version), (wire::VERSION, osewa_ghostty::COMMIT, osewa_ghostty::SNAPSHOT_VERSION));
     assert_eq!(c.term.as_ref().unwrap().size(), (50, 12));
     assert!(c.event_kinds().iter().any(|k| k == wire::EVENT_RESIZE) || c.gens[0].cols == 50, "no resize to the owner's size");
 }

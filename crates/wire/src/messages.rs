@@ -222,6 +222,34 @@ pub struct SessionInfo {
     /// The latest root OSC 7501 record, if the program reports one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<ProgramStatus>,
+    /// The holder's build, which encodes the session's snapshots. A
+    /// holder outlives the server that started it, so it may be another
+    /// build than the server now serving it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<Build>,
+    /// Set by the server when the holder's build isn't its own: why it
+    /// won't attach the session, which can still be listed and killed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub incompatible: String,
+}
+
+/// A build as far as snapshots go: the fields of WELCOME, and of
+/// `osewa version --json`, that must be equal for two ends to interoperate.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct Build {
+    #[serde(default)]
+    pub version: i32,
+    #[serde(default)]
+    pub ghostty: String,
+    #[serde(default)]
+    pub snapshot_version: i32,
+}
+
+impl Build {
+    /// `p<version>-g<ghostty, 12>-s<snapshot_version>`, as releases name it.
+    pub fn id(&self) -> String {
+        format!("p{}-g{}-s{}", self.version, self.ghostty.get(..12).unwrap_or(&self.ghostty), self.snapshot_version)
+    }
 }
 
 /// One OSC 7501 program status record.

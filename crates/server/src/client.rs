@@ -398,16 +398,14 @@ impl Client {
             }
             let (srv, client_id, path) = (self.srv.clone(), client_id.clone(), e.path());
             calls.push(tokio::task::spawn_local(async move {
-                let req = wire::Request { id: 1, method: wire::METHOD_INFO.into(), ..Default::default() };
-                match srv.holder_call(&id, &client_id, req).await {
+                match srv.holder_info(&id, &client_id).await {
                     Err(e) => {
                         if refused(&e) {
                             srv.remove_if_stale(&path).await;
                         }
                         None
                     }
-                    Ok(r) if r.error.is_empty() => r.sessions.into_iter().next(),
-                    Ok(_) => None,
+                    Ok(s) => s,
                 }
             }));
         }
@@ -617,6 +615,24 @@ impl Stream {
 
     async fn run(self: Rc<Self>, session: String) {
         let client_id = self.c.id.borrow().clone();
+        // Before any of the holder's frames can reach the client: a holder
+        // of another build would send snapshots it can't decode.
+        let info = tokio::select! {
+            r = self.c.srv.holder_info(&session, &client_id) => r,
+            _ = self.until(|s| s.dead) => return,
+        };
+        let why = match info {
+            Ok(Some(s)) => s.incompatible,
+            Ok(None) => String::new(),
+            Err(e) => {
+                self.end();
+                return self.c.fail_dial(self.req_id, &e);
+            }
+        };
+        if !why.is_empty() {
+            self.end();
+            return self.c.fail(self.req_id, wire::ERR_UNAVAILABLE, &format!("session {session} can't be attached: {why}; kill it and start a new one"));
+        }
         let conn = tokio::select! {
             r = self.c.srv.dial_holder(&session, &client_id) => r,
             _ = self.until(|s| s.dead) => return,

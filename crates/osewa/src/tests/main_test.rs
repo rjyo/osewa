@@ -215,6 +215,17 @@ fn client_id() {
     assert!(a != b && a.starts_with(&format!("{}-", device_name())), "ids {a:?} {b:?}");
 }
 
+/// A session the server won't attach (another build's holder) isn't shown
+/// as running, whatever its process is doing.
+#[test]
+fn print_sessions_incompatible() {
+    let mut b = Vec::new();
+    let s = wire::SessionInfo { id: "cc".into(), cols: 80, rows: 24, incompatible: "its holder is build x".into(), ..Default::default() };
+    print_sessions(&mut b, &[s]).unwrap();
+    let s = String::from_utf8(b).unwrap();
+    assert_eq!(s.trim().split('\n').nth(1).unwrap().split_whitespace().last(), Some("incompatible"), "{s:?}");
+}
+
 #[test]
 fn print_sessions_columns() {
     let mut b = Vec::new();

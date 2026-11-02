@@ -160,3 +160,15 @@ fn quoting() {
     assert_eq!(quote("nope"), "\"nope\"");
     assert_eq!(quote("a\x1b\"\\\n\u{85}é"), r#""a\x1b\"\\\n\u0085é""#);
 }
+
+#[test]
+fn build_id_and_older_session_info() {
+    let b = Build { version: 0, ghostty: "83fb95624b0439ee660c2679b43b38c8b63769cd".into(), snapshot_version: 1 };
+    assert_eq!(b.id(), "p0-g83fb95624b04-s1");
+    // Holders before builds were reported: no build, nothing incompatible.
+    let s: SessionInfo = serde_json::from_str(r#"{"id":"a","cols":80,"rows":24}"#).unwrap();
+    assert!(s.build.is_none() && s.incompatible.is_empty());
+    let s = SessionInfo { build: Some(b.clone()), ..Default::default() };
+    let back: SessionInfo = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    assert_eq!(back.build, Some(b));
+}

@@ -490,6 +490,20 @@ impl Server {
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "holder: i/o timeout"))?
     }
 
+    /// The session's info from its holder, marked incompatible when the
+    /// holder is another build than this server.
+    async fn holder_info(&self, id: &str, client_id: &str) -> io::Result<Option<wire::SessionInfo>> {
+        let req = wire::Request { id: 1, method: wire::METHOD_INFO.into(), ..Default::default() };
+        let r = self.holder_call(id, client_id, req).await?;
+        if !r.error.is_empty() {
+            return Ok(None);
+        }
+        Ok(r.sessions.into_iter().next().map(|mut s| {
+            s.incompatible = incompatible(s.build.as_ref());
+            s
+        }))
+    }
+
     /// Unlinks a socket that refused a connection, but only if it is older
     /// than any holder still starting up and refuses again after a pause.
     /// Unlinking a live holder's socket would orphan it.
@@ -509,6 +523,24 @@ impl Server {
             }
             _ => {}
         }
+    }
+}
+
+/// This server's build, as its WELCOME gives it.
+pub(crate) fn own_build() -> wire::Build {
+    wire::Build { version: wire::VERSION, ghostty: osewa_ghostty::COMMIT.into(), snapshot_version: osewa_ghostty::SNAPSHOT_VERSION }
+}
+
+/// Why a holder of build `b` can't be served here, or empty. A holder
+/// outlives the server that started it, so after an update the new server
+/// finds the old build's holders: their snapshots are in a format other
+/// than the one WELCOME promised the client.
+pub(crate) fn incompatible(b: Option<&wire::Build>) -> String {
+    let own = own_build();
+    match b {
+        Some(b) if *b == own => String::new(),
+        Some(b) => format!("its holder is build {}, the server {}", b.id(), own.id()),
+        None => format!("its holder doesn't report its build (an older osewa), the server is {}", own.id()),
     }
 }
 

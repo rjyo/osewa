@@ -165,7 +165,14 @@ pub(crate) fn split_dashes(args: &[String]) -> (Vec<String>, Vec<String>) {
 pub(crate) fn print_sessions(w: &mut impl Write, list: &[wire::SessionInfo]) -> std::io::Result<()> {
     let mut rows = vec![["ID", "TITLE", "SIZE", "OWNER", "ATTACHED", "IDLE", "STATUS", "STATE"].map(String::from).to_vec()];
     for s in list {
-        let state = if s.exited { format!("exited {}", s.exit_code) } else { "running".into() };
+        // Not attachable here (another build's holder), so not "running".
+        let state = if !s.incompatible.is_empty() {
+            "incompatible".into()
+        } else if s.exited {
+            format!("exited {}", s.exit_code)
+        } else {
+            "running".into()
+        };
         let owner = if s.owner.is_empty() { "-".into() } else { printable(&owner_name(&s.owner)) };
         let idle = if s.attached == 0 { idle_string(Duration::from_secs(s.idle_seconds.max(0) as u64)) } else { "-".into() };
         // Titles and ids come from the host; a title is whatever a program
@@ -229,11 +236,11 @@ pub(crate) fn idle_string(d: Duration) -> String {
     }
 }
 
-/// Chooses what `attach <host>` attaches to: the only running session, or
-/// a new one when there is none.
+/// Chooses what `attach <host>` attaches to: the only running session it
+/// can attach, or a new one when there is none.
 pub(crate) async fn pick_session(c: &Conn, cols: i64, rows: i64, (width, height): (i64, i64)) -> Result<String> {
     let list = c.list().await?;
-    let running: Vec<_> = list.into_iter().filter(|s| !s.exited).collect();
+    let running: Vec<_> = list.into_iter().filter(|s| !s.exited && s.incompatible.is_empty()).collect();
     match running.len() {
         0 => Ok(c.create(CreateOptions { cols, rows, width, height, ..Default::default() }).await?),
         1 => Ok(running[0].id.clone()),

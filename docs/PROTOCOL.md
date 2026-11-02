@@ -173,7 +173,7 @@ Methods (REQUEST `method`):
 
 | Method | Arguments | Result |
 | --- | --- | --- |
-| `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?}]}` |
+| `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?}]}` |
 | `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`? | `{"session_id"}` |
 | `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
 | `session.detach` | `stream` | `{}` |
@@ -183,6 +183,14 @@ Methods (REQUEST `method`):
 | `session.colors` | `stream`, `foreground`?, `background`?, `cursor`?, `palette`? (256 entries) | `{}` (applies only for the owner) |
 | `session.clipboard` | `stream`, `data` (base64)? | `{}` (applies only for the owner) |
 | `session.kill` | `session` | `{}` |
+
+`build` is the holder's `{"version","ghostty","snapshot_version"}`, the
+fields of WELCOME. A holder outlives the server that started it, so after
+an update a server may find holders of another build, whose snapshots are
+not in the format its WELCOME promised: it lists them with `incompatible`,
+why, and answers `session.attach` for them `unavailable` without relaying
+anything; they can still be killed. A holder that reports no `build`
+counts as another build.
 
 `status` is the session's latest root OSC 7501 record
 (`state`, `kind`, `app`, `title`, `msg`, `progress`), absent when the

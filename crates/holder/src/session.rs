@@ -699,6 +699,12 @@ impl Session {
             attached,
             idle_seconds: 0,
             status: core.status.clone(),
+            build: Some(wire::Build {
+                version: wire::VERSION,
+                ghostty: ghostty::COMMIT.into(),
+                snapshot_version: ghostty::SNAPSHOT_VERSION,
+            }),
+            incompatible: String::new(),
         };
         if attached == 0 {
             info.idle_seconds = (core.clock)().saturating_duration_since(core.quiet_since).as_secs() as i64;
