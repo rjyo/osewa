@@ -1,0 +1,20 @@
+---
+import NekoLogo from "./NekoLogo.astro";
+// Every page but the corridor wears this header.
+interface Props { current?: "paper" | "docs" }
+const { current } = Astro.props;
+const links = [
+  { href: "/paper", label: "paper", key: "paper" },
+  { href: "/docs", label: "docs", key: "docs" },
+  { href: "/docs/install", label: "install" },
+  { href: "https://github.com/rjyo/osewa", label: "github ↗" },
+];
+---
+<header class="site-header" style="border-bottom: 1px solid #111111; background: #F4F4F1">
+<div style="max-width: 1200px; margin: 0 auto; padding: 6px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px">
+<NekoLogo />
+<nav id="nav-links" class="nav-links" aria-label="Main" style="display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; font-family: var(--mono); font-size: 13px">
+{links.map((l) => <a href={l.href} aria-current={l.key && l.key === current ? "page" : undefined} style="text-decoration: none; padding: 12px 0">{l.label}</a>)}
+</nav>
+</div>
+</header>

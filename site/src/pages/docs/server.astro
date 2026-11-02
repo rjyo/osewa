@@ -1,0 +1,82 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const svc = `osewa service install                 # start now and at every login or boot
+osewa service install --listen :9000  # the same, on another port
+osewa service uninstall               # stop it and remove the unit`;
+const daemon = `$ osewa server --daemon
+osewa server: started (pid 4821, [::]:7322, log /home/me/.local/state/osewa/server.log)`;
+const port = `# on the host
+osewa service install --listen :9000
+
+# on your machine
+osewa login --service --addr devbox.example.com:9000 me@devbox`;
+const update = `osewa update devbox
+copied osewa (linux/amd64) to devbox
+devbox's server restarted with it`;
+---
+<Docs slug="server" description="Run the osewa server as a systemd or launchd user service, change its port, open the firewall, update it, and find its log.">
+<p class="lede">Each user on a host runs their own osewa server, as that user. It listens on one port, 7322 by default, and starts a process per session. <code>osewa login --service</code> sets all of this up; this page is for changing it.</p>
+
+<h2>As a service</h2>
+<pre><code>{svc}</code></pre>
+<p>A service restarts the server if it crashes and starts it again after a reboot.</p>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>Linux</th><th>macOS</th></tr></thead>
+  <tbody>
+    <tr><td>Manager</td><td>systemd, user unit</td><td>launchd, user agent</td></tr>
+    <tr><td>File</td><td><code>~/.config/systemd/user/osewa.service</code></td><td><code>~/Library/LaunchAgents/dev.osewa.server.plist</code></td></tr>
+    <tr><td>Status</td><td><code>systemctl --user status osewa</code></td><td><code>launchctl print gui/$(id -u)/dev.osewa.server</code></td></tr>
+  </tbody>
+</table></div>
+<div class="note"><p><strong>Linux: enable lingering.</strong> systemd stops a user's services when they log out, unless lingering is on. On a server you reach only over ssh, run this once:</p>
+<pre style="margin: 8px 0 0"><code>loginctl enable-linger $USER</code></pre></div>
+<p>Running <code>service install</code> again rewrites the unit with the new flags and restarts the server. A server started with <code>--daemon</code> is stopped first.</p>
+
+<h2>Without a service manager</h2>
+<p><code>osewa server --daemon</code> detaches into the background, waits until the server answers, and reports:</p>
+<pre><code>{daemon}</code></pre>
+<p>It won't come back after a reboot. If a server is already running, it says so and leaves it alone. Plain <code>osewa server</code> runs in the foreground, logging to the terminal.</p>
+<p>Only one server runs per user. A second one fails with <code>osewa server: already running (pid N)</code>.</p>
+
+<h2 id="flags">Server flags</h2>
+<p>These go after <code>osewa server</code> or <code>osewa service install</code>. There is no config file.</p>
+<div class="tbl"><table>
+  <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>--listen :7322</code></td><td>The address and port. TCP and UDP use the same number. <code>:PORT</code> listens on every interface, IPv6 and IPv4.</td></tr>
+    <tr><td><code>--name N</code></td><td>The name the server gives itself. Defaults to the hostname.</td></tr>
+    <tr><td><code>--no-quic</code></td><td>Don't listen on UDP; clients use the TLS WebSocket only.</td></tr>
+    <tr><td><code>--no-compress</code></td><td>Don't compress what goes to clients over the WebSocket.</td></tr>
+    <tr><td><code>--no-forward</code></td><td>Refuse port forwards.</td></tr>
+    <tr><td><code>--no-exec</code></td><td>Refuse commands without a terminal. This also stops <code>osewa update</code> from working.</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="port">Changing the port</h2>
+<p>login always records port 7322, so after moving the server, log in again with <code>--addr</code> to point your machine at the new port:</p>
+<pre><code>{port}</code></pre>
+<p>Sessions survive the move: they don't live in the server. Do the second step on every device that uses the host.</p>
+<p>If 7322 is blocked where you are and only common ports get through, binding 443 needs root. Instead, keep osewa on a high port and redirect 443 to it with the host's firewall.</p>
+
+<h2>Firewalls</h2>
+<p>Open the port for TCP and UDP. With only TCP open, everything works over the TLS WebSocket, but each connection takes about 300 ms longer while QUIC is tried first, and you lose QUIC's separate streams. If the UDP port can't be bound, the server logs <code>osewa server: no QUIC: listen udp ...</code> and serves TCP alone.</p>
+
+<h2>Updating</h2>
+<p>Update a host from your machine, over osewa, without ssh:</p>
+<pre><code>{update}</code></pre>
+<p>It copies your build of osewa to the host's <code>~/.local/bin/osewa</code>, checks its hash, and restarts the server with it. Sessions keep running across the restart, and your attached windows reconnect. The host gets the build for its own platform, found the same way as at <a href="/docs/install">login</a>.</p>
+<div class="note"><p>A server started with <code>--daemon</code> comes back from an update with default flags: a custom <code>--listen</code> is lost. Run it as a service to keep its flags.</p></div>
+<p>Your machine and the host must run compatible builds: the same protocol version and the same libghostty-vt. When they don't, commands fail with <code>update osewa on the host or here</code>.</p>
+
+<h2>Logs</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Started as</th><th>Log</th></tr></thead>
+  <tbody>
+    <tr><td>Linux service</td><td>the journal: <code>journalctl --user -u osewa</code></td></tr>
+    <tr><td>macOS service</td><td><code>~/.local/state/osewa/server.log</code></td></tr>
+    <tr><td><code>--daemon</code></td><td><code>~/.local/state/osewa/server.log</code></td></tr>
+    <tr><td>foreground</td><td>the terminal</td></tr>
+  </tbody>
+</table></div>
+<p><code>$XDG_STATE_HOME</code>, when set, replaces <code>~/.local/state</code>.</p>
+</Docs>

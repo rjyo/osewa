@@ -76,18 +76,6 @@ const imageAlt =
           }
         });
       }
-      // Mobile menu: the button opens the nav; picking a link closes it.
-      const header = document.querySelector<HTMLElement>(".site-header");
-      const menu = document.querySelector<HTMLButtonElement>(".nav-btn");
-      const menuText = menu?.querySelector(".nav-btn-text");
-      const setMenu = (open: boolean) => {
-        if (!header || !menu) return;
-        header.toggleAttribute("data-open", open);
-        menu.setAttribute("aria-expanded", String(open));
-        if (menuText) menuText.textContent = open ? "close" : "menu";
-      };
-      menu?.addEventListener("click", () => setMenu(!header?.hasAttribute("data-open")));
-      for (const a of document.querySelectorAll(".nav-links a")) a.addEventListener("click", () => setMenu(false));
       // Logo: the paw is a pendulum, angle = A·sin(phase). The phase always
       // advances, so the motion never jumps; only the swing A changes.
       // Hovering feeds A up to its full swing, leaving lets it decay, and the

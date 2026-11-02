@@ -1,0 +1,72 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const basics = `osewa attach devbox            # attach to the only session, or start one
+osewa ls devbox                # list sessions
+osewa new devbox               # start another session, print its id
+osewa new devbox -- htop       # start one running a program
+osewa attach devbox 3f9c…      # attach to a session by id
+osewa kill devbox 3f9c…        # end a session`;
+const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  IDLE  STATUS   STATE
+3f9c2a7e5b1d48e6a0c4f2b97d1e5a83  claude  120x40  laptop  1         -     working  running
+9b0e41d7c2a35f8e6d1b0a7c4e92f315  vim     80x24   -       0         3h5m  -        running`;
+---
+<Docs slug="sessions" description="Attach to sessions on a host, detach and come back, share a session between devices, and tune echo prediction, graphics and clipboard.">
+<p class="lede">A session is a shell, or any program, running on the host in its own process. It doesn't belong to a connection: you attach, detach, lose the network or close the laptop, and it keeps running until it exits.</p>
+
+<h2>The basics</h2>
+<pre><code>{basics}</code></pre>
+<p><code>attach</code> with no id attaches to the host's session if there is exactly one, and starts a new one if there are none. With several, it lists them and asks you to pick. Ids are 32 hex characters, and commands need the whole id.</p>
+<p>A new session runs your login shell, or the program after <code>--</code>. It starts in your home directory with a clean environment built from the host's account: <code>HOME</code>, <code>USER</code>, <code>SHELL</code>, a standard <code>PATH</code> (Homebrew first on macOS), your locale and time zone, and <code>TERM=xterm-256color</code>.</p>
+
+<h2>Detaching</h2>
+<p>At the start of a line, type <code>~.</code> to detach. The session keeps running:</p>
+<pre><code>[osewa: detached; the session is still running]</code></pre>
+<p>The escapes, like ssh's, only work right after Enter:</p>
+<div class="tbl"><table>
+  <thead><tr><th>Keys</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>~.</code></td><td>Detach</td></tr>
+    <tr><td><code>~t</code></td><td>Take ownership (below)</td></tr>
+    <tr><td><code>~~</code></td><td>Send a literal <code>~</code></td></tr>
+  </tbody>
+</table></div>
+<p>Ctrl-C goes to the remote program, as you'd expect. When the program exits, attach prints <code>[osewa: session ended, exit N]</code> and exits with the same code.</p>
+
+<h2>When the network drops</h2>
+<p>Nothing to do. attach notices the dead connection, redials until the host answers, and resumes the session. Keys you typed in the meantime are numbered and delivered once. When it reconnects you get the current screen, not a replay of what you missed.</p>
+
+<h2>Owners and viewers</h2>
+<p>Any number of devices, or windows, can attach to one session. One is the <strong>owner</strong>: its keys reach the program and its window size is the session's size. The rest are <strong>viewers</strong>: they see the screen live, and what they type is dropped. A viewer sees:</p>
+<pre><code>viewing: laptop owns this session; Ctrl-T takes over</code></pre>
+<p>You become the owner when the session has none, when you already own it, or when you attach with <code>--take</code>. A viewer takes over with Ctrl-T, or <code>~t</code>. If the owner goes away, ownership lapses 30 seconds after its last connection drops, so a quick reconnect keeps it.</p>
+
+<h2>Listing sessions</h2>
+<pre><code>{ls}</code></pre>
+<dl>
+  <dt>OWNER</dt><dd>The owning device's name, or <code>-</code>.</dd>
+  <dt>ATTACHED</dt><dd>How many clients are attached now.</dd>
+  <dt>IDLE</dt><dd>How long since anyone was attached; <code>-</code> while someone is.</dd>
+  <dt>STATUS</dt><dd>What an agent in the session last reported: working, blocked, done or idle. Agents report it with OSC 7501; see <a href="/paper#agents">Built for agents</a>.</dd>
+  <dt>STATE</dt><dd><code>running</code>, or <code>exited N</code>.</dd>
+</dl>
+
+<h2>How long sessions live</h2>
+<ul>
+  <li>A running session lasts until its program exits, or until it has had nobody attached and no output for 24 hours.</li>
+  <li>An exited session stays in the list for 24 hours, so you can see how it ended.</li>
+  <li>Each session keeps up to 10 MiB of scrollback.</li>
+  <li>Restarting or updating the server doesn't touch sessions.</li>
+</ul>
+
+<h2>attach options</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>--take</code></td><td>Become the owner even if another device owns the session.</td></tr>
+    <tr><td><code>--predict auto|always|never</code></td><td>Local echo prediction. <code>auto</code>, the default, draws your keys before the host echoes them once the round trip reaches 30 ms. Nothing on a line is predicted until the host confirms one key, so passwords never show.</td></tr>
+    <tr><td><code>--graphics auto|always|never</code></td><td>Kitty graphics. <code>auto</code> turns them on in kitty, Ghostty and WezTerm.</td></tr>
+    <tr><td><code>--clipboard-read</code></td><td>Let programs on the host read your clipboard (OSC 52 and Kitty's clipboard protocol). Off by default; copying to your clipboard always works.</td></tr>
+    <tr><td><code>--quiet</code></td><td>Don't show a notice on the bottom row when an agent is blocked or done.</td></tr>
+  </tbody>
+</table></div>
+</Docs>

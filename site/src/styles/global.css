@@ -76,16 +76,10 @@ details summary::-webkit-details-marker{display:none}
 .tg[aria-pressed="true"]{background:#111111;color:#F4F4F1}
 [hidden]{display:none !important}
 
-/* ---- Mobile header: a menu button opens the nav as a list. ---- */
-.nav-btn{display:none;align-items:center;gap:10px;min-height:44px;padding:0 4px;border:0;background:none;color:#111111;font-family:var(--mono);font-size:13px;cursor:pointer}
-.nav-btn-icon{position:relative;width:18px;height:12px}
-.nav-btn-icon span{position:absolute;left:0;right:0;height:2px;background:currentColor;transition:transform .2s,top .2s}
-.nav-btn-icon span:first-child{top:1px}.nav-btn-icon span:last-child{top:9px}
-.site-header[data-open] .nav-btn-icon span:first-child{top:5px;transform:rotate(45deg)}
-.site-header[data-open] .nav-btn-icon span:last-child{top:5px;transform:rotate(-45deg)}
-
-/* Desktop nav keeps the short list; the menu and footer have the rest. */
-@media (min-width: 721px){.nav-extra{display:none}}
+/* ---- Header: four short links, so they stay inline even on phones. ---- */
+.site-header{position:sticky;top:0;z-index:10}
+html{scroll-padding-top:64px}
+.nav-links a[aria-current]{text-decoration:underline 2px #E0393E !important;text-underline-offset:6px}
 
 /* Headline numbers: four across, 2×2 when narrower. */
 @media (max-width: 979px){
@@ -97,14 +91,8 @@ details summary::-webkit-details-marker{display:none}
 
 /* ---- Phones. Inline styles carry the desktop layout, hence !important. ---- */
 @media (max-width: 720px){
-.site-header{position:sticky;top:0;z-index:10}
-html{scroll-padding-top:64px}
-.site-header>div{padding:8px 20px !important;flex-wrap:nowrap !important}
-.nav-btn{display:inline-flex}
-.nav-links{display:none !important}
-.site-header[data-open] .nav-links{display:flex !important;position:absolute;left:0;right:0;top:100%;flex-direction:column;align-items:stretch !important;gap:0 !important;background:#F4F4F1;border-bottom:1px solid #111111;padding:4px 20px 12px;font-size:15px !important}
-.site-header[data-open] .nav-links a{padding:14px 0 !important;border-bottom:1px solid #D3D3CE}
-.site-header[data-open] .nav-links a:last-child{border-bottom:0}
+.site-header>div{padding:4px 20px !important;flex-wrap:nowrap !important}
+.nav-links{gap:0 16px !important;font-size:12px !important;flex-wrap:nowrap !important}
 
 /* Headline numbers: smaller so two fit side by side. */
 .kpis>div{padding:20px 16px !important}

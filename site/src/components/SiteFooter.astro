@@ -1,0 +1,44 @@
+---
+// The dark footer under the paper and the docs. A page may add a column of
+// its own links ("This page").
+interface Props { page?: [string, string][] }
+const { page } = Astro.props;
+const columns = [
+  { title: "Project", links: [["GitHub ↗", "https://github.com/rjyo/osewa"], ["License", "https://github.com/rjyo/osewa/blob/main/LICENSE"], ["The paper", "/paper"], ["Roadmap", "/paper#roadmap"]] },
+  { title: "Docs", links: [["Install", "/docs/install"], ["Command line", "/docs/cli"], ["Wire protocol ↗", "https://github.com/rjyo/osewa/blob/main/docs/PROTOCOL.md"], ["Benchmark results ↗", "https://github.com/rjyo/osewa/blob/main/bench/RESULTS.md"]] },
+  ...(page ? [{ title: "This page", links: page }] : []),
+];
+---
+<footer style="background: #111111; color: #C9C9C2">
+<div style="max-width: 1200px; margin: 0 auto; padding: 72px 24px 32px; display: flex; flex-direction: column; gap: 56px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 48px; border-bottom: 1px solid #2A2A28">
+<p style="margin: 0; font-size: clamp(24px, 3vw, 34px); line-height: 1.15; font-weight: 600; letter-spacing: -0.03em; color: #F4F4F1; max-width: 520px">ssh once. Then let the network do what it likes.</p>
+<div style="display: flex; align-items: center; gap: 0; border: 1px solid #3A3A37; font-family: var(--mono); font-size: 14px; max-width: 100%">
+<code class="ft-cmd" style="padding: 14px 16px; color: #F4F4F1; white-space: nowrap; overflow-x: auto"><span style="color: #FF8A73">$</span> osewa login --service me@devbox</code>
+<button type="button" data-copy="osewa login --service me@devbox" style="align-self: stretch; padding: 0 16px; border: 0; border-left: 1px solid #3A3A37; background: #1C1C1B; color: #C9C9C2; font-family: var(--mono); font-size: 12px; cursor: pointer; min-width: 72px" class="ft-copy">copy</button>
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 40px 56px">
+<div style="display: flex; flex-direction: column; gap: 16px; max-width: 360px">
+<a href="/" style="display: inline-flex; align-items: center; gap: 12px; text-decoration: none; color: #F4F4F1">
+<svg width="36" height="36" viewBox="0 0 100 100" aria-hidden="true"><path fill="#FF6A4D" fill-rule="evenodd" d="M31 0.1C29.9 0.2 28.9 0.9 27.2 2.5C23.1 6.5 20 12 17.5 19.5C16.9 21.2 16.6 22.5 15.7 25.7C15 28.3 14.7 29.2 13.4 32.1C12.1 34.9 11.8 35.8 11.2 37.6C9 45.2 10.2 52.6 14.5 57.6C15 58.2 16.6 59 18 59.3C18.6 59.5 19.2 59.7 20.4 60.1C27.9 62.8 37.3 63.8 46.5 63C47.2 62.9 47.3 62.9 47.7 62.7C49.3 62 51 61.8 52.8 61.9C53.6 61.9 54 61.9 56 61.3C59.6 60.4 61.7 59.5 65.2 57.6C69.2 55.3 72.4 48.9 72.5 43.1C72.6 39.5 72.1 38.7 69.5 37.3C67.9 36.5 67.7 36.2 67 33.6C65.8 29.4 64.8 26.9 63.1 24.4C62.2 23.1 62.2 23.1 62.1 21.3C61.1 12.2 59.1 6.7 56.6 6.6C54.6 6.5 51.5 8.4 47.6 12.2C45.9 13.7 45.8 13.8 45.3 13.7C44.7 13.7 44.5 13.4 43.3 11.5C39 4.6 34.8 0.4 31.8 0C31.4 0 31.4 0 31 0.1ZM33.8 4.8C35.5 5.6 38.4 9.6 40.9 14.4C41.9 16.5 41.9 16.6 40.9 16.9C37.6 17.6 33.5 19.6 30 22.2C28.5 23.3 28.7 23.5 28.7 20.6C28.7 15.5 29.2 11.6 30.3 8.2C31.3 5.2 32.4 4.1 33.8 4.8ZM57.9 10.8C58.6 11.3 59.5 14.9 59.9 18.5C60.2 21.3 60.3 21.2 58.7 20.1C57.3 19.2 56.3 18.6 55.1 18.1C54 17.7 54 17.7 54.5 16.2C55.7 12.6 57.1 10.3 57.9 10.8ZM54.4 30.6C56.6 31.1 58.5 32.6 59.6 34.8C60.2 36 59.9 36.2 58.8 35.4C54.8 32.8 50.7 32.8 46.4 35.5C45.2 36.2 45 35.8 45.9 34.5C47.9 31.5 51.3 29.9 54.4 30.6ZM86.9 26.7C82.2 27.2 79.1 29.2 76.8 33.2C75.5 35.5 75.1 37.6 74.8 42.9C74.4 49.7 73.7 53 71.5 57C70.7 58.6 70.3 59.1 68.3 61.2C66.2 63.4 66.3 63.1 66.2 64C66.1 66.2 65 67.5 62.2 68.6C62 68.6 62 68.6 62.3 69.3C64.9 77.2 58 85 49.8 83.4C44.9 82.4 41.3 78.1 41.1 73.1L41.1 72.3L39.9 72.4C29.9 72.5 19.1 69.9 13.7 66.1C12.1 65.1 12 65.1 10.6 66.8C4.6 74 1.6 82.1 2.6 88.8C3.4 94.5 11 97.4 28.7 98.8C44.9 100 63.8 99.4 75 97.3C77.2 96.9 77.8 96.7 78.1 96.1C78.4 95.3 78.2 92.5 77.5 89.3C77 87 77 87.1 79 85.3C81.4 83.3 82.9 81.7 84.6 79.5C90.2 71.9 92 64 91 50.5C90.5 45.2 90.7 44.7 93.1 43.7C96.9 42.2 98.4 40 98.4 36.2C98.4 30.4 93.1 25.9 86.9 26.7ZM51 63.3C40.9 64.3 39.4 78.8 49.2 81.7C50.9 82.2 52.1 82.3 52.2 81.9C52.8 79.1 53 75.9 52.4 75.6C50.8 74.7 51.3 72.2 53.2 71.9C55.3 71.5 56.4 74.6 54.5 75.6C54.3 75.7 54.3 75.7 54.3 76.1C54.3 77.5 54 79.7 53.6 81.3C53.5 82.1 53.4 82.1 53.9 82C59.9 80.7 63.2 74.1 60.4 68.6C58.7 65 54.9 62.9 51 63.3Z"></path></svg>
+<span style="font-size: 26px; font-weight: 700; letter-spacing: -0.04em">osewa</span>
+</a>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #A3A39D"><span lang="ja" style="color: #F4F4F1">お世話</span> <span style="font-family: var(--mono); font-size: 13px">(o-se-wa)</span> is Japanese for looking after someone. Here, it's your sessions.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 32px 56px">
+{columns.map((c) => (
+<div style="display: flex; flex-direction: column; gap: 10px; min-width: 140px"><span style="font-family: var(--mono); font-size: 11px; color: #6E6E69; text-transform: uppercase; letter-spacing: .08em">{c.title}</span><ul style="list-style: none; margin: 0; padding: 0; font-size: 15px">{c.links.map(([label, href]) => <li><a href={href} style="color: #C9C9C2; text-decoration: none; display: inline-block; padding: 6px 0">{label}</a></li>)}</ul></div>
+))}
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding-top: 20px; border-top: 1px solid #2A2A28; font-family: var(--mono); font-size: 12px; color: #6E6E69">
+<span>open source · Apache-2.0</span>
+<span>terminal engine: libghostty-vt</span>
+</div>
+
+</div>
+</footer>

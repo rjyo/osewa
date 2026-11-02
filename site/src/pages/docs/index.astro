@@ -1,0 +1,35 @@
+---
+import Docs from "../../layouts/Docs.astro";
+import { docs, docPath } from "../../data/docs.js";
+---
+<Docs slug="" description="How to install osewa, keep sessions on a host, forward ports, run the server as a service, and manage device keys.">
+<p class="lede">osewa keeps your terminal sessions on the host and reaches them over QUIC, or a TLS WebSocket where UDP is blocked. You use ssh once, to install it and enroll your device. After that the shell outlives the network.</p>
+
+<h2>The pieces</h2>
+<p>There is one binary, <code>osewa</code>. The same file plays every part:</p>
+<dl>
+  <dt>the client</dt>
+  <dd>On your laptop: <code>osewa login</code>, <code>attach</code>, <code>forward</code>, <code>exec</code> and the rest. It holds your device key and the list of hosts you have logged in to.</dd>
+  <dt>the server</dt>
+  <dd>On the host: <code>osewa server</code> listens on port 7322, TCP for the TLS WebSocket and UDP for QUIC. It checks each device's key and relays its traffic to sessions. Usually it runs as a user service.</dd>
+  <dt>the holders</dt>
+  <dd>One process per session, started by the server. A holder owns the shell's PTY and keeps the real screen in libghostty-vt, Ghostty's terminal engine. Holders don't depend on the server: restart or update the server and every session keeps running.</dd>
+</dl>
+
+<h2>What happens when you connect</h2>
+<ol>
+  <li>The client dials QUIC and the TLS WebSocket together, giving QUIC a 300 ms head start, and keeps whichever connects first.</li>
+  <li>Both ends prove who they are with Ed25519 keys over TLS 1.3. The host's key was pinned when you enrolled, so there is no "trust this host?" prompt.</li>
+  <li>The host sends the session's current screen as one snapshot, then streams changes.</li>
+  <li>If the network drops, the client notices within about a second, redials, and resumes. Keystrokes are numbered and resent until the host acknowledges them, so none are lost or typed twice.</li>
+</ol>
+
+<h2>Platforms</h2>
+<p>Hosts run Linux or macOS, and so does the command-line client. There is no Windows build. <a href="https://moshi.fyi">Moshi</a>, the iOS and Android terminal app, is adding osewa as a transport beside mosh.</p>
+
+<h2>Where to go next</h2>
+<ul>
+  {docs.filter((d) => d.slug).map((d) => <li><a href={docPath(d.slug)}>{d.title}</a></li>)}
+</ul>
+<p>For why osewa exists and how it compares with ssh and mosh, read <a href="/paper">the paper</a>. The wire format is in <a href="https://github.com/rjyo/osewa/blob/main/docs/PROTOCOL.md">PROTOCOL.md</a>.</p>
+</Docs>

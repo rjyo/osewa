@@ -1,0 +1,44 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const fwd = `osewa forward devbox 3000                         # localhost:3000 -> the host's localhost:3000
+osewa forward devbox 8080:localhost:3000          # localhost:8080 -> the host's localhost:3000
+osewa forward devbox 5432:db.internal:5432        # a database the host can reach
+osewa forward devbox 0.0.0.0:3000:localhost:3000  # listen on every interface here
+osewa forward devbox 3000 5173 9229               # several at once`;
+const fwdOut = `forwarding 127.0.0.1:3000 -> localhost:3000 on devbox`;
+const exec = `osewa exec devbox -- make test
+osewa exec --cwd /srv/app devbox -- git status
+osewa exec --env RUST_LOG=debug devbox -- cargo run
+tar cz src | osewa exec devbox -- tar xz -C /tmp/copy`;
+---
+<Docs slug="forward-exec" description="Forward local ports through a host like ssh -L, and run commands on it without a terminal, on the same osewa connection.">
+<p class="lede">Besides terminals, an osewa connection carries port forwards and commands. Each gets its own QUIC stream, so a big transfer never stalls your typing in another window.</p>
+
+<h2>Port forwarding</h2>
+<p><code>osewa forward</code> works like <code>ssh -L</code>: it listens on a local port and carries each connection to a target the host can reach.</p>
+<pre><code>{fwd}</code></pre>
+<p>Each forward is <code>[bind:]port[:host:hostport]</code>. Two numbers alone, like <code>8080:3000</code>, read as a bind address and a port, so write the target host when the ports differ:</p>
+<ul>
+  <li><strong>bind</strong> is the local address to listen on. It defaults to <code>127.0.0.1</code>, so only this machine can use the forward.</li>
+  <li><strong>host:hostport</strong> is where the host connects. It defaults to <code>localhost</code> on the host, at the same port.</li>
+  <li>Write IPv6 addresses in brackets: <code>[::1]:3000</code>.</li>
+</ul>
+<p>It prints a line per forward and runs until you press Ctrl-C:</p>
+<pre><code>{fwdOut}</code></pre>
+<p>Like attach, forward survives network changes: it redials and keeps listening. A transfer that was open when the network dropped may need to be retried by the program using it.</p>
+
+<h2>Running commands</h2>
+<p><code>osewa exec</code> runs a command on the host without a terminal. stdin, stdout and stderr pass through, so it works in pipes and scripts.</p>
+<pre><code>{exec}</code></pre>
+<ul>
+  <li>The command runs directly, not through a shell, so <code>*</code>, <code>|</code> and <code>$VAR</code> are not expanded on the host. For those, run a shell: <code>osewa exec devbox -- sh -c 'ls *.log | wc -l'</code>.</li>
+  <li>It starts in your home directory, with the same clean environment as a new session. <code>--cwd</code> and <code>--env K=V</code> (repeatable) change that.</li>
+  <li>The exit code is the command's own, or 128 plus the signal number if a signal ended it. Interrupting osewa exits 130; an error in osewa itself exits 1.</li>
+</ul>
+
+<h2>When the host refuses</h2>
+<p>A host's server can turn these off with <code>--no-forward</code> and <code>--no-exec</code> (see <a href="/docs/server#flags">server flags</a>). Then you get:</p>
+<pre><code>the host's server doesn't allow forwarding (--no-forward)
+osewa: bad_request: the server does not offer exec</code></pre>
+<p><code>osewa update</code> uses exec, so it can't update a host whose server runs with <code>--no-exec</code>.</p>
+</Docs>

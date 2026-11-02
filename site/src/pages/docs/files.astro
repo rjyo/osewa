@@ -1,0 +1,61 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const hosts = `[
+  {
+    "name": "devbox",
+    "addr": "devbox.example.com:7322",
+    "server_key": "Qm9l…",
+    "ssh": "me@devbox",
+    "quic_port": 7322
+  }
+]`;
+---
+<Docs slug="files" description="Every file osewa writes on your machine and on the host, and the environment variables it reads.">
+<p class="lede">osewa keeps its state in a few plain files under your home directory, the same layout on your machine and on the host. Nothing is system-wide, and nothing needs root.</p>
+
+<h2>Config: ~/.config/osewa</h2>
+<p>Private: the directory must be mode 0700 and the files 0600, or osewa refuses to use them and says which <code>chmod</code> fixes it.</p>
+<div class="tbl"><table>
+  <thead><tr><th>File</th><th>Where</th><th>What</th></tr></thead>
+  <tbody>
+    <tr><td><code>client.key</code></td><td>your machine</td><td>This device's Ed25519 private key.</td></tr>
+    <tr><td><code>hosts.json</code></td><td>your machine</td><td>The hosts you have logged in to, with their pinned keys.</td></tr>
+    <tr><td><code>server.key</code></td><td>host</td><td>The host's Ed25519 private key.</td></tr>
+    <tr><td><code>devices</code></td><td>host</td><td>Enrolled devices, one JSON line each. Delete a line to revoke.</td></tr>
+    <tr><td><code>*.lock</code></td><td>both</td><td>Lock files for safe concurrent writes.</td></tr>
+  </tbody>
+</table></div>
+
+<h3>hosts.json</h3>
+<pre><code>{hosts}</code></pre>
+<p><code>quic_port</code> is filled in the first time the server tells the client it speaks QUIC, so the very first connection after login is WebSocket only. Editing <code>addr</code> by hand is fine; logging in again does the same.</p>
+
+<h2>On the host</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Path</th><th>What</th></tr></thead>
+  <tbody>
+    <tr><td><code>~/.local/bin/osewa</code></td><td>The binary login and update install.</td></tr>
+    <tr><td><code>~/.local/state/osewa/server.log</code></td><td>The server's log, for a daemon or a macOS service.</td></tr>
+    <tr><td><code>$XDG_RUNTIME_DIR/osewa/</code></td><td>Session sockets and <code>server.pid</code>. Without <code>XDG_RUNTIME_DIR</code> (macOS): <code>~/.local/state/osewa/run/</code>.</td></tr>
+    <tr><td><code>~/.config/systemd/user/osewa.service</code></td><td>The Linux service.</td></tr>
+    <tr><td><code>~/Library/LaunchAgents/dev.osewa.server.plist</code></td><td>The macOS service.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Environment variables</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Variable</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>OSEWA_CONFIG_DIR</code></td><td>Use this directory instead of <code>~/.config/osewa</code>.</td></tr>
+    <tr><td><code>XDG_CONFIG_HOME</code></td><td>When set, config lives in <code>$XDG_CONFIG_HOME/osewa</code>, and the systemd unit under it.</td></tr>
+    <tr><td><code>OSEWA_RUN_DIR</code></td><td>Where session sockets and <code>server.pid</code> go.</td></tr>
+    <tr><td><code>XDG_STATE_HOME</code></td><td>When set, the log is <code>$XDG_STATE_HOME/osewa/server.log</code>.</td></tr>
+    <tr><td><code>OSEWA_CARRIER</code></td><td><code>quic</code> or <code>ws</code> to use only that carrier, instead of racing both. Handy for testing a firewall.</td></tr>
+    <tr><td><code>OSEWA_QUIC_CC</code></td><td>QUIC congestion control: <code>cubic</code> (default), <code>bbr</code> or <code>newreno</code>.</td></tr>
+    <tr><td><code>OSEWA_DIST</code></td><td>A directory of <code>osewa-&lt;os&gt;-&lt;arch&gt;</code> builds for login and update to send to hosts.</td></tr>
+    <tr><td><code>OSEWA_TRACE</code></td><td>A directory to write JSON-lines traces to, for debugging.</td></tr>
+    <tr><td><code>OSEWA_HOME</code></td><td>On the host: an absolute path to use as sessions' home instead of the account's. For sandboxes and tests.</td></tr>
+  </tbody>
+</table></div>
+<p>Sessions don't inherit the server's environment. They get <code>HOME</code>, <code>USER</code>, <code>LOGNAME</code>, <code>SHELL</code> and <code>PATH</code> from the account, the locale (<code>LANG</code>, <code>LC_*</code>) and <code>TZ</code>, and <code>TERM=xterm-256color</code>. Variables starting with <code>OSEWA_</code> are never passed in.</p>
+</Docs>

@@ -1,0 +1,60 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const carrier = `OSEWA_CARRIER=ws osewa ls devbox     # TCP only
+OSEWA_CARRIER=quic osewa ls devbox   # UDP only`;
+---
+<Docs slug="troubleshooting" description="What osewa's error messages mean and how to fix them: unreachable ports, incompatible builds, unknown hosts, revoked devices and servers that won't start.">
+<p class="lede">osewa's errors try to say what to do next. Here is each common one, what it means and the fix.</p>
+
+<h2>Connecting</h2>
+
+<h3>can't be reached from here … open TCP port 7322</h3>
+<p>login set up the server, but your machine can't reach its port. Open TCP (and UDP) 7322 in the host's firewall or cloud security group. If the host is reached at a different address than ssh uses, for example through a tailnet, log in again with <code>--addr</code>. Nothing was saved, so just run login again once it's fixed.</p>
+
+<h3>unknown host "devbox"; run osewa login first</h3>
+<p>No host by that name in your <code>hosts.json</code>. Names are what you passed to <code>--name</code>, or the ssh target without <code>user@</code>.</p>
+
+<h3>context deadline exceeded</h3>
+<p>Nothing answered within 15 seconds. Check the server is running on the host (<code>systemctl --user status osewa</code>, or look for it in <code>ps</code>) and that the port is open from where you are now: a network that worked at login may block it.</p>
+
+<h3>It works, but connecting feels slow</h3>
+<p>Likely UDP is blocked, so QUIC loses the race and every connection waits 300 ms before the WebSocket starts. That's not an error, just slower. Force each carrier to see which one gets through:</p>
+<pre><code>{carrier}</code></pre>
+<p>If only <code>ws</code> works, open UDP 7322 too.</p>
+
+<h2>Keys and devices</h2>
+
+<h3>auth: device not enrolled</h3>
+<p>The host doesn't list this device's key: it was revoked, or the host's <code>devices</code> file was reset, or this machine's <code>client.key</code> changed. Log in again to enroll.</p>
+
+<h3>auth: server key does not match pin</h3>
+<p>The host's key isn't the one saved at login. If the host was reinstalled or its <code>~/.config/osewa</code> was wiped, log in again. If not, treat it as a warning: something may be impersonating the host.</p>
+
+<h3>has mode -rw-r--r--; it must be private (chmod 600)</h3>
+<p>A key or <code>hosts.json</code> is readable by others, so osewa won't use it. Run the <code>chmod</code> the message names. For directories, it's <code>chmod 700</code>.</p>
+
+<h2>Versions</h2>
+
+<h3>incompatible protocol / incompatible libghostty … update osewa on the host or here</h3>
+<p>Your machine and the host run builds that can't talk to each other: a different wire protocol, or a different libghostty-vt. If your build is the newer one and the server still accepts it, <code>osewa update devbox</code> fixes it; otherwise log in again over ssh, which copies your build. <code>osewa version --json</code> on each side shows what differs.</p>
+
+<h3>host speaks protocol X, want Y</h3>
+<p>The same problem, found at login when <code>--no-install</code> kept the host's own osewa. Drop <code>--no-install</code> to send yours.</p>
+
+<h3>no osewa build for linux/amd64</h3>
+<p>The host is a different platform from your machine, and login or update has no build for it. Put an <code>osewa-linux-amd64</code> (or the platform named) next to your <code>osewa</code>, or in a directory named by <code>$OSEWA_DIST</code>.</p>
+
+<h2>The server</h2>
+
+<h3>osewa server: already running (pid N)</h3>
+<p>Each user runs one server. This one is already up; you don't need another. To restart with new flags, use <code>osewa service install</code> with the flags.</p>
+
+<h3>listen tcp :7322: bind: address already in use</h3>
+<p>Something else holds the port, often another user's osewa on the same host. Pick another port for one of them (<a href="/docs/server#port">Changing the port</a>).</p>
+
+<h3>The server is gone after a reboot</h3>
+<p>It was started with <code>--daemon</code>, which doesn't survive reboots. Log in again with <code>--service</code>, or run <code>osewa service install</code> on the host. On Linux, also run <code>loginctl enable-linger $USER</code> so it keeps running when you're logged out.</p>
+
+<h3>Still stuck</h3>
+<p>Look at the server's log (<a href="/docs/server">where it is</a>), and <a href="https://github.com/rjyo/osewa/issues">open an issue</a> with the error and both sides' <code>osewa version</code>.</p>
+</Docs>

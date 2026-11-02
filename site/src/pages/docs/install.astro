@@ -1,0 +1,59 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const build = `git clone https://github.com/rjyo/osewa
+cd osewa
+make build      # needs Rust and Zig; writes bin/osewa`;
+const login = `osewa login --service me@devbox`;
+const out = `installed osewa on devbox
+enrolled as "laptop" on devbox (devbox.example.com:7322)`;
+---
+<Docs slug="install" description="Build osewa, then log in to a host once over ssh: osewa installs itself there, enrolls your device and starts its server.">
+<p class="lede">You need osewa on your own machine and ssh access to the host. <code>osewa login</code> does the rest over ssh, once: it copies osewa to the host, enrolls your device's key and starts the server.</p>
+
+<h2>Get osewa on your machine</h2>
+<p>There are no prebuilt downloads yet. Build it from source on Linux or macOS, with Rust and Zig installed (Zig builds libghostty-vt):</p>
+<pre><code>{build}</code></pre>
+<p>Put <code>bin/osewa</code> somewhere on your <code>PATH</code>.</p>
+
+<h2>Log in to a host</h2>
+<p>The target is anything you would pass to ssh: <code>user@host</code>, or an alias from <code>~/.ssh/config</code>.</p>
+<pre><code><span class="p">$ </span>{login}</code></pre>
+<p>It prints what it did:</p>
+<pre><code>{out}</code></pre>
+<p>From now on you reach the host by its name, here <code>devbox</code>: <code>osewa attach devbox</code>. See <a href="/docs/sessions">Sessions</a>.</p>
+
+<h3>What login does</h3>
+<ol>
+  <li>Creates your device key, <code>client.key</code>, if you don't have one yet.</li>
+  <li>Over ssh, checks the host's OS and CPU and any osewa it already has. If a copy with the same SHA-256 is there, nothing is sent. Otherwise it sends the binary, checks its size and hash, and puts it at <code>~/.local/bin/osewa</code>.</li>
+  <li>Over a second ssh session, runs <code>osewa enroll</code> with your device's public key, then starts the server: as a user service with <code>--service</code>, or as a background daemon without it.</li>
+  <li>Dials the new server directly, for up to 10 seconds, to prove the port is reachable from where you are.</li>
+  <li>Saves the host, with the server's key pinned, to <code>hosts.json</code>. If the check failed, nothing is saved.</li>
+</ol>
+
+<div class="note"><p><strong>Use <code>--service</code>.</strong> Without it the server is a plain background process and won't come back after the host reboots. login says so, and you can run it again with <code>--service</code> at any time. See <a href="/docs/server">Running the server</a>.</p></div>
+
+<h3>Hosts on another platform</h3>
+<p>login sends the host a build for the host's OS and CPU: <code>osewa-linux-amd64</code>, <code>osewa-linux-arm64</code>, <code>osewa-darwin-amd64</code> or <code>osewa-darwin-arm64</code>. It looks for that file next to your <code>osewa</code>, then in <code>$OSEWA_DIST</code>. When the host is the same platform as your machine, it sends itself. So from a Mac to a Linux box you need a Linux build of osewa in one of those places.</p>
+
+<h2>Options</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>--service</code></td><td>Run the server as a systemd or launchd user service, so it survives reboots.</td></tr>
+    <tr><td><code>--name N</code></td><td>The name you'll use for the host. Defaults to the ssh target without <code>user@</code>.</td></tr>
+    <tr><td><code>--addr host:port</code></td><td>Where to dial the host. Defaults to the hostname ssh resolves (<code>ssh -G</code>) on port 7322. Set it when the host is reached at another address or port.</td></tr>
+    <tr><td><code>--device N</code></td><td>This device's name on the host. Defaults to your machine's hostname.</td></tr>
+    <tr><td><code>--no-install</code></td><td>Don't copy osewa; use the <code>osewa</code> already on the host's <code>PATH</code>.</td></tr>
+    <tr><td><code>--no-check</code></td><td>Save the host without dialing it first.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Open the port</h2>
+<p>The server listens on port 7322: TCP for the TLS WebSocket, UDP for QUIC. TCP is required; UDP is what makes it fast. If the host has a firewall or sits behind a cloud security group, open both. If only TCP gets through, osewa still works, over the WebSocket.</p>
+<p>When the check can't reach the port, login stops and tells you:</p>
+<pre><code>the osewa server on devbox is running, but devbox.example.com:7322 can't be reached from here (...): open TCP port 7322 to this device (the host's firewall, a cloud security group), or log in again with --addr set to an address that reaches it; the host was not saved</code></pre>
+
+<h2>Logging in again</h2>
+<p>Running login again for the same host is safe. It replaces the saved entry, re-enrolls the same device name, and only copies osewa if the host's copy differs. To change the port, see <a href="/docs/server#port">Changing the port</a>.</p>
+</Docs>

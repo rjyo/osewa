@@ -1,0 +1,57 @@
+---
+import Base from "./Base.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import { docs, docPath } from "../data/docs.js";
+import "../styles/docs.css";
+
+interface Props {
+  slug: string;
+  description: string;
+}
+const { slug, description } = Astro.props;
+const i = docs.findIndex((d) => d.slug === slug);
+const page = docs[i];
+const prev = docs[i - 1];
+const next = docs[i + 1];
+const groups = [...new Set(docs.map((d) => d.group))];
+const title = slug ? `${page.title} · osewa docs` : "osewa docs";
+---
+<Base title={title} description={description} path={docPath(slug)}>
+<SiteHeader current="docs" />
+
+<div class="doc-wrap">
+  <nav class="doc-side" aria-label="Docs">
+    <details open>
+      <summary><span class="doc-side-label">Pages</span><span class="doc-side-cur">{page.title}</span></summary>
+      {groups.map((g) => (
+        <div class="doc-group">
+          <span>{g}</span>
+          <ul>
+            {docs.filter((d) => d.group === g).map((d) => (
+              <li><a href={docPath(d.slug)} aria-current={d.slug === slug ? "page" : undefined}>{d.title}</a></li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </details>
+  </nav>
+
+  <main class="doc">
+    <div class="doc-eyebrow">Docs · {page.group}</div>
+    <h1>{page.title}<span class="dot">.</span></h1>
+    <slot />
+    <nav class="doc-pn" aria-label="Pages">
+      {prev ? <a href={docPath(prev.slug)}><span>← Previous</span>{prev.title}</a> : <span />}
+      {next && <a class="next" href={docPath(next.slug)}><span>Next →</span>{next.title}</a>}
+    </nav>
+  </main>
+</div>
+
+<SiteFooter />
+
+<script is:inline>
+  // Phones get the page list folded; wide screens keep it open as a sidebar.
+  if (matchMedia("(max-width: 860px)").matches) document.querySelector(".doc-side details").open = false;
+</script>
+</Base>

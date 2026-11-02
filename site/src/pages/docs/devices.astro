@@ -1,0 +1,48 @@
+---
+import Docs from "../../layouts/Docs.astro";
+const devices = `{"name":"laptop","key":"pW2xq9R0…"}
+{"name":"phone","key":"Zk81dLm3…"}`;
+const list = `cat ~/.config/osewa/devices`;
+const revoke = `grep -v '"name":"phone"' ~/.config/osewa/devices > /tmp/d && cat /tmp/d > ~/.config/osewa/devices`;
+---
+<Docs slug="devices" description="How osewa authenticates: an Ed25519 key per device, the host's key pinned at enrollment, and how to list and revoke devices.">
+<p class="lede">osewa has no passwords. Every device has its own Ed25519 key, every host has one too, and both sides prove who they are on every connection, over TLS 1.3.</p>
+
+<h2>The keys</h2>
+<dl>
+  <dt>client.key, on your machine</dt>
+  <dd>Your device's private key, created the first time you run <code>osewa login</code>. It never leaves the machine; hosts only see its public half.</dd>
+  <dt>server.key, on the host</dt>
+  <dd>The host's private key, created when osewa is first set up there.</dd>
+  <dt>devices, on the host</dt>
+  <dd>The public keys allowed in, one device per line. Like ssh's <code>authorized_keys</code>.</dd>
+  <dt>hosts.json, on your machine</dt>
+  <dd>The hosts you have logged in to: name, address and the host's public key. Like ssh's <code>known_hosts</code>, but filled in for you.</dd>
+</dl>
+<p>All four live in <code>~/.config/osewa/</code>; see <a href="/docs/files">Files and environment</a>. osewa refuses to use a key file that others can read, and a <code>devices</code> file that others can write. Keys are stored as plain files with mode 0600, not behind a passphrase or an agent.</p>
+
+<h2>Enrollment</h2>
+<p><code>osewa login</code> enrolls your device over ssh. It sends your public key and device name to <code>osewa enroll</code> on the host, which adds them to <code>devices</code> and replies with the host's public key. Since that reply comes over an ssh connection you already trust, there is no "trust this host?" prompt, and nobody can stand in the middle of your first osewa connection.</p>
+<p>A device name is 1 to 64 bytes. Enrolling a name or a key that is already listed replaces that line, so logging in again from the same device doesn't add duplicates.</p>
+
+<h2>Listing devices</h2>
+<p>On the host, the <code>devices</code> file is the list:</p>
+<pre><code><span class="p">$ </span>{list}
+{devices}</code></pre>
+
+<h2>Revoking a device</h2>
+<p>Delete that device's line from <code>devices</code> on the host, with any editor or:</p>
+<pre><code>{revoke}</code></pre>
+<p>The server reads the file on every new connection and never resumes old TLS sessions, so the device is refused the next time it connects. A connection that is already open isn't cut; to end it now, restart the server (<code>osewa service install</code> again, or <code>systemctl --user restart osewa</code>). Sessions survive the restart.</p>
+<p>There is no <code>osewa</code> command to list or revoke devices yet.</p>
+
+<h2>A lost or new machine</h2>
+<ul>
+  <li><strong>Lost a device:</strong> revoke it on every host it was enrolled on.</li>
+  <li><strong>New machine:</strong> run <code>osewa login</code> from it. It gets its own key, and the other devices keep theirs.</li>
+  <li><strong>Copying <code>~/.config/osewa</code> to a new machine</strong> works, but then two machines share one key, and revoking one revokes both.</li>
+</ul>
+
+<h2>If the host's key changes</h2>
+<p>If the host's <code>server.key</code> is replaced, your saved pin no longer matches and the connection fails with <code>auth: server key does not match pin</code>. That is either a reinstalled host or someone in the middle. If you know the host was reset, log in again over ssh to enroll and pin the new key.</p>
+</Docs>
