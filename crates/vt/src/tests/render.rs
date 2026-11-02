@@ -80,6 +80,28 @@ fn snapshot_redraw_resets_modes() {
     assert!(screen_of(&local) == screen_of(&mirror) && local.scrollback_rows() == 0, "got {:?}, scrollback {}", screen_of(&local), local.scrollback_rows());
 }
 
+/// The mouse encoding a program set last among several (herdr: urxvt as a
+/// fallback, then SGR) is still the one in effect after a redraw: the
+/// newest is set last.
+#[test]
+fn redraws_keep_the_mouse_encoding_last() {
+    let last = |out: &[u8]| {
+        let at = |m: &[u8]| out.windows(m.len()).rposition(|w| w == m);
+        (at(b"\x1b[?1006h"), at(b"\x1b[?1015h"))
+    };
+    let mut mirror = term(12, 5);
+    mirror.write(b"\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006hherdr");
+    for (name, out) in [("attach", attach_redraw(&mirror)), ("snapshot", snapshot_redraw(&mirror))] {
+        let (sgr, urxvt) = last(&out);
+        assert!(sgr.is_some() && urxvt.is_some() && sgr > urxvt, "{name}: SGR not set after urxvt ({sgr:?}, {urxvt:?})");
+    }
+    // Without SGR, urxvt stays.
+    let mut mirror = term(12, 5);
+    mirror.write(b"\x1b[?1000h\x1b[?1015h");
+    let (sgr, urxvt) = last(&snapshot_redraw(&mirror));
+    assert!(sgr.is_none() && urxvt.is_some(), "urxvt alone: {sgr:?}, {urxvt:?}");
+}
+
 #[test]
 fn vt_parts_rejects_other_shapes() {
     assert!(vt_parts(b"no home").is_none());

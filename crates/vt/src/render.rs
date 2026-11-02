@@ -19,6 +19,26 @@ pub const REDRAW: &[u8] = b"\x1b[H\x1b[2J\x1b[3J";
 const MODE_RESET: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b[?25h";
 
 const HOME: &[u8] = b"\x1b[H";
+
+/// The mouse encodings, oldest first: UTF-8 (1005), urxvt (1015), SGR
+/// (1006), SGR pixels (1016).
+const MOUSE_FORMATS: [u16; 4] = [1005, 1015, 1006, 1016];
+
+/// Sets the mouse encodings that are on again, oldest first. A terminal
+/// takes the encoding last set, which the VT format can't say: it lists
+/// the modes by number, so a program's `?1015h ?1006h` (urxvt as a fallback,
+/// then SGR) would come back as urxvt, whose reports programs that asked
+/// for SGR (herdr) don't read. Programs that set several set the one they
+/// want last, the newest, which this leaves in effect.
+fn mouse_format(t: &Terminal) -> Vec<u8> {
+    let mut out = Vec::new();
+    for m in MOUSE_FORMATS {
+        if t.mode(m, false) {
+            out.extend_from_slice(format!("\x1b[?{m}h").as_bytes());
+        }
+    }
+    out
+}
 const ORIGIN_ON: &[u8] = b"\x1b[?6h";
 
 fn vt(t: &Terminal) -> Vec<u8> {
@@ -103,6 +123,7 @@ pub fn vt_parts(vt: &[u8]) -> Option<VtParts<'_>> {
 pub fn attach_redraw(t: &Terminal) -> Vec<u8> {
     let mut out = REDRAW.to_vec();
     out.extend_from_slice(&vt(t));
+    out.extend_from_slice(&mouse_format(t));
     out
 }
 
@@ -375,10 +396,12 @@ pub fn snapshot_redraw(t: &Terminal) -> Vec<u8> {
     let Some(VtParts { pre, .. }) = vt_parts(&v) else {
         let mut out = REDRAW.to_vec();
         out.extend_from_slice(&v);
+        out.extend_from_slice(&mouse_format(t));
         return out;
     };
     let mut out = MODE_RESET.to_vec();
     out.extend_from_slice(pre);
+    out.extend_from_slice(&mouse_format(t));
     out.extend_from_slice(&screen_redraw(t));
     out
 }
