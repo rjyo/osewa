@@ -192,8 +192,8 @@ The build id (`p<protocol>-g<ghostty>-s<snapshot>`, from `osewa version
 --json`) names binaries that interoperate; a published one never changes.
 Binaries it can run here (Docker for linux, Rosetta for darwin-amd64)
 must print the same `version --json`; the others are checked by arch and
-the build id baked into them. It uses app-hook's signing and R2
-credentials (see the script's header).
+the build id baked into them. Signing (`scripts/sign-darwin.sh`) and
+upload credentials come from the environment (see the script headers).
 
 ## Roadmap
 
