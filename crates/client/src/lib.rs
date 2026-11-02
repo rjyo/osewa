@@ -57,18 +57,20 @@ pub use link::{Link, LinkState};
 pub use rt::{block_on, sleep, timeout, Watch};
 pub use session::{look, AttachOptions, InputMode, Renderer, RendererError, Session, TermColors};
 
-/// The libghostty commit whose snapshots this build decodes, as in
-/// `osewa_ghostty::COMMIT` and scripts/libghostty.sh. Kept here so the
-/// transport needn't link libghostty; a test checks they agree.
+/// The libghostty commit this build links, as in `osewa_ghostty::COMMIT`
+/// and scripts/libghostty.sh. Kept here so the transport needn't link
+/// libghostty; a test checks they agree. For people: compatibility is
+/// SNAPSHOT_VERSION's.
 pub const GHOSTTY_COMMIT: &str = "83fb95624b0439ee660c2679b43b38c8b63769cd";
 /// The snapshot format version, as `osewa_ghostty::SNAPSHOT_VERSION`.
 pub const SNAPSHOT_VERSION: i32 = 1;
 
 /// This build as one line of JSON, for a host and an app to compare:
 /// `{"osewa":"<version>","version":<protocol>,"ghostty":"<commit>",
-/// "snapshot_version":<n>}`. They interoperate iff `version`, `ghostty`
-/// and `snapshot_version` are equal; `osewa` is the release
-/// (OSEWA_VERSION at build time, else the crate version), for people.
+/// "snapshot_version":<n>}`. They interoperate iff `version` and
+/// `snapshot_version` are equal; `osewa` is the release (OSEWA_VERSION at
+/// build time, else the crate version) and `ghostty` the libghostty
+/// commit, both for people.
 pub fn build_info() -> String {
     let release = option_env!("OSEWA_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
     serde_json::json!({
@@ -80,7 +82,7 @@ pub fn build_info() -> String {
     .to_string()
 }
 
-/// `osewa-build-id:p<version>-g<ghostty, 12>-s<snapshot_version>`, the
+/// `osewa-build-id:p<version>-s<snapshot_version>`, the
 /// build id hosts are released under (scripts/release.sh), as plain bytes
 /// in the binary: a release checks a binary it can't run, such as an x86_64
 /// one without Rosetta, by finding it.
@@ -119,14 +121,6 @@ const fn build_id_marker() -> [u8; 64] {
     let mut b = [0u8; 64];
     let mut n = put(&mut b, 0, b"osewa-build-id:p");
     n = put_int(&mut b, n, wire::VERSION);
-    n = put(&mut b, n, b"-g");
-    let g = GHOSTTY_COMMIT.as_bytes();
-    let mut i = 0;
-    while i < 12 {
-        b[n] = g[i];
-        n += 1;
-        i += 1;
-    }
     n = put(&mut b, n, b"-s");
     put_int(&mut b, n, SNAPSHOT_VERSION);
     b
@@ -276,7 +270,7 @@ impl fmt::Display for Error {
             Error::Closed(Some(why)) => write!(f, "osewa: connection closed: {why}"),
             Error::Incompatible { server_commit, client_commit, server_snapshot, client_snapshot } => write!(
                 f,
-                "osewa: incompatible libghostty: server {server_commit} (snapshot v{server_snapshot}), client {client_commit} (snapshot v{client_snapshot})"
+                "osewa: incompatible snapshots: server v{server_snapshot} (libghostty {server_commit}), client v{client_snapshot} (libghostty {client_commit})"
             ),
             Error::Protocol(why) => write!(f, "osewa: incompatible protocol: {why}"),
             Error::Ended(None) => f.write_str("osewa: session ended"),

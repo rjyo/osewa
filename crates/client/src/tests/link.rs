@@ -141,7 +141,7 @@ fn link_incompatible_ends_sessions() {
     let l = new_link(f.config("a"));
     let s = link_attach(&l, &id);
     s.wait_text("");
-    f.set(|st| st.commit = "other".into());
+    f.set(|st| st.snapshot_version = Some(crate::SNAPSHOT_VERSION + 1));
     f.drop_all();
     wait_for("session ended", s.done());
     assert!(s.err().is_some_and(|e| e.is_incompatible()), "err = {:?}", s.err());
@@ -290,7 +290,7 @@ fn link_state_watch() {
 }
 
 /// A server of another protocol version stops the link with an
-/// incompatible error, as another libghostty does, instead of being
+/// incompatible error, as another snapshot version does, instead of being
 /// retried forever.
 #[test]
 fn link_protocol_mismatch_stops() {

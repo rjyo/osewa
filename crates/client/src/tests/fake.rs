@@ -118,6 +118,8 @@ pub(crate) struct FState {
     next_conn: u64,
     /// WELCOME's ghostty commit.
     pub commit: String,
+    /// WELCOME's snapshot version, when not this build's.
+    pub snapshot_version: Option<i32>,
     /// WELCOME's protocol version, when not this build's.
     pub version: Option<i32>,
     /// The QUIC port WELCOME advertises; 0 for none.
@@ -672,7 +674,7 @@ async fn serve_conn(fi: Arc<FakeInner>, ws: WsConn) {
             version: st.version.unwrap_or(wire::VERSION),
             carriers,
             server: "fake".into(),
-            snapshot_version: crate::SNAPSHOT_VERSION,
+            snapshot_version: st.snapshot_version.unwrap_or(crate::SNAPSHOT_VERSION),
             ghostty: st.commit.clone(),
             features: st.features.clone(),
         };

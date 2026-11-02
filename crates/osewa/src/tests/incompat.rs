@@ -35,7 +35,7 @@ fn run_incompatible_host() {
                     let _ = c.read().await; // HELLO
                     let w = wire::Welcome {
                         version: wire::VERSION,
-                        snapshot_version: osewa_ghostty::SNAPSHOT_VERSION,
+                        snapshot_version: osewa_ghostty::SNAPSHOT_VERSION + 1,
                         ghostty: "0123abcd".into(),
                         ..Default::default()
                     };

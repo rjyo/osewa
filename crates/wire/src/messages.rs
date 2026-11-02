@@ -238,7 +238,9 @@ pub struct SessionInfo {
 }
 
 /// A build as far as snapshots go: the fields of WELCOME, and of
-/// `osewa version --json`, that must be equal for two ends to interoperate.
+/// `osewa version --json`. Two ends interoperate iff `version` and
+/// `snapshot_version` are equal; `ghostty` (the libghostty commit) is for
+/// people, since osewa's snapshot fixtures decide when the bytes change.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct Build {
     #[serde(default)]
@@ -250,9 +252,14 @@ pub struct Build {
 }
 
 impl Build {
-    /// `p<version>-g<ghostty, 12>-s<snapshot_version>`, as releases name it.
+    /// `p<version>-s<snapshot_version>`, as releases name it.
     pub fn id(&self) -> String {
-        format!("p{}-g{}-s{}", self.version, self.ghostty.get(..12).unwrap_or(&self.ghostty), self.snapshot_version)
+        format!("p{}-s{}", self.version, self.snapshot_version)
+    }
+
+    /// Whether `self` and `other` speak the same protocol and snapshots.
+    pub fn compatible(&self, other: &Build) -> bool {
+        self.version == other.version && self.snapshot_version == other.snapshot_version
     }
 }
 

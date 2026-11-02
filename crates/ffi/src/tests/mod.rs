@@ -459,7 +459,7 @@ impl Host {
                             wire::METHOD_KILL => k.store(true, SeqCst),
                             _ => {}
                         }
-                        let build = wire::Build { version: wire::VERSION, ghostty: "0".repeat(40), snapshot_version: 1 };
+                        let build = wire::Build { version: wire::VERSION, ghostty: "0".repeat(40), snapshot_version: osewa_ghostty::SNAPSHOT_VERSION + 1 };
                         let info = wire::SessionInfo { id: id.clone(), cols: 80, rows: 24, build: Some(build), ..Default::default() };
                         let resp = wire::Response { id: r.id, sessions: vec![info], ..Default::default() };
                         if wire::write(&mut conn, &wire::json(wire::TYPE_RESPONSE, 0, &resp)).is_err() {

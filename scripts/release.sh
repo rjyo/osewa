@@ -6,9 +6,9 @@
 #   scripts/release.sh publish   build unless dist/ has this commit's, then
 #                                upload to R2 osewa/<buildId>/
 #
-# The build id is p<protocol version>-g<ghostty commit, 12>-s<snapshot
-# version>, read from each binary's `osewa version --json`: binaries with
-# the same id interoperate, so a client picks one by id alone. dist/<buildId>/
+# The build id is p<protocol version>-s<snapshot version>, read from each
+# binary's `osewa version --json`: binaries with the same id interoperate,
+# so a client picks one by id alone. dist/<buildId>/
 # holds osewa-<os>-<arch>.gz (a gzip of the bare executable), SHA256SUMS
 # over the .gz files, and build.json (the `version --json` object).
 #
@@ -19,18 +19,16 @@
 # rest get only the static checks, and the build says which got which.
 #
 # Linux binaries are static musl (cargo-zigbuild), so they run on any
-# distribution. Darwin binaries target macOS 13 and are codesigned with the
-# hardened runtime and notarized by app-hook's sign-notarize-darwin.sh,
-# which reads the same signing env (MACOS_SIGN_*, ASC_*; ASC_* falls back to
-# marketing/asc/.env through the secrets store, so run munlock first).
+# distribution. Darwin binaries target macOS 13 and are signed with the
+# hardened runtime and notarized by scripts/sign-darwin.sh, which reads
+# MACOS_SIGN_IDENTITY and NOTARY_PROFILE (or ASC_*) from the environment.
 #
 #   SKIP_MACOS_SIGN=1        unsigned darwin binaries (local dry runs)
 #   SKIP_MACOS_NOTARIZE=1    signed, not notarized (local dry runs)
-#   APP_HOOK_DIR             app-hook checkout (default ../app-hook)
 #   OSEWA_VERSION            the release name `version --json` reports as "osewa"
 #
-# publish reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, R2_S3_ENDPOINT and
-# R2_PUBLIC_URL from app-hook's .env (or its encrypted copy). It refuses
+# publish uploads with AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+# R2_S3_ENDPOINT and R2_PUBLIC_URL from the environment. It refuses
 # unsigned or unnotarized darwin binaries. Every object is uploaded
 # create-only, and one already there must hold the same bytes: a published
 # path never changes.
@@ -50,7 +48,6 @@ build | publish) ;;
 	;;
 esac
 
-APP_HOOK_DIR=${APP_HOOK_DIR:-$(cd "$root/.." && pwd)/app-hook}
 bucket=moshi-ota
 prefix=osewa
 targets="linux-amd64 linux-arm64 darwin-amd64 darwin-arm64"
@@ -92,8 +89,7 @@ build_id() {
 import json, sys
 v = json.loads(sys.argv[1])
 assert isinstance(v["version"], int) and isinstance(v["snapshot_version"], int), v
-assert len(v["ghostty"]) == 40, v
-print("p%d-g%s-s%d" % (v["version"], v["ghostty"][:12], v["snapshot_version"]))
+print("p%d-s%d" % (v["version"], v["snapshot_version"]))
 ' "$1"
 }
 
@@ -144,7 +140,7 @@ check_file() {
 # targets that can't run here: exactly one, or nothing.
 marker_id() {
 	local m
-	m=$(LC_ALL=C grep -a -o 'osewa-build-id:p[0-9]*-g[0-9a-f]\{12\}-s[0-9]*' "$1" | sort -u)
+	m=$(LC_ALL=C grep -a -o 'osewa-build-id:p[0-9]*-s[0-9]*' "$1" | sort -u)
 	[[ -n $m && $m != *$'\n'* ]] && echo "${m#osewa-build-id:}"
 }
 
@@ -175,32 +171,24 @@ compile() {
 	cp "$work/cargo/$rust/release/osewa" "$work/stage/$t/osewa"
 }
 
-sign() {
-	local bin=$1
-	"$APP_HOOK_DIR/scripts/sign-notarize-darwin.sh" "$bin" >&2
-	[[ ${SKIP_MACOS_SIGN:-} == 1 ]] && return
-	codesign --verify --strict "$bin"
-	[[ $(codesign -dv "$bin" 2>&1) == *flags=*'(runtime)'* ]] || die "$bin lacks the hardened runtime"
-}
-
 # Builds every target into dist/<buildId>/ and prints the build id.
 build() {
 	[[ $(zig version) == "$want_zig" ]] || die "zig $(zig version), want $want_zig"
 	command -v cargo-zigbuild >/dev/null || die "cargo-zigbuild missing (brew install cargo-zigbuild)"
-	if [[ ${SKIP_MACOS_SIGN:-} != 1 ]]; then
-		[[ -x $APP_HOOK_DIR/scripts/sign-notarize-darwin.sh ]] ||
-			die "no $APP_HOOK_DIR/scripts/sign-notarize-darwin.sh (set APP_HOOK_DIR)"
-		# Fail rather than ship signed-but-unnotarized binaries silently.
-		export REQUIRE_MACOS_NOTARIZE=1
-	fi
+	# Fail before the long compile, not after it.
+	[[ ${SKIP_MACOS_SIGN:-} == 1 || -n ${MACOS_SIGN_IDENTITY:-} ]] ||
+		die "set MACOS_SIGN_IDENTITY, or SKIP_MACOS_SIGN=1 for unsigned darwin binaries"
 
 	local state t bin json id="" first=""
 	state=$(source_state)
 	rm -rf "$work/stage"
+	local darwin=()
 	for t in $targets; do
 		compile "$t"
-		[[ $t == darwin-* ]] && sign "$work/stage/$t/osewa"
+		[[ $t == darwin-* ]] && darwin+=("$work/stage/$t/osewa")
 	done
+	# One notarization for both arches: each submission waits minutes.
+	[[ ${SKIP_MACOS_SIGN:-} == 1 ]] || ./scripts/sign-darwin.sh "${darwin[@]}"
 
 	# Every target: the right arch (and static linking) per `file`, and the
 	# marker's build id. Those that run here must also print the same
@@ -262,24 +250,10 @@ reusable() {
 	return 1
 }
 
-load_r2_env() {
-	# shellcheck disable=SC1091
-	. "$APP_HOOK_DIR/scripts/env-lib.sh"
-	local content line k v
-	content=$(read_env_file "$APP_HOOK_DIR/.env") || die "no $APP_HOOK_DIR/.env (run munlock?)"
-	# Only the keys an upload needs, without sourcing the rest. Split by
-	# hand: `IFS== read` drops a value's trailing "=".
-	while IFS= read -r line || [[ -n $line ]]; do
-		k=${line%%=*} v=${line#*=}
-		case $k in
-		AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | R2_S3_ENDPOINT | R2_PUBLIC_URL)
-			v=${v%\"} v=${v#\"} v=${v%\'} v=${v#\'}
-			[[ -z ${!k:-} ]] && export "$k=$v"
-			;;
-		esac
-	done <<<"$content"
+require_r2_env() {
+	local k
 	for k in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_S3_ENDPOINT R2_PUBLIC_URL; do
-		[[ -n ${!k:-} ]] || die "$k missing from $APP_HOOK_DIR/.env"
+		[[ -n ${!k:-} ]] || die "$k is not set"
 	done
 }
 
@@ -332,7 +306,7 @@ publish() {
 		die "uncommitted changes in build inputs: $(git status --porcelain -- "${inputs[@]}" | tr '\n' ' ')"
 	command -v aws >/dev/null || die "aws CLI missing"
 	require_conditional_put
-	load_r2_env
+	require_r2_env
 
 	local id
 	if id=$(reusable); then

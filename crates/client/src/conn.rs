@@ -1046,7 +1046,7 @@ fn check_welcome(f: &wire::Frame) -> Result<wire::Welcome> {
     if w.version != wire::VERSION {
         return Err(Error::Protocol(format!("server speaks {}, client {}", w.version, wire::VERSION)));
     }
-    if w.snapshot_version != SNAPSHOT_VERSION || w.ghostty != GHOSTTY_COMMIT {
+    if w.snapshot_version != SNAPSHOT_VERSION {
         return Err(Error::Incompatible {
             server_commit: w.ghostty,
             client_commit: GHOSTTY_COMMIT.into(),

@@ -35,14 +35,14 @@ OSEWA_CARRIER=quic osewa ls devbox   # UDP only`;
 
 <h2>Versions</h2>
 
-<h3>incompatible protocol / incompatible libghostty … update osewa on the host or here</h3>
-<p>Your machine and the host run builds that can't talk to each other: a different wire protocol, or a different libghostty-vt. If your build is the newer one and the server still accepts it, <code>osewa update devbox</code> fixes it; otherwise log in again over ssh, which copies your build. <code>osewa version --json</code> on each side shows what differs.</p>
+<h3>incompatible protocol / incompatible snapshots … update osewa on the host or here</h3>
+<p>Your machine and the host run builds that can't talk to each other: a different wire protocol, or a different snapshot version. If your build is the newer one and the server still accepts it, <code>osewa update devbox</code> fixes it; otherwise log in again over ssh, which copies your build. <code>osewa version --json</code> on each side shows what differs.</p>
 
 <h3>host speaks protocol X, want Y</h3>
 <p>The same problem, found at login when <code>--no-install</code> kept the host's own osewa. Drop <code>--no-install</code> to send yours.</p>
 
 <h3>session … can't be attached: its holder is build …, the server …</h3>
-<p>The session was started by an older build, before an update that changed the protocol or libghostty-vt. It's still running, but this server can't show its screen. <code>osewa ls</code> marks it <code>incompatible</code>. Finish or save what runs in it, then <code>osewa kill devbox &lt;id&gt;</code> and start a new one. A plain <code>osewa attach devbox</code> skips such sessions.</p>
+<p>The session was started by an older build, before an update that changed the protocol or the snapshot version. It's still running, but this server can't show its screen. <code>osewa ls</code> marks it <code>incompatible</code>. Finish or save what runs in it, then <code>osewa kill devbox &lt;id&gt;</code> and start a new one. A plain <code>osewa attach devbox</code> skips such sessions.</p>
 
 <h3>no osewa build for linux/amd64</h3>
 <p>The host is a different platform from your machine, and login or update has no build for it. Put an <code>osewa-linux-amd64</code> (or the platform named) next to your <code>osewa</code>, or in a directory named by <code>$OSEWA_DIST</code>.</p>

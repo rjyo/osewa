@@ -164,7 +164,11 @@ fn quoting() {
 #[test]
 fn build_id_and_older_session_info() {
     let b = Build { version: 0, ghostty: "83fb95624b0439ee660c2679b43b38c8b63769cd".into(), snapshot_version: 1 };
-    assert_eq!(b.id(), "p0-g83fb95624b04-s1");
+    assert_eq!(b.id(), "p0-s1");
+    // Another libghostty commit with the same snapshots interoperates.
+    assert!(b.compatible(&Build { ghostty: "0".repeat(40), ..b.clone() }));
+    assert!(!b.compatible(&Build { snapshot_version: 2, ..b.clone() }));
+    assert!(!b.compatible(&Build { version: 1, ..b.clone() }));
     // Holders before builds were reported: no build, nothing incompatible.
     let s: SessionInfo = serde_json::from_str(r#"{"id":"a","cols":80,"rows":24}"#).unwrap();
     assert!(s.build.is_none() && s.incompatible.is_empty());

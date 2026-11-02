@@ -64,9 +64,9 @@ devbox's server restarted with it`;
 <h2>Updating</h2>
 <p>Update a host from your machine, over osewa, without ssh:</p>
 <pre><code>{update}</code></pre>
-<p>It copies your build of osewa to the host's <code>~/.local/bin/osewa</code>, checks its hash, and restarts the server with it. Sessions keep running across the restart, and your attached windows reconnect. If the new build has a different protocol or libghostty-vt, older sessions keep running but can't be attached any more; see <a href="/docs/sessions">Sessions</a>. The host gets the build for its own platform, found the same way as at <a href="/docs/install">login</a>.</p>
+<p>It copies your build of osewa to the host's <code>~/.local/bin/osewa</code>, checks its hash, and restarts the server with it. Sessions keep running across the restart, and your attached windows reconnect. If the new build has a different protocol or snapshot version, older sessions keep running but can't be attached any more; see <a href="/docs/sessions">Sessions</a>. The host gets the build for its own platform, found the same way as at <a href="/docs/install">login</a>.</p>
 <div class="note"><p>A server started with <code>--daemon</code> comes back from an update with default flags: a custom <code>--listen</code> is lost. Run it as a service to keep its flags.</p></div>
-<p>Your machine and the host must run compatible builds: the same protocol version and the same libghostty-vt. When they don't, commands fail with <code>update osewa on the host or here</code>.</p>
+<p>Your machine and the host must run compatible builds: the same protocol version and the same snapshot version (they may link different libghostty-vt commits). When they don't, commands fail with <code>update osewa on the host or here</code>.</p>
 
 <h2>Logs</h2>
 <div class="tbl"><table>

@@ -2,9 +2,10 @@
 //! snapshot format, input encoders and formatters.
 //!
 //! libghostty-vt is linked statically from .cache/libghostty, built by
-//! scripts/libghostty.sh at a pinned commit. Every osewa process must link
-//! the same commit, because snapshot format version 1 is not yet
-//! binary-stable.
+//! scripts/libghostty.sh at a pinned commit. libghostty doesn't promise its
+//! snapshot bytes stay the same across commits, so osewa numbers them
+//! itself (SNAPSHOT_VERSION) and pins them with fixtures: builds linking
+//! different commits interoperate while the fixtures still match.
 
 use std::ffi::c_void;
 use std::fmt;
@@ -18,10 +19,13 @@ pub use images::*;
 pub use input::*;
 
 /// The pinned libghostty commit, kept in step with scripts/libghostty.sh.
-/// Peers compare it at connect time.
+/// Reported for people; peers compare SNAPSHOT_VERSION.
 pub const COMMIT: &str = "83fb95624b0439ee660c2679b43b38c8b63769cd";
 
-/// The snapshot format version the pinned commit writes.
+/// osewa's version of the snapshot bytes the pinned commit writes. The
+/// fixtures in fixtures/snapshot-v<N> pin them: when a libghostty bump
+/// encodes any of them differently, bump this (and
+/// `osewa_client::SNAPSHOT_VERSION`) and record the new version's fixtures.
 pub const SNAPSHOT_VERSION: i32 = 1;
 
 /// Any libghostty failure, with what was called and its result code.

@@ -197,7 +197,8 @@ Methods (REQUEST `method`):
 
 `build` is the holder's `{"version","ghostty","snapshot_version"}`, the
 fields of WELCOME. A holder outlives the server that started it, so after
-an update a server may find holders of another build, whose snapshots are
+an update a server may find holders of another `version` or
+`snapshot_version` (see Attach and resume), whose snapshots are
 not in the format its WELCOME promised: it lists them with `incompatible`,
 why, and answers `session.attach` for them with the error code
 `incompatible` (message `session <id> can't be attached: ...`) without
@@ -271,8 +272,12 @@ its terminal at position P, sends SNAPSHOT_BEGIN with `position: P`, the
 snapshot bytes, then log records from P. Frames on one stream are ordered, so
 everything before a SNAPSHOT_BEGIN belongs to the previous generation.
 
-Snapshot bytes are libghostty-vt's snapshot format exactly as encoded by the
-pinned libghostty commit. SNAPSHOT_DATA carries the bytes through the end of
+Snapshot bytes are libghostty-vt's snapshot format as encoded by the pinned
+libghostty commit. libghostty doesn't promise those bytes stay the same
+across commits, so `snapshot_version` is osewa's number for them, pinned by
+fixtures (crates/ghostty/fixtures): two ends interoperate iff `version` and
+`snapshot_version` match, whatever their `ghostty` commits, which are for
+people. SNAPSHOT_DATA carries the bytes through the end of
 the READY record; SNAPSHOT_READY marks that point; SNAPSHOT_HISTORY carries
 the rest. The holder may interleave OUTPUT and EVENT frames between
 SNAPSHOT_READY and SNAPSHOT_END. A client renders at READY, applies output

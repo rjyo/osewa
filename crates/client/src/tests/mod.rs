@@ -213,7 +213,7 @@ fn build_info_shape() {
 #[test]
 fn build_id_marker_matches_build_info() {
     let v: serde_json::Value = serde_json::from_str(&build_info()).unwrap();
-    let id = format!("p{}-g{}-s{}", v["version"], &v["ghostty"].as_str().unwrap()[..12], v["snapshot_version"]);
+    let id = format!("p{}-s{}", v["version"], v["snapshot_version"]);
     let marker = std::str::from_utf8(&BUILD_ID_MARKER).unwrap().trim_end_matches('\0');
     assert_eq!(marker, format!("osewa-build-id:{id}"));
 }

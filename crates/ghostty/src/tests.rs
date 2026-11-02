@@ -676,3 +676,83 @@ fn b64(b: &[u8]) -> String {
     }
     s
 }
+
+// The snapshot bytes SNAPSHOT_VERSION stands for. Each stream is written to
+// a terminal set up as the holder sets up its own, and the snapshot must be
+// byte for byte the recorded one: peers linking another libghostty commit
+// decode it only while that holds. The recording is also restored here, as
+// a peer at the recording's commit would send it.
+//
+// After a libghostty bump makes this fail, bump SNAPSHOT_VERSION (here and
+// in osewa_client), then record the new version with
+// OSEWA_RECORD_SNAPSHOT_FIXTURES=1 cargo test -p osewa-ghostty snapshot_fixtures
+// and delete the old version's directory. Recording only adds missing
+// files, so a version once recorded can't drift.
+const SNAPSHOT_FIXTURES: &[(&str, &[u8])] = &[
+    ("plain", b"hello\r\nworld\r\n$ "),
+    (
+        "scrollback",
+        b"1 one\r\n2 two\r\n3 three\r\n4 four\r\n5 five\r\n6 six\r\n7 seven\r\n8 eight\r\n9 nine\r\n10 ten\r\n11 eleven\r\n12 twelve\r\n13 thirteen\r\n14 fourteen\r\n$ ",
+    ),
+    (
+        "styles",
+        b"\x1b[1mbold\x1b[0m \x1b[3mitalic\x1b[0m \x1b[4munder\x1b[0m \x1b[4:3mcurly\x1b[0m \x1b[7minverse\x1b[0m \x1b[9mstrike\x1b[0m\r\n\x1b[31mred\x1b[42mgreen-bg\x1b[0m \x1b[38;5;208m256\x1b[0m \x1b[38;2;10;20;30;48;2;200;100;50mrgb\x1b[0m\r\n",
+    ),
+    ("wide", "漢字 かな 😀 e\u{301} 👍🏽\r\n".as_bytes()),
+    ("wrap", b"0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghij\r\n"),
+    ("hyperlink", b"see \x1b]8;id=a;https://example.com/x\x1b\\link\x1b]8;;\x1b\\ here\r\n"),
+    ("title-cwd", b"\x1b]2;my title\x07\x1b]7;file://host/tmp\x07$ "),
+    ("alt-screen", b"main\r\n\x1b[?1049h\x1b[2J\x1b[Halt screen\x1b[5;3Hcursor"),
+    (
+        "modes",
+        b"\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b=\x1b[>1u\x1b[?25l\x1b[5 q\x1b[3;10r\x1b[4h\x1b[?7l\x1b[?2026h",
+    ),
+    ("tabs-margins", b"\x1b[3g\x1bH  \x1bH\r\na\tb\tc\x1b[?69h\x1b[2;30s"),
+    ("palette", b"\x1b]4;1;rgb:12/34/56\x07\x1b]10;rgb:ee/ee/ee\x07\x1b]11;rgb:11/11/11\x07\x1b]12;rgb:ff/00/00\x07colors"),
+    (
+        "mid-sequence",
+        b"done\r\n\x1b[38;2;1",
+    ),
+    (
+        "image",
+        b"\x1b_Ga=T,f=32,s=2,v=2,i=7;/wAA/wD/AP8AAP///////w==\x1b\\after\r\n",
+    ),
+];
+
+fn fixture_terminal(input: &[u8]) -> Terminal {
+    let mut t = Terminal::new(40, 6, Options { scrollback_bytes: 1 << 20, continuation: true, images: true, ..Default::default() }).unwrap();
+    t.write(input);
+    t
+}
+
+#[test]
+fn snapshot_fixtures() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/snapshot-v{SNAPSHOT_VERSION}"));
+    let record = std::env::var_os("OSEWA_RECORD_SNAPSHOT_FIXTURES").is_some();
+    let mut changed = Vec::new();
+    for (name, input) in SNAPSHOT_FIXTURES {
+        let t = fixture_terminal(input);
+        let got = t.snapshot().unwrap();
+        assert_eq!(got, fixture_terminal(input).snapshot().unwrap(), "{name}: snapshots of one stream differ");
+        let path = dir.join(format!("{name}.bin"));
+        let want = match std::fs::read(&path) {
+            Ok(want) => want,
+            Err(_) if record => {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, &got).unwrap();
+                continue;
+            }
+            Err(e) => panic!("{}: {e}; record snapshot v{SNAPSHOT_VERSION} (see above)", path.display()),
+        };
+        if got != want {
+            changed.push(*name);
+            continue;
+        }
+        let restored = restore(&want, Callbacks::default()).unwrap();
+        assert_eq!(state(&restored), state(&t), "{name}: the recorded snapshot restores to another screen");
+    }
+    assert!(
+        changed.is_empty(),
+        "libghostty {COMMIT} encodes {changed:?} differently from snapshot v{SNAPSHOT_VERSION}: bump SNAPSHOT_VERSION and record the new version (see snapshot_fixtures)"
+    );
+}

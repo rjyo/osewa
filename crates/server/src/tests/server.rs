@@ -596,7 +596,7 @@ fn list_relays_attached_and_idle() {
 fn other_build_holders_are_listed_not_attached() {
     run(async {
         let e = Env::new();
-        let old = wire::Build { ghostty: "0123456789ab".repeat(4)[..40].into(), ..crate::own_build() };
+        let old = wire::Build { snapshot_version: crate::own_build().snapshot_version + 1, ..crate::own_build() };
         let attaches = Rc::new(std::cell::Cell::new(0));
         let mut holders = Vec::new();
         for (id, build) in [("78".repeat(16), Some(old.clone())), ("9a".repeat(16), None)] {

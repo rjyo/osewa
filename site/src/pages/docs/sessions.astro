@@ -55,7 +55,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
   <li>A running session lasts until its program exits, or until it has had nobody attached and no output for 24 hours.</li>
   <li>An exited session stays in the list for 24 hours, so you can see how it ended.</li>
   <li>Each session keeps up to 10 MiB of scrollback.</li>
-  <li>Restarting the server doesn't touch sessions, nor does updating it to a build of the same protocol and libghostty-vt.</li>
+  <li>Restarting the server doesn't touch sessions, nor does updating it to a build of the same protocol and snapshot version.</li>
   <li>An update that changes either leaves older sessions running but unattachable: their screens are kept in the old build's format. <code>ls</code> shows them as <code>incompatible</code>; finish what runs in them and end them with <code>osewa kill</code>.</li>
 </ul>
 

@@ -163,7 +163,10 @@ fn incompatible_server() {
     let f = Fake::new();
     let id = f.create(40, 10);
     let s = attach(&f.dial("a"), &id, Default::default());
-    f.set(|st| st.commit = "deadbeef".into());
+    f.set(|st| {
+        st.commit = "deadbeef".into();
+        st.snapshot_version = Some(crate::SNAPSHOT_VERSION + 1);
+    });
 
     // Dial doesn't wait for WELCOME; the first request fails instead.
     let c = run(Conn::dial(f.config("a"))).unwrap();
@@ -188,6 +191,20 @@ fn incompatible_server() {
     assert!(s.err().is_some_and(|e| e.is_incompatible()), "{:?}", s.err());
     c.close_now();
     c2.close_now();
+}
+
+/// Another libghostty commit writing the same snapshots is no reason to
+/// refuse a server (PROTOCOL.md "Attach and resume").
+#[test]
+fn other_ghostty_commit_same_snapshots() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    f.set(|st| st.commit = "deadbeef".into());
+    let c = f.dial("a");
+    assert_eq!(run(c.welcome()).unwrap().ghostty, "deadbeef");
+    let s = attach(&c, &id, Default::default());
+    s.wait_text("");
+    c.close_now();
 }
 
 /// HELLO and the first request go out in one flight (PROTOCOL.md "Frames").

@@ -139,7 +139,8 @@ void osewa_link_close(osewa_link *l);
 /* Device keys. */
 int32_t osewa_generate_key(uint8_t *out, size_t cap, size_t *len); /* PKCS#8 DER into out */
 char *osewa_public_key(const uint8_t *der, size_t len);            /* base64 raw 32 bytes, NULL on error */
-/* Static JSON: {"osewa":"<crate version>","version":0,"ghostty":"<commit>","snapshot_version":1} */
+/* Static JSON: {"osewa":"<crate version>","version":0,"ghostty":"<commit>","snapshot_version":1};
+   two builds interoperate iff version and snapshot_version are equal. */
 const char *osewa_build_info(void);
 void osewa_string_free(char *s);
 

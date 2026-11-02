@@ -587,7 +587,7 @@ pub(crate) fn own_build() -> wire::Build {
 pub(crate) fn incompatible(b: Option<&wire::Build>) -> String {
     let own = own_build();
     match b {
-        Some(b) if *b == own => String::new(),
+        Some(b) if b.compatible(&own) => String::new(),
         Some(b) => format!("its holder is build {}, the server {}", b.id(), own.id()),
         None => format!("its holder doesn't report its build (an older osewa), the server is {}", own.id()),
     }
