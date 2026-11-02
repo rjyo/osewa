@@ -115,7 +115,7 @@ impl Sink {
         });
     }
 
-    fn stats(&self, srtt: Duration, carrier: &str) {
+    pub fn stats(&self, srtt: Duration, carrier: &str) {
         let carrier = cstring(carrier);
         let us = u32::try_from(srtt.as_micros()).unwrap_or(u32::MAX);
         self.with(|cb| {
@@ -195,12 +195,16 @@ pub struct Handle {
     stop: Option<oneshot::Sender<()>>,
     thread: Option<JoinHandle<()>>,
     link: Link,
+    /// The link is this session's alone (osewa_open), not an osewa_link's
+    /// (osewa_open_on): closing the session closes it.
+    own_link: bool,
     live: Arc<Mutex<Live>>,
 }
 
 impl Handle {
-    /// Starts connecting in the background.
-    pub fn open(o: Opened, cb: Callbacks) -> Handle {
+    /// Starts connecting in the background, on a link of its own or on
+    /// shared, an osewa_link's.
+    pub fn open(o: Opened, cb: Callbacks, shared: Option<Link>) -> Handle {
         let sink = Arc::new(Sink::new(cb));
         let (cmds, cmd_rx) = mpsc::unbounded_channel();
         let size = Size { cols: o.cols, rows: o.rows, width: o.width, height: o.height };
@@ -219,7 +223,8 @@ impl Handle {
                 }
             }
         }));
-        let link = Link::new(cfg);
+        let own_link = shared.is_none();
+        let link = shared.unwrap_or_else(|| Link::new(cfg));
         let backlog = Arc::new(Backlog::default());
         let w = Worker { o, link: link.clone(), sink: sink.clone(), live: live.clone(), backlog: backlog.clone() };
         let thread = std::thread::Builder::new()
@@ -235,7 +240,7 @@ impl Handle {
                 })
             })
             .expect("osewa: session thread");
-        Handle { sink, backlog, cmds, size, stop: Some(stop), thread: Some(thread), link, live }
+        Handle { sink, backlog, cmds, size, stop: Some(stop), thread: Some(thread), link, own_link, live }
     }
 
     pub fn send(&self, b: &[u8]) -> Result<(), Refused> {
@@ -298,7 +303,7 @@ impl Handle {
             let _ = t.join();
         }
         let live = std::mem::take(&mut *self.live.lock().unwrap_or_else(|e| e.into_inner()));
-        let link = self.link.clone();
+        let (link, own_link) = (self.link.clone(), self.own_link);
         // The network may be gone: the app's thread must not wait on it.
         std::thread::spawn(move || {
             osewa_client::block_on(async {
@@ -316,7 +321,9 @@ impl Handle {
                 if let Some(s) = &live.s {
                     s.close();
                 }
-                let _ = osewa_client::timeout(Duration::from_secs(2), link.close()).await;
+                if own_link {
+                    let _ = osewa_client::timeout(Duration::from_secs(2), link.close()).await;
+                }
             });
             if let Some(a) = live.a {
                 a.m.close();

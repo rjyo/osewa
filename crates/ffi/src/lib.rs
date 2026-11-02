@@ -18,12 +18,14 @@ use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
+mod link;
 mod options;
 mod session;
 
-pub use options::OpenOptions;
+pub use options::{LinkOptions, OpenOptions};
 pub use session::{Callbacks, CLOSED, CONNECTED, CONNECTING, INPUT_MAX, RECONNECTING};
 
+use link::LinkHandle;
 use session::{Handle, Refused};
 
 /// osewa_send and osewa_paste's refusals (osewa.h).
@@ -43,6 +45,9 @@ mod tests;
 
 /// osewa_session: what osewa_open returns.
 pub struct OsewaSession(Handle);
+
+/// osewa_link: what osewa_link_open returns.
+pub struct OsewaLink(LinkHandle);
 
 fn guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(fallback)
@@ -67,7 +72,33 @@ pub unsafe extern "C" fn osewa_open(opts: *const OpenOptions, cb: Callbacks, err
         };
         let Some(o) = (unsafe { opts.as_ref() }) else { return fail("osewa: no options") };
         match unsafe { options::read(o) } {
-            Ok(o) => Box::into_raw(Box::new(OsewaSession(Handle::open(o, cb)))),
+            Ok(o) => Box::into_raw(Box::new(OsewaSession(Handle::open(o, cb, None)))),
+            Err(e) => fail(&e),
+        }
+    })
+}
+
+/// Opens a session on l's connection; opts' connection fields are ignored.
+///
+/// # Safety
+/// l is from osewa_link_open and not yet closed; opts points to a valid
+/// osewa_open_options; err is NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_open_on(l: *mut OsewaLink, opts: *const OpenOptions, cb: Callbacks, err: *mut *mut c_char) -> *mut OsewaSession {
+    guard(std::ptr::null_mut(), || {
+        let fail = |msg: &str| {
+            if !err.is_null() {
+                unsafe { *err = into_c(msg) };
+            }
+            std::ptr::null_mut()
+        };
+        let Some(l) = (unsafe { l.as_ref() }) else { return fail("osewa: no link") };
+        let Some(o) = (unsafe { opts.as_ref() }) else { return fail("osewa: no options") };
+        match unsafe { options::read_on(o) } {
+            Ok(mut o) => {
+                o.cfg.client_id = l.0.client_id().to_string();
+                Box::into_raw(Box::new(OsewaSession(Handle::open(o, cb, Some(l.0.link().clone())))))
+            }
             Err(e) => fail(&e),
         }
     })
@@ -211,6 +242,116 @@ pub unsafe extern "C" fn osewa_kill_id(opts: *const OpenOptions, err: *mut *mut 
             Ok(()) => 0,
             Err(e) => fail(&e),
         }
+    })
+}
+
+/// Opens a link: connects in the background and reports through cb (output
+/// is never called).
+///
+/// # Safety
+/// opts points to a valid osewa_link_options; err is NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_open(opts: *const LinkOptions, cb: Callbacks, err: *mut *mut c_char) -> *mut OsewaLink {
+    guard(std::ptr::null_mut(), || {
+        let fail = |msg: &str| {
+            if !err.is_null() {
+                unsafe { *err = into_c(msg) };
+            }
+            std::ptr::null_mut()
+        };
+        let Some(o) = (unsafe { opts.as_ref() }) else { return fail("osewa: no options") };
+        match unsafe { options::read_link(o) } {
+            Ok(cfg) => Box::into_raw(Box::new(OsewaLink(LinkHandle::open(cfg, cb)))),
+            Err(e) => fail(&e),
+        }
+    })
+}
+
+/// Forwards 127.0.0.1:local_port (0 picks a free port) to host:port as the
+/// server dials it. Returns the local port, or 0 and *err.
+///
+/// # Safety
+/// l is from osewa_link_open and not yet closed; host is NUL-terminated;
+/// err is NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_forward(l: *mut OsewaLink, local_port: u16, host: *const c_char, port: u16, err: *mut *mut c_char) -> u16 {
+    guard(0, || {
+        let fail = |msg: &str| {
+            if !err.is_null() {
+                unsafe { *err = into_c(msg) };
+            }
+            0
+        };
+        let Some(l) = (unsafe { l.as_ref() }) else { return fail("osewa: no link") };
+        if host.is_null() {
+            return fail("osewa: no host");
+        }
+        let Ok(host) = unsafe { CStr::from_ptr(host) }.to_str() else { return fail("osewa: host is not UTF-8") };
+        match l.0.forward(local_port, host.to_string(), port) {
+            Ok(p) => p,
+            Err(e) => fail(&e),
+        }
+    })
+}
+
+/// Stops the forward on local_port and ends its connections.
+///
+/// # Safety
+/// l is from osewa_link_open and not yet closed.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_unforward(l: *mut OsewaLink, local_port: u16) {
+    guard((), || {
+        if let Some(l) = unsafe { l.as_ref() } {
+            l.0.unforward(local_port);
+        }
+    })
+}
+
+/// # Safety
+/// l is from osewa_link_open and not yet closed.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_network_changed(l: *mut OsewaLink) {
+    guard((), || {
+        if let Some(l) = unsafe { l.as_ref() } {
+            l.0.link().check();
+        }
+    })
+}
+
+/// # Safety
+/// l is from osewa_link_open and not yet closed.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_pause(l: *mut OsewaLink) {
+    guard((), || {
+        if let Some(l) = unsafe { l.as_ref() } {
+            l.0.link().pause();
+        }
+    })
+}
+
+/// # Safety
+/// l is from osewa_link_open and not yet closed.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_wake(l: *mut OsewaLink) {
+    guard((), || {
+        if let Some(l) = unsafe { l.as_ref() } {
+            l.0.link().wake();
+        }
+    })
+}
+
+/// Ends the forwards and closes the link; its sessions stop reconnecting.
+/// Frees l.
+///
+/// # Safety
+/// l is from osewa_link_open and not yet closed; close the sessions opened
+/// on it first.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_link_close(l: *mut OsewaLink) {
+    guard((), || {
+        let Some(h) = (unsafe { l.as_ref() }) else { return };
+        h.0.quiesce();
+        unsafe { Box::from_raw(l) }.0.close();
     })
 }
 

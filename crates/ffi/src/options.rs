@@ -70,10 +70,20 @@ unsafe fn opt_str(p: *const c_char, what: &str) -> Result<Option<String>, String
 /// # Safety
 /// Every pointer in o is NULL or valid as osewa.h says.
 pub unsafe fn read(o: &OpenOptions) -> Result<Opened, String> {
-    let addr = unsafe { opt_str(o.addr, "addr") }?.ok_or("osewa: addr is required")?;
-    let server_key = unsafe { opt_str(o.server_key, "server_key") }?.ok_or("osewa: server_key is required")?;
-    let client_id = unsafe { opt_str(o.client_id, "client_id") }?.ok_or("osewa: client_id is required")?;
-    let name = unsafe { opt_str(o.device_name, "device_name") }?.unwrap_or_default();
+    unsafe { read_session(o, true) }
+}
+
+/// Reads and checks the options of a session on an osewa_link, which has
+/// the connection: addr, server_key, quic_port, device_key, client_id and
+/// device_name are ignored.
+///
+/// # Safety
+/// Every pointer in o is NULL or valid as osewa.h says.
+pub unsafe fn read_on(o: &OpenOptions) -> Result<Opened, String> {
+    unsafe { read_session(o, false) }
+}
+
+unsafe fn read_session(o: &OpenOptions, connect: bool) -> Result<Opened, String> {
     let session_id = unsafe { opt_str(o.session_id, "session_id") }?;
     let cwd = unsafe { opt_str(o.cwd, "cwd") }?.unwrap_or_default();
     let argv = match unsafe { opt_str(o.argv_json, "argv_json") }? {
@@ -84,18 +94,15 @@ pub unsafe fn read(o: &OpenOptions) -> Result<Opened, String> {
         None => Appearance::default(),
         Some(j) => parse_appearance(&j)?,
     };
-    if o.device_key.is_null() || o.device_key_len == 0 {
-        return Err("osewa: device_key is required".into());
-    }
-    let der = unsafe { std::slice::from_raw_parts(o.device_key, o.device_key_len) }.to_vec();
-    let id = osewa_auth::Identity::from_pkcs8(der).map_err(|e| format!("osewa: device_key: {e}"))?;
-    let pin = osewa_auth::decode_key(&server_key).map_err(|e| format!("osewa: server_key: {e}"))?;
-    let mut cfg = osewa_client::Config::default();
-    cfg.url = format!("wss://{}{}", with_port(&addr)?, wire::PATH);
-    cfg.quic_port = o.quic_port;
-    cfg.tls = Some(Arc::new(osewa_auth::client_config(&id, pin)));
-    cfg.client_id = client_id;
-    cfg.name = name;
+    let cfg = if connect {
+        let addr = unsafe { opt_str(o.addr, "addr") }?.ok_or("osewa: addr is required")?;
+        let server_key = unsafe { opt_str(o.server_key, "server_key") }?.ok_or("osewa: server_key is required")?;
+        let client_id = unsafe { opt_str(o.client_id, "client_id") }?.ok_or("osewa: client_id is required")?;
+        let name = unsafe { opt_str(o.device_name, "device_name") }?.unwrap_or_default();
+        unsafe { config(&addr, &server_key, o.quic_port, o.device_key, o.device_key_len, client_id, name) }?
+    } else {
+        osewa_client::Config::default()
+    };
     Ok(Opened {
         cfg,
         session_id,
@@ -108,6 +115,60 @@ pub unsafe fn read(o: &OpenOptions) -> Result<Opened, String> {
         predict: if o.predict != 0 { PredictMode::Auto } else { PredictMode::Never },
         appearance,
     })
+}
+
+/// The connection's config: the server's URL, mutual TLS with the device
+/// key and the pinned server key.
+///
+/// # Safety
+/// device_key is NULL or holds device_key_len bytes.
+unsafe fn config(
+    addr: &str,
+    server_key: &str,
+    quic_port: u16,
+    device_key: *const u8,
+    device_key_len: usize,
+    client_id: String,
+    name: String,
+) -> Result<osewa_client::Config, String> {
+    if device_key.is_null() || device_key_len == 0 {
+        return Err("osewa: device_key is required".into());
+    }
+    let der = unsafe { std::slice::from_raw_parts(device_key, device_key_len) }.to_vec();
+    let id = osewa_auth::Identity::from_pkcs8(der).map_err(|e| format!("osewa: device_key: {e}"))?;
+    let pin = osewa_auth::decode_key(server_key).map_err(|e| format!("osewa: server_key: {e}"))?;
+    let mut cfg = osewa_client::Config::default();
+    cfg.url = format!("wss://{}{}", with_port(addr)?, wire::PATH);
+    cfg.quic_port = quic_port;
+    cfg.tls = Some(Arc::new(osewa_auth::client_config(&id, pin)));
+    cfg.client_id = client_id;
+    cfg.name = name;
+    Ok(cfg)
+}
+
+/// osewa_link_options, as osewa.h lays it out: osewa_open_options'
+/// connection half.
+#[repr(C)]
+pub struct LinkOptions {
+    pub addr: *const c_char,
+    pub server_key: *const c_char,
+    pub quic_port: u16,
+    pub device_key: *const u8,
+    pub device_key_len: usize,
+    pub client_id: *const c_char,
+    pub device_name: *const c_char,
+}
+
+/// Reads and checks a link's options into its connection's config.
+///
+/// # Safety
+/// Every pointer in o is NULL or valid as osewa.h says.
+pub unsafe fn read_link(o: &LinkOptions) -> Result<osewa_client::Config, String> {
+    let addr = unsafe { opt_str(o.addr, "addr") }?.ok_or("osewa: addr is required")?;
+    let server_key = unsafe { opt_str(o.server_key, "server_key") }?.ok_or("osewa: server_key is required")?;
+    let client_id = unsafe { opt_str(o.client_id, "client_id") }?.ok_or("osewa: client_id is required")?;
+    let name = unsafe { opt_str(o.device_name, "device_name") }?.unwrap_or_default();
+    unsafe { config(&addr, &server_key, o.quic_port, o.device_key, o.device_key_len, client_id, name) }
 }
 
 /// "host:port" for the URL: the default port added when there is none, a

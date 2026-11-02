@@ -97,6 +97,43 @@ void osewa_kill(osewa_session *s);
    already gone), or OSEWA_ERR + *err (free with osewa_string_free). */
 int32_t osewa_kill_id(const osewa_open_options *opts, char **err);
 
+/* Links: one connection to a server, kept up and redialed as a session's
+   is, that several sessions share (osewa_open_on) and that carries forwards.
+   Its callbacks: state as for a session (CLOSED once nothing will get
+   through: "incompatible: ...", "unauthorized: ..."); stats with the
+   carrier when it changes (srtt_us 0: the link measures none of its own;
+   a session's stats do); event {"type":"carriers","quic_port":n}; output
+   never. */
+typedef struct osewa_link osewa_link;
+
+typedef struct osewa_link_options {
+  const char *addr;            /* as osewa_open_options */
+  const char *server_key;
+  uint16_t quic_port;
+  const uint8_t *device_key;
+  size_t device_key_len;
+  const char *client_id;
+  const char *device_name;
+} osewa_link_options;
+
+osewa_link *osewa_link_open(const osewa_link_options *opts, osewa_callbacks cb, char **err);
+/* A session on l's connection: opts' addr, server_key, quic_port,
+   device_key, client_id and device_name are ignored. osewa_pause, osewa_wake
+   and osewa_network_changed on it act on the link, so on all its sessions. */
+osewa_session *osewa_open_on(osewa_link *l, const osewa_open_options *opts, osewa_callbacks cb, char **err);
+/* Listens on 127.0.0.1:local_port (0 = any free port) and forwards each
+   connection to host:port as the server dials it ("localhost" is the
+   server's loopback), as ssh -L. Returns the port, or 0 and *err. Forwarded
+   connections end with the connection they rode; new ones take the next. */
+uint16_t osewa_link_forward(osewa_link *l, uint16_t local_port, const char *host, uint16_t port, char **err);
+void osewa_link_unforward(osewa_link *l, uint16_t local_port);
+void osewa_link_network_changed(osewa_link *l);
+void osewa_link_pause(osewa_link *l);
+void osewa_link_wake(osewa_link *l);
+/* Ends the forwards and closes the connection; close its sessions first.
+   Frees l; no callbacks fire after it returns. */
+void osewa_link_close(osewa_link *l);
+
 /* Device keys. */
 int32_t osewa_generate_key(uint8_t *out, size_t cap, size_t *len); /* PKCS#8 DER into out */
 char *osewa_public_key(const uint8_t *der, size_t len);            /* base64 raw 32 bytes, NULL on error */

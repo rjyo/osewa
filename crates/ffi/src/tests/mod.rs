@@ -16,6 +16,7 @@ use osewa_wire as wire;
 use crate::*;
 
 mod api;
+mod link;
 mod options;
 
 /// A private temporary directory, short enough for Unix socket paths.
