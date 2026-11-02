@@ -362,6 +362,10 @@ impl Client {
         if !valid_size(req.cols, req.rows) {
             return self.fail(req.id, wire::ERR_BAD_REQUEST, &err_size());
         }
+        let look = wire::Look::of(&req);
+        if let Err(e) = look.check() {
+            return self.fail(req.id, wire::ERR_BAD_REQUEST, &e);
+        }
         let argv = if req.argv.is_empty() { self.srv.cfg.shell.clone() } else { req.argv };
         let id = new_session_id();
         let cfg = osewa_holder::Config {
@@ -374,6 +378,7 @@ impl Client {
             argv,
             cwd: req.cwd,
             env: req.env,
+            look,
             home: self.srv.cfg.home.clone(),
             ..Default::default()
         };

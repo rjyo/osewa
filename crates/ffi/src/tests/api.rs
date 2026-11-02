@@ -174,6 +174,23 @@ fn appearance_answers_color_queries() {
     unsafe { osewa_close(h) };
 }
 
+/// A program that asks for colors first thing gets the app's. They go
+/// with the create, ahead of the attach; in this process the attach is too
+/// quick to lose that race (the holder's look_answers_from_the_start pins
+/// it), so this checks the path end to end.
+#[test]
+fn appearance_answers_a_program_at_start() {
+    let host = Host::new();
+    let r = Rec::new(80, 24);
+    let mut o = host.open_opts();
+    o.appearance = Some(r##"{"color_scheme":"dark","bg":"#123456"}"##);
+    let argv = serde_json::to_string(&["/bin/sh", "-c", r"printf '\033]11;?\033\\'; stty raw -echo; dd bs=1 count=12 2>/dev/null | od -c; sleep 30"]).unwrap();
+    o.argv = Some(&argv);
+    let h = open(&o, &r);
+    r.wait_screen("r   g   b   :   1   2");
+    unsafe { osewa_close(h) };
+}
+
 /// A device the server doesn't know is told so once, not retried forever.
 #[test]
 fn unenrolled_device_is_unauthorized() {

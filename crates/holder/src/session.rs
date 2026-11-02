@@ -231,6 +231,27 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+/// The terminal's default colors with a look's over them; its empty
+/// colors leave the terminal's.
+fn merged_colors(term: &ghostty::Terminal, look: &wire::Look) -> Result<ghostty::Colors, String> {
+    let color = |s: &str| match s {
+        "" => Ok(None),
+        s => wire::parse_rgb_hex(s).map(Some).ok_or(format!("bad color {}", wire::quote(s))),
+    };
+    let mut d = term.default_colors();
+    for (slot, s) in [(&mut d.foreground, &look.foreground), (&mut d.background, &look.background), (&mut d.cursor, &look.cursor)] {
+        if let Some(c) = color(s)? {
+            *slot = Some(c);
+        }
+    }
+    for (slot, s) in d.palette.iter_mut().zip(&look.palette) {
+        if let Some(c) = color(s)? {
+            *slot = c;
+        }
+    }
+    Ok(d)
+}
+
 fn reason_name(r: &str) -> serde_json::Value {
     json!(r)
 }
@@ -274,6 +295,13 @@ impl Session {
         .map_err(|e| e.to_string())?;
         let (cw, ch) = cell_px(cfg.cols, cfg.rows, cfg.width, cfg.height);
         term.resize_cells(cfg.cols as usize, cfg.rows as usize, cw, ch).map_err(|e| e.to_string())?;
+        // The creator's look, before any program can ask for it.
+        cfg.look.check().map_err(|e| format!("holder: look: {e}"))?;
+        let d = merged_colors(&term, &cfg.look).map_err(|e| format!("holder: look: {e}"))?;
+        term.set_default_colors(&d).map_err(|e| e.to_string())?;
+        if !cfg.look.color_scheme.is_empty() {
+            color_scheme.set(Some(cfg.look.color_scheme == "dark"));
+        }
         let mut e = [0u8; 16];
         rand::Rng::fill(&mut rand::thread_rng(), &mut e);
         let now = clock();
@@ -863,21 +891,7 @@ impl Session {
         if !req.palette.is_empty() && req.palette.len() != 256 {
             return Err((wire::ERR_BAD_REQUEST, format!("palette of {} colors: want 256", req.palette.len())));
         }
-        let color = |s: &str| match s {
-            "" => Ok(None),
-            s => wire::parse_rgb_hex(s).map(Some).ok_or((wire::ERR_BAD_REQUEST, format!("bad color {}", wire::quote(s)))),
-        };
-        let mut d = self.core.term.default_colors();
-        for (slot, s) in [(&mut d.foreground, &req.foreground), (&mut d.background, &req.background), (&mut d.cursor, &req.cursor)] {
-            if let Some(c) = color(s)? {
-                *slot = Some(c);
-            }
-        }
-        for (slot, s) in d.palette.iter_mut().zip(&req.palette) {
-            if let Some(c) = color(s)? {
-                *slot = c;
-            }
-        }
+        let d = merged_colors(&self.core.term, &wire::Look::of(req)).map_err(|e| (wire::ERR_BAD_REQUEST, e))?;
         if client.is_empty() || client != owner {
             return Err((wire::ERR_NOT_OWNER, "not the owner".into()));
         }

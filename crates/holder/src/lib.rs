@@ -114,6 +114,11 @@ pub struct Config {
     /// defaults to xterm-256color. The CLI reads them from stdin with
     /// --env-stdin.
     pub env: Vec<String>,
+    /// The creating client's look (session.create): applied before the
+    /// child starts, so a program that asks for colors as it starts gets
+    /// the client's rather than libghostty's. The CLI reads it from --look,
+    /// JSON.
+    pub look: wire::Look,
     /// The session's home in place of the account's (OSEWA_HOME, which
     /// the CLI reads at start).
     pub home: Option<PathBuf>,
@@ -262,6 +267,7 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         .value("height", "0", "height in pixels, 0 if unknown")
         .value("cwd", "", "working directory")
         .bool("env-stdin", false, "read the session env from stdin: a JSON array of KEY=value")
+        .value("look", "", "the creating client's colors, JSON: color_scheme, foreground, background, cursor, palette")
         .value("scrollback-bytes", &DEFAULT_SCROLLBACK_BYTES.to_string(), "scrollback cap in bytes")
         .value("idle-timeout", "24h0m0s", "end the session after this long unattached and silent; 0 disables");
     let p = fs.parse(args).map_err(|e| format!("{e}\n{}", fs.usage()))?;
@@ -283,6 +289,10 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         },
         argv: p.args.clone(),
         env: if p.bool("env-stdin") { env_from_stdin()? } else { Vec::new() },
+        look: match p.str("look").as_str() {
+            "" => wire::Look::default(),
+            j => serde_json::from_str(j).map_err(|e| format!("holder: --look: {e}"))?,
+        },
         home: osewa_paths::home_override().map_err(|e| format!("holder: {e}"))?,
         trace_dir: std::env::var("OSEWA_TRACE").unwrap_or_default(),
         ..Default::default()

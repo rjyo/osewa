@@ -64,6 +64,20 @@ pub struct TermColors {
     pub palette: [Option<[u8; 3]>; 256],
 }
 
+/// A terminal's scheme and colors as session.create and session.colors
+/// carry them: "#rrggbb", the palette all 256 or none.
+pub fn look(dark: Option<bool>, c: &TermColors) -> wire::Look {
+    let hex = |c: Option<[u8; 3]>| c.map(wire::rgb_hex).unwrap_or_default();
+    let palette = if c.palette.iter().all(Option::is_none) { Vec::new() } else { (0..256).map(|i| hex(c.palette.get(i).copied().flatten())).collect() };
+    wire::Look {
+        color_scheme: dark.map(|d| if d { "dark" } else { "light" }.to_string()).unwrap_or_default(),
+        foreground: hex(c.foreground),
+        background: hex(c.background),
+        cursor: hex(c.cursor),
+        palette,
+    }
+}
+
 impl Default for TermColors {
     fn default() -> TermColors {
         TermColors { foreground: None, background: None, cursor: None, palette: [None; 256] }
@@ -1077,14 +1091,13 @@ impl Session {
     /// color queries are answered with. Only the owner's apply; None, and
     /// a palette shorter than 256, leave the holder's as they are.
     pub async fn colors(&self, c: &TermColors) -> Result<()> {
-        let hex = |c: Option<[u8; 3]>| c.map(wire::rgb_hex).unwrap_or_default();
-        let palette = if c.palette.iter().all(Option::is_none) { Vec::new() } else { (0..256).map(|i| hex(c.palette.get(i).copied().flatten())).collect() };
+        let l = look(None, c);
         let req = wire::Request {
             method: wire::METHOD_COLORS.into(),
-            foreground: hex(c.foreground),
-            background: hex(c.background),
-            cursor: hex(c.cursor),
-            palette,
+            foreground: l.foreground,
+            background: l.background,
+            cursor: l.cursor,
+            palette: l.palette,
             ..Default::default()
         };
         self.request(req).await.map(drop)

@@ -390,6 +390,57 @@ impl EventMsg {
     }
 }
 
+/// A client terminal's look, as session.create and session.colors carry
+/// it in their REQUEST fields: the color scheme, and the colors programs'
+/// color queries (OSC 4, 10, 11, 12) are answered with. Empty fields leave
+/// the holder's as they are.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct Look {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color_scheme: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub foreground: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub background: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cursor: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub palette: Vec<String>,
+}
+
+impl Look {
+    /// A request's look fields.
+    pub fn of(r: &Request) -> Look {
+        Look {
+            color_scheme: r.color_scheme.clone(),
+            foreground: r.foreground.clone(),
+            background: r.background.clone(),
+            cursor: r.cursor.clone(),
+            palette: r.palette.clone(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Look::default()
+    }
+
+    /// Why the look can't be applied: an unknown scheme, a color that isn't
+    /// "#rrggbb", or a palette of other than 256 colors.
+    pub fn check(&self) -> Result<(), String> {
+        if !matches!(self.color_scheme.as_str(), "" | "dark" | "light") {
+            return Err(format!("color scheme {}: want dark or light", crate::quote(&self.color_scheme)));
+        }
+        if !self.palette.is_empty() && self.palette.len() != 256 {
+            return Err(format!("palette of {} colors: want 256", self.palette.len()));
+        }
+        let colors = [&self.foreground, &self.background, &self.cursor].into_iter().chain(&self.palette);
+        match colors.filter(|c| !c.is_empty()).find(|c| parse_rgb_hex(c).is_none()) {
+            Some(c) => Err(format!("bad color {}", crate::quote(c))),
+            None => Ok(()),
+        }
+    }
+}
+
 /// A color as session.colors has it: "#rrggbb".
 pub fn rgb_hex([r, g, b]: [u8; 3]) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")

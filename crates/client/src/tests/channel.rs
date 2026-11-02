@@ -501,11 +501,14 @@ fn create_options() {
         argv: vec!["sh".into()],
         cwd: "/tmp".into(),
         env: vec!["A=1".into()],
+        look: crate::look(Some(true), &crate::TermColors { background: Some([0x10, 0x20, 0x30]), ..Default::default() }),
     }))
     .unwrap();
     let r = f.lock().creates[0].clone();
     assert!(r.cwd == "/tmp" && r.env == ["A=1"] && r.argv == ["sh"], "create request {r:?}");
     assert_eq!((r.width, r.height), (800, 480));
+    // The look rides the create.
+    assert_eq!((r.color_scheme.as_str(), r.background.as_str(), r.palette.len()), ("dark", "#102030", 0));
 }
 
 /// Over QUIC the stream.close RESPONSE may overtake the channel's last

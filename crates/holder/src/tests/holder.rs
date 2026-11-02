@@ -307,6 +307,31 @@ fn colors_answer_queries() {
     a.wait_for("the replies", |c| unwrapped(&c.text()).contains("R:]11;rgb:1010/2020/3030]4;5;rgb:abab/cdcd/efef:END"));
 }
 
+/// The creator's look answers a program that asks as it starts, before
+/// any client attached (herdr asks at once), and its scheme answers DSR 996.
+#[test]
+fn look_answers_from_the_start() {
+    let mut palette = vec!["#000000".to_string(); 256];
+    palette[5] = "#abcdef".into();
+    let look = wire::Look { color_scheme: "light".into(), background: "#102030".into(), palette, ..Default::default() };
+    let h = start(Config { look, ..cfg(sh(
+        r#"stty raw -echo; printf '\033]11;?\033\\\033]4;5;?\033\\\033[?996n'; s=; n=0; while [ $n -lt 3 ]; do c=$(dd bs=1 count=1 2>/dev/null); case "$c" in '\'|n) n=$((n+1));; esac; s="$s$c"; done; printf 'R:%s:END' "$(printf %s "$s" | tr -d '\033\\[')"; sleep 30"#,
+    )) });
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.wait_for("the replies", |c| unwrapped(&c.text()).contains("R:]11;rgb:1010/2020/3030]4;5;rgb:abab/cdcd/efef?997;2n:END"));
+}
+
+/// What a look can't be: a color other than #rrggbb, a short palette, an
+/// unknown scheme.
+#[test]
+fn look_check_refuses() {
+    assert!(wire::Look { foreground: "blue".into(), ..Default::default() }.check().is_err());
+    assert!(wire::Look { palette: vec!["#000000".into()], ..Default::default() }.check().is_err());
+    assert!(wire::Look { color_scheme: "blue".into(), ..Default::default() }.check().is_err());
+    assert!(wire::Look { background: "#102030".into(), color_scheme: "dark".into(), ..Default::default() }.check().is_ok());
+}
+
 /// An OSC 52 read goes to the owner alone, and its answer to the program;
 /// an answer with no read waiting goes nowhere.
 #[test]

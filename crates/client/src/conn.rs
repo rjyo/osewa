@@ -57,6 +57,10 @@ pub struct CreateOptions {
     pub cwd: String,
     /// KEY=VALUE, added to the server's environment.
     pub env: Vec<String>,
+    /// This client's look (crate::look), which the holder answers color
+    /// queries with from the start; empty leaves its defaults. Servers
+    /// before it ignore it.
+    pub look: wire::Look,
 }
 
 /// One connection to a server. Clones share it; it is gone once closed or
@@ -939,6 +943,11 @@ impl Conn {
             argv: o.argv,
             cwd: o.cwd,
             env: o.env,
+            color_scheme: o.look.color_scheme,
+            foreground: o.look.foreground,
+            background: o.look.background,
+            cursor: o.look.cursor,
+            palette: o.look.palette,
             ..Default::default()
         };
         Ok(self.request(req, None).await?.session_id)

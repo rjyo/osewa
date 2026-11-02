@@ -626,6 +626,10 @@ fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
         a.push("--cwd".into());
         a.push(cfg.cwd.clone());
     }
+    if !cfg.look.is_empty() {
+        a.push("--look".into());
+        a.push(serde_json::to_string(&cfg.look).unwrap_or_default());
+    }
     a.push("--env-stdin".into());
     a.push("--".into());
     a.extend(cfg.argv.iter().cloned());

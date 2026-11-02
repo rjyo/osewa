@@ -24,7 +24,8 @@ frames; it never parses snapshot or output payloads.
 Holders listen at `<run>/<session id>.sock`, where `<run>` is
 `$XDG_RUNTIME_DIR/osewa` if set, else `~/.local/state/osewa/run`, mode 0700.
 The server spawns a holder with `osewa holder --run <run> --id <id> --cols
-<c> --rows <r> [--cwd <dir>] --env-stdin -- <argv...>`, detached with setsid,
+<c> --rows <r> [--cwd <dir>] [--look <json>] --env-stdin -- <argv...>`,
+detached with setsid,
 and writes `session.create` `env` to its stdin as a JSON array of
 `KEY=value` (not on its command line, which every user can read, nor in one
 environment string, which Linux caps at 128 KiB; a create request's 1 MiB
@@ -174,7 +175,7 @@ Methods (REQUEST `method`):
 | Method | Arguments | Result |
 | --- | --- | --- |
 | `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?}]}` |
-| `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`? | `{"session_id"}` |
+| `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`? | `{"session_id"}` |
 | `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
 | `session.detach` | `stream` | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
@@ -209,6 +210,13 @@ may hold at most 64 streams.
 Error codes: `bad_request`, `not_found`, `not_owner`, `ended`, `unavailable`,
 `unreachable` (forward.open), `incompatible` (session.attach, above),
 `internal`.
+
+The look fields of `session.create` are `session.color_scheme`'s and
+`session.colors`'s, applied before the child starts (the holder's
+`--look`, their JSON): a program that asks for colors as it starts gets
+the creating client's instead of libghostty's defaults, which an attach's
+`session.colors` would arrive after. A bad one is `bad_request`; servers
+before them ignore them.
 
 `argv` defaults to the account's login shell from passwd (not the server's
 `$SHELL`), run with `-l`. `own: true` claims ownership on

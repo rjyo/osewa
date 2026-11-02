@@ -397,6 +397,13 @@ fn holder_args_line() {
     };
     assert_eq!(holder_args(&cfg("", &["sh", "-c", "x"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --env-stdin -- sh -c x");
     assert_eq!(holder_args(&cfg("/c", &["sh"])).join(" "), "holder --run /r --id i --cols 1 --rows 2 --cwd /c --env-stdin -- sh");
+    // The creator's look goes as JSON.
+    let mut c = cfg("", &["sh"]);
+    c.look = osewa_wire::Look { color_scheme: "dark".into(), background: "#102030".into(), ..Default::default() };
+    assert_eq!(
+        holder_args(&c).join(" "),
+        r##"holder --run /r --id i --cols 1 --rows 2 --look {"color_scheme":"dark","background":"#102030"} --env-stdin -- sh"##
+    );
 }
 
 #[test]

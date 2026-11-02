@@ -414,6 +414,9 @@ impl Worker {
                     argv: o.argv.clone(),
                     cwd: o.cwd.clone(),
                     env: Vec::new(),
+                    // Before the program starts: one that asks for colors
+                    // right away (herdr) gets ours, not libghostty's.
+                    look: osewa_client::look(o.appearance.dark, &o.appearance.colors),
                 };
                 let created = self.or_fatal(osewa_client::timeout(REQUEST_TIMEOUT, c.create(create))).await?;
                 match created {
