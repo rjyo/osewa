@@ -30,10 +30,17 @@ sed -nE 's/^[a-z].*[ *](osewa_[a-z_]+)\(.*/_\1/p' "$header" | sort -u >"$work/ex
 # binary: so the exports list is the only one the linker sees.
 build_slice() {
 	local rust_target=$1 zig_target=$2 sdk=$3 clang_target=$4 platform=$5
-	TARGET=$zig_target ./scripts/libghostty.sh >/dev/null
+	# Sized for an app download, not for a host: libghostty ReleaseSmall
+	# (in its own cache; still ~165 MB/s of parsing, far past any link),
+	# Rust at opt-level s with fat LTO. Together ~1.9 MB off the device
+	# slice's 5.3 MB.
+	local lib="$root/.cache/libghostty-small/$zig_target"
+	OPTIMIZE=ReleaseSmall LIBGHOSTTY_OUT=$lib TARGET=$zig_target ./scripts/libghostty.sh >/dev/null
 	# Unwinding, so a panic is caught at the C boundary rather than taking
 	# the app down; line tables, for the dSYM.
-	IPHONEOS_DEPLOYMENT_TARGET=$MIN_IOS CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+	OSEWA_LIBGHOSTTY=$lib IPHONEOS_DEPLOYMENT_TARGET=$MIN_IOS \
+		CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+		CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_LTO=fat \
 		cargo rustc -p osewa-ffi --release --target "$rust_target" --crate-type staticlib >&2
 	local fw="$work/$rust_target/Osewa.framework"
 	mkdir -p "$fw/Headers" "$fw/Modules"

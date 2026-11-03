@@ -10,6 +10,9 @@
 # LIBGHOSTTY_OUT=<dir> builds there instead (cargo reads it as
 # OSEWA_LIBGHOSTTY), so release builds for a baseline CPU never replace the
 # development ones.
+#
+# OPTIMIZE=<zig mode> (default ReleaseFast); the iOS framework builds
+# ReleaseSmall into its own LIBGHOSTTY_OUT.
 set -euo pipefail
 
 GHOSTTY_COMMIT=83fb95624b0439ee660c2679b43b38c8b63769cd
@@ -28,10 +31,12 @@ if [[ -n "${TARGET:-}" ]]; then
 	zigflags=("-Dtarget=$TARGET")
 fi
 src="$root/.cache/ghostty-src"
+optimize=${OPTIMIZE:-ReleaseFast}
 out=${LIBGHOSTTY_OUT:-"$root/.cache/libghostty/$platform"}
 
 if [[ -f "$out/lib/libghostty-vt.a" && "$(cat "$out/COMMIT" 2>/dev/null)" == "$GHOSTTY_COMMIT" &&
-	"$(cat "$out/TARGET" 2>/dev/null)" == "${TARGET:-}" ]]; then
+	"$(cat "$out/TARGET" 2>/dev/null)" == "${TARGET:-}" &&
+	"$(cat "$out/OPTIMIZE" 2>/dev/null || echo ReleaseFast)" == "$optimize" ]]; then
 	echo "$out"
 	exit 0
 fi
@@ -43,11 +48,12 @@ git -C "$src" fetch --quiet origin "$GHOSTTY_COMMIT" 2>/dev/null || true
 git -C "$src" checkout --quiet --detach "$GHOSTTY_COMMIT"
 
 rm -rf "$out"
-(cd "$src" && zig build -Demit-lib-vt -Doptimize=ReleaseFast ${zigflags[@]+"${zigflags[@]}"} --prefix "$out" >&2)
+(cd "$src" && zig build -Demit-lib-vt -Doptimize="$optimize" ${zigflags[@]+"${zigflags[@]}"} --prefix "$out" >&2)
 cp -R "$src/include/ghostty" "$out/include/" 2>/dev/null || {
 	mkdir -p "$out/include"
 	cp -R "$src/include/ghostty" "$out/include/"
 }
 echo "$GHOSTTY_COMMIT" >"$out/COMMIT"
 echo "${TARGET:-}" >"$out/TARGET"
+echo "$optimize" >"$out/OPTIMIZE"
 echo "$out"
