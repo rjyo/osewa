@@ -35,7 +35,7 @@ const QUIC_RACE_AFTER: Duration = Duration::from_millis(300);
 /// Bounds unsent bytes in the kernel's send buffer.
 pub(crate) const NOT_SENT_LOWAT: libc::c_int = 16 << 10;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) const TCP_NOTSENT_LOWAT: libc::c_int = 25;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) const TCP_NOTSENT_LOWAT: libc::c_int = 0x201;
@@ -262,7 +262,7 @@ async fn tcp_connect(addr: String) -> io::Result<Box<dyn Io>> {
 }
 
 pub(crate) fn set_not_sent_lowat(c: &impl AsRawFd) {
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios"))]
     unsafe {
         libc::setsockopt(
             c.as_raw_fd(),
