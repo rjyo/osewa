@@ -13,10 +13,10 @@ use std::io;
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::{Rc, Weak};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use osewa_wire as wire;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -29,6 +29,7 @@ pub mod conn;
 mod dial;
 mod flight;
 mod limits;
+pub mod local;
 mod log;
 mod lowat;
 pub mod path;
@@ -80,6 +81,8 @@ pub struct Tunables {
     pub max_streams: usize,
     /// Create, list and kill requests in flight per client.
     pub max_busy: usize,
+    /// How young a tagged session session.reconcile leaves alone.
+    pub reconcile_grace: Duration,
     /// Bounds the TLS handshake and the WebSocket upgrade together, as
     /// a slow client could otherwise hold a connection between the two.
     pub handshake_timeout: Duration,
@@ -104,6 +107,7 @@ impl Default for Tunables {
             kill_grace: osewa_execproc::KILL_GRACE,
             max_streams: wire::MAX_STREAMS,
             max_busy: 16,
+            reconcile_grace: local::RECONCILE_GRACE,
             handshake_timeout: Duration::from_secs(10),
         }
     }
@@ -228,6 +232,9 @@ struct State {
     closed: bool,
     /// The UDP port QUIC serves, advertised in WELCOME; 0 for none.
     quic_port: u16,
+    /// One lock per (creator, tag) a create is working on, so two creates
+    /// of one tag can't both start a holder.
+    tags: HashMap<(String, String), Rc<tokio::sync::Mutex<()>>>,
 }
 
 impl Server {
@@ -452,69 +459,32 @@ impl Server {
         self.execs_done.notify_waiters();
     }
 
-    fn socket_path(&self, id: &str) -> PathBuf {
-        osewa_holder::socket_path(&self.cfg.run_dir, id)
+    /// Holds (creator, tag)'s lock while f runs.
+    pub(crate) async fn with_tag<T>(&self, creator: &str, tag: &str, f: impl std::future::Future<Output = T>) -> T {
+        let key = (creator.to_string(), tag.to_string());
+        let lock = self.st.borrow_mut().tags.entry(key.clone()).or_default().clone();
+        let r = {
+            let _held = lock.lock().await;
+            f.await
+        };
+        let mut st = self.st.borrow_mut();
+        // Ours and the map's: nobody else is waiting.
+        if st.tags.get(&key).is_some_and(|l| Rc::strong_count(l) == 2) {
+            st.tags.remove(&key);
+        }
+        drop(st);
+        drop(lock);
+        r
+    }
+
+    /// This server's holders.
+    pub(crate) fn holders(&self) -> local::Holders<'_> {
+        local::Holders { run_dir: &self.cfg.run_dir, tune: &self.cfg.tune }
     }
 
     /// Connects to a session's holder and introduces client_id.
     async fn dial_holder(&self, id: &str, client_id: &str) -> io::Result<UnixStream> {
-        let t = &self.cfg.tune;
-        let path = self.socket_path(id);
-        // Worded as v0 servers word it ("dial unix ..."), which clients show.
-        let mut conn = match tokio::time::timeout(t.dial_timeout, UnixStream::connect(&path)).await {
-            Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, format!("dial unix {}: i/o timeout", path.display()))),
-            Ok(Err(e)) => {
-                let msg = format!("dial unix {}: connect: {}", path.display(), osewa_execproc::error_text(&e));
-                return Err(io::Error::new(e.kind(), msg));
-            }
-            Ok(Ok(c)) => c,
-        };
-        let hello = wire::Hello { version: wire::VERSION, client_id: client_id.into(), ..Default::default() };
-        let mut b = Vec::new();
-        wire::json(wire::TYPE_HELLO, 0, &hello).encode_to(&mut b)?;
-        tokio::time::timeout(t.holder_timeout, conn.write_all(&b))
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "write holder: i/o timeout"))??;
-        Ok(conn)
-    }
-
-    /// Makes one request on a short-lived holder connection.
-    async fn holder_call(&self, id: &str, client_id: &str, mut req: wire::Request) -> io::Result<wire::Response> {
-        let mut conn = self.dial_holder(id, client_id).await?;
-        req.client_id = client_id.into();
-        let call = async {
-            let mut b = Vec::new();
-            wire::json(wire::TYPE_REQUEST, 0, &req).encode_to(&mut b)?;
-            conn.write_all(&b).await?;
-            let mut rd = BufReader::new(&mut conn);
-            loop {
-                let f = read_frame(&mut rd).await?;
-                if f.ty != wire::TYPE_RESPONSE {
-                    continue;
-                }
-                let resp: wire::Response = f.decode()?;
-                if resp.id == req.id {
-                    return Ok(resp);
-                }
-            }
-        };
-        tokio::time::timeout(self.cfg.tune.holder_timeout, call)
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "holder: i/o timeout"))?
-    }
-
-    /// The session's info from its holder, marked incompatible when the
-    /// holder is another build than this server.
-    async fn holder_info(&self, id: &str, client_id: &str) -> io::Result<Option<wire::SessionInfo>> {
-        let req = wire::Request { id: 1, method: wire::METHOD_INFO.into(), ..Default::default() };
-        let r = self.holder_call(id, client_id, req).await?;
-        if !r.error.is_empty() {
-            return Ok(None);
-        }
-        Ok(r.sessions.into_iter().next().map(|mut s| {
-            s.incompatible = incompatible(s.build.as_ref());
-            s
-        }))
+        self.holders().dial(id, client_id).await
     }
 
     /// Asks the holder at the other end of a fresh connection for its
@@ -552,27 +522,6 @@ impl Server {
             _ if r.error.is_empty() => "its holder didn't report the session".into(),
             _ => format!("its holder didn't report the session: {}: {}", r.error, r.message),
         })
-    }
-
-    /// Unlinks a socket that refused a connection, but only if it is older
-    /// than any holder still starting up and refuses again after a pause.
-    /// Unlinking a live holder's socket would orphan it.
-    async fn remove_if_stale(&self, path: &Path) {
-        let t = &self.cfg.tune;
-        let young = std::fs::metadata(path)
-            .and_then(|m| m.modified())
-            .map(|m| SystemTime::now().duration_since(m).unwrap_or_default() < t.stale_age)
-            .unwrap_or(true);
-        if young {
-            return;
-        }
-        tokio::time::sleep(t.stale_retry).await;
-        match tokio::time::timeout(t.dial_timeout, UnixStream::connect(path)).await {
-            Ok(Err(e)) if refused(&e) => {
-                let _ = std::fs::remove_file(path);
-            }
-            _ => {}
-        }
     }
 }
 
@@ -642,7 +591,7 @@ fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
     // The env (and a look) go on stdin (holder_stdin), never on this line,
     // which every user on the host can read. The env alone keeps the array
     // a holder of another build ($OSEWA_HOLDER) reads.
-    a.push(if cfg.look.is_empty() { "--env-stdin" } else { "--stdin-json" }.into());
+    a.push(if stdin_json(cfg) { "--stdin-json" } else { "--env-stdin" }.into());
     a.push("--".into());
     a.extend(cfg.argv.iter().cloned());
     a
@@ -652,10 +601,24 @@ fn holder_args(cfg: &osewa_holder::Config) -> Vec<String> {
 /// array (--env-stdin), or with a look an object {env, look}
 /// (--stdin-json).
 fn holder_stdin(cfg: &osewa_holder::Config) -> serde_json::Result<Vec<u8>> {
-    if cfg.look.is_empty() {
+    if !stdin_json(cfg) {
         return serde_json::to_vec(&cfg.env);
     }
-    serde_json::to_vec(&serde_json::json!({"env": cfg.env, "look": cfg.look}))
+    let mut v = serde_json::json!({"env": cfg.env});
+    if !cfg.look.is_empty() {
+        v["look"] = serde_json::to_value(&cfg.look)?;
+    }
+    if !cfg.tag.is_empty() {
+        v["tag"] = cfg.tag.clone().into();
+        v["creator"] = cfg.creator.clone().into();
+    }
+    serde_json::to_vec(&v)
+}
+
+/// Whether the holder takes stdin as an object (a look or a tag to give),
+/// or the env array alone.
+fn stdin_json(cfg: &osewa_holder::Config) -> bool {
+    !cfg.look.is_empty() || !cfg.tag.is_empty()
 }
 
 /// The binary whose holder runs a session: $OSEWA_HOLDER, which lets one
@@ -673,8 +636,11 @@ async fn spawn_process(mut cfg: osewa_holder::Config, timeout: Duration) -> Resu
     if std::env::var_os("OSEWA_HOLDER").is_some_and(|p| !p.is_empty()) {
         // Another build's holder may predate --stdin-json; the look is
         // cosmetic, so it goes, and the env takes the array every build
-        // reads.
+        // reads. So does the tag: that holder is never reused or
+        // reconciled, as before tags.
         cfg.look = Default::default();
+        cfg.tag.clear();
+        cfg.creator.clear();
     }
     let mut cmd = tokio::process::Command::new(holder_binary().map_err(|e| e.to_string())?);
     cmd.args(holder_args(&cfg)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());

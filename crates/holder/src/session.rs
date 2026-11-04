@@ -733,6 +733,9 @@ impl Session {
                 snapshot_version: ghostty::SNAPSHOT_VERSION,
             }),
             incompatible: String::new(),
+            tag: core.cfg.tag.clone(),
+            creator: core.cfg.creator.clone(),
+            spec: core.cfg.spec.clone(),
         };
         if attached == 0 {
             info.idle_seconds = (core.clock)().saturating_duration_since(core.quiet_since).as_secs() as i64;

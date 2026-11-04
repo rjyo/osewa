@@ -83,6 +83,8 @@ pub const METHOD_COLOR_SCHEME: &str = "session.color_scheme";
 pub const METHOD_COLORS: &str = "session.colors";
 pub const METHOD_CLIPBOARD: &str = "session.clipboard";
 pub const METHOD_KILL: &str = "session.kill";
+/// Kills the caller's tagged sessions whose tag isn't in `tags`.
+pub const METHOD_RECONCILE: &str = "session.reconcile";
 pub const METHOD_FORWARD_OPEN: &str = "forward.open";
 pub const METHOD_EXEC_START: &str = "exec.start";
 pub const METHOD_STREAM_CLOSE: &str = "stream.close";
@@ -138,6 +140,15 @@ pub struct Request {
     pub cwd: String,
     #[serde(default, deserialize_with = "null_vec", skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
+    /// session.create: the caller's name for what the session is for (a
+    /// card in an app). A live session the same client created with the
+    /// same tag is reused, or replaced when its argv or cwd differ, so a
+    /// client that lost a session id can't pile up holders.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tag: String,
+    /// session.reconcile: the tags the caller still wants.
+    #[serde(default, deserialize_with = "null_vec", skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     // forward.open
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub host: String,
@@ -179,6 +190,9 @@ pub struct Response {
     // session.create
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub session_id: String,
+    /// session.create: session_id is a live session of the same tag.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reused: bool,
     /// session.attach. Head is the log end when the holder took the attach:
     /// records with end <= head are catch-up, and never fire effects.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -235,6 +249,16 @@ pub struct SessionInfo {
     /// won't attach the session, which can still be listed and killed.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub incompatible: String,
+    /// The create's tag, and the client_id that created it; empty for an
+    /// untagged session or a holder before tags.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tag: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub creator: String,
+    /// What the session runs (osewa_holder::spec of its argv and cwd), for
+    /// a tagged create to tell reuse from replace.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub spec: String,
 }
 
 /// A build as far as snapshots go: the fields of WELCOME, and of

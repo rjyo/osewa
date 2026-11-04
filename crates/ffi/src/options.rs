@@ -30,6 +30,7 @@ pub struct OpenOptions {
     pub height_px: u32,
     pub predict: i32,
     pub appearance_json: *const c_char,
+    pub tag: *const c_char,
 }
 
 /// What a session is opened with.
@@ -44,6 +45,7 @@ pub struct Opened {
     pub height: u32,
     pub predict: PredictMode,
     pub appearance: Appearance,
+    pub tag: String,
 }
 
 /// The app terminal's look, told to the holder for programs that ask.
@@ -86,6 +88,10 @@ pub unsafe fn read_on(o: &OpenOptions) -> Result<Opened, String> {
 unsafe fn read_session(o: &OpenOptions, connect: bool) -> Result<Opened, String> {
     let session_id = unsafe { opt_str(o.session_id, "session_id") }?;
     let cwd = unsafe { opt_str(o.cwd, "cwd") }?.unwrap_or_default();
+    let tag = unsafe { opt_str(o.tag, "tag") }?.unwrap_or_default();
+    if tag.len() > 128 || tag.chars().any(char::is_control) {
+        return Err("osewa: tag must be printable and at most 128 bytes".into());
+    }
     let argv = match unsafe { opt_str(o.argv_json, "argv_json") }? {
         None => Vec::new(),
         Some(j) => serde_json::from_str::<Vec<String>>(&j).map_err(|e| format!("osewa: argv_json: {e}"))?,
@@ -114,6 +120,7 @@ unsafe fn read_session(o: &OpenOptions, connect: bool) -> Result<Opened, String>
         height: o.height_px,
         predict: if o.predict != 0 { PredictMode::Auto } else { PredictMode::Never },
         appearance,
+        tag,
     })
 }
 

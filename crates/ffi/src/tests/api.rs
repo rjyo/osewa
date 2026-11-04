@@ -343,6 +343,7 @@ fn send_from_inside_a_callback() {
         width_px: 0,
         height_px: 0,
         predict: 1,
+        tag: std::ptr::null(),
         appearance_json: std::ptr::null(),
     };
     let h = unsafe { osewa_open(&opts, cb, std::ptr::null_mut()) };
@@ -415,6 +416,7 @@ fn close_while_callbacks_send() {
             height_px: 0,
             predict: 1,
             appearance_json: std::ptr::null(),
+            tag: std::ptr::null(),
         };
         let h = unsafe { osewa_open(&opts, cb, std::ptr::null_mut()) };
         r.h.store(h, std::sync::atomic::Ordering::SeqCst);
@@ -564,4 +566,32 @@ fn kill_timed_out_closes_its_connection() {
         assert!(r.is_none(), "the kill came back: {r:?}");
         assert!(osewa_client::timeout(Duration::from_secs(5), watch.done()).await.is_some(), "the connection outlived the timed-out kill");
     });
+}
+
+/// A tagged open with no session id reuses the live session this client
+/// made with the tag; osewa_reconcile ends tags no longer kept, after which
+/// the tag starts a new session.
+#[test]
+fn tag_reuses_and_reconcile_ends() {
+    let host = Host::new();
+    let mut o = host.open_opts();
+    o.tag = Some("card-1");
+    let first = |o: &Open| {
+        let r = Rec::new(80, 24);
+        let h = open(o, &r);
+        r.wait_state(CONNECTED);
+        let id = r.wait_event("session")["id"].as_str().unwrap().to_string();
+        unsafe { osewa_close(h) };
+        id
+    };
+    let a = first(&o);
+    assert_eq!(first(&o), a, "the tag's live session wasn't reused");
+
+    assert_eq!(reconcile(&o, &["card-1"]).unwrap(), Vec::<String>::new(), "a kept tag ended");
+    assert_eq!(reconcile(&o, &[]).unwrap(), vec![a.clone()], "the dropped tag");
+    let b = first(&o);
+    assert_ne!(b, a, "an ended tag's session came back");
+
+    let e = reconcile(&o, &["x"; 1025]).unwrap_err();
+    assert!(e.contains("tags"), "too many tags: {e}");
 }

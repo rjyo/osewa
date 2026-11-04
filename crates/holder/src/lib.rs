@@ -124,6 +124,11 @@ pub struct Config {
     /// the client's rather than libghostty's. The CLI reads it from stdin
     /// with --stdin-json.
     pub look: wire::Look,
+    /// The create's tag and its client_id (wire::SessionInfo), and spec of
+    /// what it runs; the CLI reads them from stdin with --stdin-json.
+    pub tag: String,
+    pub creator: String,
+    pub spec: String,
     /// The session's home in place of the account's (OSEWA_HOME, which
     /// the CLI reads at start).
     pub home: Option<PathBuf>,
@@ -145,6 +150,24 @@ pub struct Config {
     /// it from $OSEWA_TRACE.
     pub trace_dir: String,
     pub tune: Tunables,
+}
+
+/// Names what a session runs, its argv and cwd, in a few bytes: a tagged
+/// create reuses a session only when this matches. FNV-1a over the
+/// length-prefixed fields; stable across builds, and not a secret.
+pub fn spec(argv: &[String], cwd: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut put = |b: &[u8]| {
+        for &x in (b.len() as u64).to_le_bytes().iter().chain(b) {
+            h ^= x as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    put(cwd.as_bytes());
+    for a in argv {
+        put(a.as_bytes());
+    }
+    format!("{h:016x}")
 }
 
 /// Where the holder for session id listens.
@@ -183,6 +206,9 @@ impl Config {
         }
         if self.argv.is_empty() {
             return Err("holder: no argv".into());
+        }
+        if self.spec.is_empty() {
+            self.spec = spec(&self.argv, &self.cwd);
         }
         if !valid_size(self.cols, self.rows) {
             return Err(format!("holder: bad size {}x{}", self.cols, self.rows));
@@ -248,11 +274,14 @@ pub fn main(args: &[String]) -> i32 {
 /// (SSH_CONNECTION, the JSON around them).
 const ENV_STDIN_MAX: u64 = wire::MAX_FRAME as u64 + (64 << 10);
 
-/// What --stdin-json reads: the session env and the creator's look.
+/// What --stdin-json reads: the session env, the creator's look, and the
+/// create's tag and creator.
 #[derive(Default)]
 struct StdinJson {
     env: Vec<String>,
     look: wire::Look,
+    tag: String,
+    creator: String,
 }
 
 /// What the server hands the holder on stdin, to EOF: not on the command
@@ -284,7 +313,12 @@ fn from_stdin(flag: &str) -> Result<StdinJson, String> {
         serde_json::Value::Null => wire::Look::default(),
         l => serde_json::from_value(l).map_err(bad)?,
     };
-    Ok(StdinJson { env, look })
+    let mut text = |k: &str| match field(k) {
+        serde_json::Value::Null => Ok(String::new()),
+        t => serde_json::from_value::<String>(t).map_err(bad),
+    };
+    let (tag, creator) = (text("tag")?, text("creator")?);
+    Ok(StdinJson { env, look, tag, creator })
 }
 
 fn parse_flags(args: &[String]) -> Result<Config, String> {
@@ -297,7 +331,7 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         .value("height", "0", "height in pixels, 0 if unknown")
         .value("cwd", "", "working directory")
         .bool("env-stdin", false, "read the session env from stdin: a JSON array of KEY=value")
-        .bool("stdin-json", false, "read the session env and the creator's look from stdin: a JSON object {env, look}")
+        .bool("stdin-json", false, "read the session env, the creator's look and the create's tag from stdin: a JSON object {env, look, tag, creator}")
         // A server of the build before --stdin-json gives the look here.
         .value("look", "", "the creator's look as JSON (servers before --stdin-json)")
         .value("scrollback-bytes", &DEFAULT_SCROLLBACK_BYTES.to_string(), "scrollback cap in bytes")
@@ -309,14 +343,18 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
         (false, true) => from_stdin("env-stdin")?,
         _ => StdinJson::default(),
     };
+    let (cwd, argv) = (p.str("cwd"), p.args.clone());
     Ok(Config {
+        spec: spec(&argv, &cwd),
+        tag: stdin.tag,
+        creator: stdin.creator,
         run_dir: p.str("run").into(),
         id: p.str("id"),
         cols: int("cols")?,
         rows: int("rows")?,
         width: pixels(int("width")?),
         height: pixels(int("height")?),
-        cwd: p.str("cwd"),
+        cwd,
         scrollback_bytes: int("scrollback-bytes")?.max(0) as usize,
         // A negative duration is accepted and disables the timeout as zero
         // does: v0 holders take one.
@@ -324,7 +362,7 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
             Some(neg) => osewa_flag::parse_duration(neg).map(|_| Duration::ZERO).map_err(|e| e.to_string())?,
             None => p.duration("idle-timeout").map_err(|e| e.to_string())?,
         },
-        argv: p.args.clone(),
+        argv,
         env: stdin.env,
         look: match p.str("look").as_str() {
             "" => stdin.look,

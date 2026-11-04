@@ -769,3 +769,127 @@ fn login_env_lines() {
     assert_eq!(login_env(Some((a("[fd00::9]:40000"), a("[fd00::1]:7322"))))[0], "SSH_CONNECTION=fd00::9 40000 fd00::1 7322");
     assert!(login_env(None).is_empty());
 }
+
+/// A tagged create: the request, with argv.
+fn tagged(tag: &str, argv: &[&str]) -> wire::Request {
+    wire::Request {
+        method: wire::METHOD_CREATE.into(),
+        cols: 80,
+        rows: 24,
+        argv: argv.iter().map(|s| s.to_string()).collect(),
+        tag: tag.into(),
+        ..Default::default()
+    }
+}
+
+/// The live sessions' ids, waiting out killed ones' short retention.
+async fn live_ids(c: &mut Tc, want: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let l = c.list().await;
+        let ids: Vec<String> = l.sessions.iter().filter(|s| !s.exited).map(|s| s.id.clone()).collect();
+        if ids.len() == want {
+            return ids;
+        }
+        assert!(Instant::now() < deadline, "want {want} live sessions: {l:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A create of a tag this client has a live session of reuses it; another
+/// argv replaces it; another client's tag of the same name, and untagged
+/// sessions, are its own.
+#[test]
+fn tagged_create_reuses_or_replaces() {
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        let a = c.call(tagged("card-1", &["/bin/cat"])).await;
+        assert!(a.error.is_empty() && !a.reused, "first create {a:?}");
+        let list = c.list().await;
+        let s = &list.sessions[0];
+        assert!(s.tag == "card-1" && s.creator == "phone" && s.spec == osewa_holder::spec(&["/bin/cat".into()], ""), "info {s:?}");
+
+        let again = c.call(tagged("card-1", &["/bin/cat"])).await;
+        assert!(again.reused && again.session_id == a.session_id, "same tag and argv {again:?}");
+
+        let mut other = e.connect("laptop").await;
+        let theirs = other.call(tagged("card-1", &["/bin/cat"])).await;
+        assert!(!theirs.reused && theirs.session_id != a.session_id, "another client's tag {theirs:?}");
+        let plain = c.create(&["/bin/cat"]).await;
+
+        let replaced = c.call(tagged("card-1", &["/bin/sh"])).await;
+        assert!(!replaced.reused && replaced.session_id != a.session_id, "another argv {replaced:?}");
+        let mut ids = live_ids(&mut c, 3).await;
+        ids.sort();
+        let mut want = vec![replaced.session_id, theirs.session_id, plain];
+        want.sort();
+        assert_eq!(ids, want, "the replaced session lives on");
+
+        let r = c.call(tagged("bad\ntag", &["/bin/cat"])).await;
+        assert_eq!(r.error, wire::ERR_BAD_REQUEST, "control character in a tag {r:?}");
+    });
+}
+
+/// Concurrent creates of one tag start one holder.
+#[test]
+fn tagged_creates_race_to_one() {
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        let mut d = e.connect("phone").await;
+        let (x, y) = tokio::join!(c.call(tagged("card", &["/bin/cat"])), d.call(tagged("card", &["/bin/cat"])));
+        assert_eq!(x.session_id, y.session_id, "two holders for one tag: {x:?} {y:?}");
+        assert!(x.reused != y.reused, "one of them reuses: {x:?} {y:?}");
+        live_ids(&mut c, 1).await;
+    });
+}
+
+/// session.reconcile ends the caller's tagged sessions it no longer keeps,
+/// and nothing else: kept tags, untagged sessions, other clients', and
+/// (within the grace) young ones stay.
+#[test]
+fn reconcile_ends_dropped_tags() {
+    run(async {
+        let e = Env::with(|c| c.tune.reconcile_grace = Duration::ZERO);
+        let mut c = e.connect("phone").await;
+        let keep = c.call(tagged("keep", &["/bin/cat"])).await.session_id;
+        let drop = c.call(tagged("drop", &["/bin/cat"])).await.session_id;
+        let plain = c.create(&["/bin/cat"]).await;
+        let mut other = e.connect("laptop").await;
+        let theirs = other.call(tagged("drop", &["/bin/cat"])).await.session_id;
+
+        let r = c.call(wire::Request { tags: vec!["keep".into()], ..req(wire::METHOD_RECONCILE) }).await;
+        assert!(r.error.is_empty(), "reconcile {r:?}");
+        assert_eq!(r.sessions.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![drop.clone()], "ended");
+        let mut ids = live_ids(&mut c, 3).await;
+        ids.sort();
+        let mut want = vec![keep, plain, theirs];
+        want.sort();
+        assert_eq!(ids, want, "what stays");
+
+        let r = c.call(wire::Request { tags: vec!["x".into(); crate::local::MAX_RECONCILE_TAGS + 1], ..req(wire::METHOD_RECONCILE) }).await;
+        assert_eq!(r.error, wire::ERR_BAD_REQUEST, "too many tags {r:?}");
+    });
+}
+
+#[test]
+fn reconcile_spares_young_sessions() {
+    run(async {
+        let e = Env::new();
+        let mut c = e.connect("phone").await;
+        let id = c.call(tagged("new", &["/bin/cat"])).await.session_id;
+        let r = c.call(req(wire::METHOD_RECONCILE)).await;
+        assert!(r.error.is_empty() && r.sessions.is_empty(), "a young session ended {r:?}");
+        assert_eq!(live_ids(&mut c, 1).await, vec![id]);
+    });
+}
+
+#[test]
+fn holder_stdin_carries_the_tag() {
+    let mut c = osewa_holder::Config { run_dir: "/r".into(), id: "i".into(), cols: 1, rows: 2, argv: vec!["sh".into()], ..Default::default() };
+    c.tag = "card".into();
+    c.creator = "phone".into();
+    assert_eq!(holder_args(&c).join(" "), "holder --run /r --id i --cols 1 --rows 2 --stdin-json -- sh");
+    assert_eq!(String::from_utf8(holder_stdin(&c).unwrap()).unwrap(), r#"{"creator":"phone","env":[],"tag":"card"}"#);
+}

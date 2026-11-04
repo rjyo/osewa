@@ -245,6 +245,42 @@ pub unsafe extern "C" fn osewa_kill_id(opts: *const OpenOptions, err: *mut *mut 
     })
 }
 
+/// Kills the caller's tagged sessions (osewa_open_options.tag) whose tag
+/// isn't in keep_json, a JSON array of tags; *out gets the killed sessions
+/// as a JSON array.
+///
+/// # Safety
+/// opts points to a valid osewa_open_options; keep_json is a NUL-terminated
+/// string; out and err are NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_reconcile(opts: *const OpenOptions, keep_json: *const c_char, out: *mut *mut c_char, err: *mut *mut c_char) -> i32 {
+    guard(ERR, || {
+        let fail = |msg: &str| {
+            if !err.is_null() {
+                unsafe { *err = into_c(msg) };
+            }
+            ERR
+        };
+        let Some(o) = (unsafe { opts.as_ref() }) else { return fail("osewa: no options") };
+        if keep_json.is_null() {
+            return fail("osewa: keep_json is required");
+        }
+        let keep = match unsafe { std::ffi::CStr::from_ptr(keep_json) }.to_str().map_err(|e| e.to_string()).and_then(|j| serde_json::from_str::<Vec<String>>(j).map_err(|e| e.to_string())) {
+            Ok(k) => k,
+            Err(e) => return fail(&format!("osewa: keep_json: {e}")),
+        };
+        match unsafe { options::read(o) }.and_then(|o| session::reconcile(o, keep)) {
+            Ok(j) => {
+                if !out.is_null() {
+                    unsafe { *out = into_c(&j) };
+                }
+                0
+            }
+            Err(e) => fail(&e),
+        }
+    })
+}
+
 /// Opens a link: connects in the background and reports through cb (output
 /// is never called).
 ///

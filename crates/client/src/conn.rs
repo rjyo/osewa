@@ -61,6 +61,10 @@ pub struct CreateOptions {
     /// queries with from the start; empty leaves its defaults. Servers
     /// before it ignore it.
     pub look: wire::Look,
+    /// What the session is for, to this client (a card): a live session
+    /// this client created with the same tag is reused (wire::Request.tag).
+    /// Servers before tags ignore it.
+    pub tag: String,
 }
 
 /// One connection to a server. Clones share it; it is gone once closed or
@@ -948,9 +952,17 @@ impl Conn {
             background: o.look.background,
             cursor: o.look.cursor,
             palette: o.look.palette,
+            tag: o.tag,
             ..Default::default()
         };
         Ok(self.request(req, None).await?.session_id)
+    }
+
+    /// Kills this client's tagged sessions whose tag isn't in keep, but
+    /// none started within the server's grace, and returns them.
+    pub async fn reconcile(&self, keep: Vec<String>) -> Result<Vec<wire::SessionInfo>> {
+        let req = wire::Request { method: wire::METHOD_RECONCILE.into(), tags: keep, ..Default::default() };
+        Ok(self.request(req, None).await?.sessions)
     }
 
     /// Ends a session.

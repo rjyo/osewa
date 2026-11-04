@@ -379,3 +379,63 @@ fn downloads_closed_early_leave_room() {
     sess.close();
     run(c.close());
 }
+
+/// `osewa local` acts on the run directory's sessions without the server:
+/// ls lists the tagged session with its creator, reconcile ends only the
+/// creator's dropped tags, kill ends one by id.
+#[test]
+fn local_commands() {
+    let rig = Rig::start(Path::new(RUST_OSEWA), "local");
+    let c = rig.dial("rust-local");
+    let create = |tag: &str| {
+        run(c.create(CreateOptions { cols: 80, rows: 24, argv: argv(&["/bin/cat"]), tag: tag.into(), ..Default::default() })).unwrap()
+    };
+    let (keep, drop, plain) = (create("keep"), create("drop"), create(""));
+    let local = |args: &[&str], stdin: &str| -> wire::Response {
+        let mut p = Command::new(RUST_OSEWA)
+            .arg("local")
+            .args(args)
+            .env("OSEWA_RUN_DIR", &rig.run_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            p.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        }
+        let out = p.wait_with_output().unwrap();
+        assert!(out.status.success(), "osewa local {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let live = |want: &[&String]| {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let mut ids: Vec<String> = local(&["ls"], "").sessions.into_iter().filter(|s| !s.exited).map(|s| s.id).collect();
+            ids.sort();
+            let mut w: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+            w.sort();
+            if ids == w {
+                return;
+            }
+            assert!(Instant::now() < deadline, "live {ids:?}, want {w:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let ls = local(&["ls"], "");
+    let d = ls.sessions.iter().find(|s| s.id == drop).unwrap();
+    assert!(d.tag == "drop" && d.creator == "rust-local", "ls {d:?}");
+
+    // Within the default grace, nothing ends.
+    let r = local(&["reconcile"], r#"{"creator":"rust-local","keep":["keep"]}"#);
+    assert!(r.sessions.is_empty(), "a young session ended: {r:?}");
+    let r = local(&["reconcile"], r#"{"creator":"someone-else","keep":[],"grace_seconds":0}"#);
+    assert!(r.sessions.is_empty(), "another creator's sessions ended: {r:?}");
+    let r = local(&["reconcile"], r#"{"creator":"rust-local","keep":["keep"],"grace_seconds":0}"#);
+    assert_eq!(r.sessions.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![drop.clone()], "reconciled");
+    live(&[&keep, &plain]);
+
+    local(&["kill", &plain], "");
+    live(&[&keep]);
+}

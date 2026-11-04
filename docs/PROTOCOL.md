@@ -27,8 +27,9 @@ The server spawns a holder with `osewa holder --run <run> --id <id> --cols
 <c> --rows <r> [--cwd <dir>] --env-stdin -- <argv...>` (`--stdin-json`
 for a session created with a look), detached with setsid,
 and writes `session.create` `env` to its stdin as a JSON array of
-`KEY=value`, or with `--stdin-json` an object `{"env", "look"}` with the
-create's look fields (a holder of another build, `$OSEWA_HOLDER`, always
+`KEY=value`, or with `--stdin-json` (a look or a tag to give) an object
+`{"env", "look"?, "tag"?, "creator"?}` with the create's look fields and
+tag (a holder of another build, `$OSEWA_HOLDER`, always
 gets the array, without the look: it may predate `--stdin-json`) (not on its command line, which every user can read, nor in one
 environment string, which Linux caps at 128 KiB; a create request's 1 MiB
 bounds it), while it drains the holder's stdout and stderr; delivery and
@@ -184,8 +185,8 @@ Methods (REQUEST `method`):
 
 | Method | Arguments | Result |
 | --- | --- | --- |
-| `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?}]}` |
-| `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`? | `{"session_id"}` |
+| `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?,"tag"?,"creator"?,"spec"?}]}` |
+| `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`?, `tag`? | `{"session_id","reused"?}` |
 | `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
 | `session.detach` | `stream` | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
@@ -194,6 +195,7 @@ Methods (REQUEST `method`):
 | `session.colors` | `stream`, `foreground`?, `background`?, `cursor`?, `palette`? (256 entries) | `{}` (applies only for the owner) |
 | `session.clipboard` | `stream`, `data` (base64)? | `{}` (applies only for the owner) |
 | `session.kill` | `session` | `{}` |
+| `session.reconcile` | `tags` | `{"sessions":[...the ended...]}` |
 
 `build` is the holder's `{"version","ghostty","snapshot_version"}`, the
 fields of WELCOME. A holder outlives the server that started it, so after
@@ -228,6 +230,29 @@ stdin, `--stdin-json`): a program that asks for colors as it starts gets
 the creating client's instead of libghostty's defaults, which an attach's
 `session.colors` would arrive after. A bad one is `bad_request`; servers
 before them ignore them.
+
+### Tags
+
+`tag` names what a session is for to the client that creates it (an app's
+card): printable, at most 128 bytes. The holder keeps it with its creator,
+the HELLO `client_id`, and `spec`, a hash of its argv and cwd; the list
+reports all three. A tagged `session.create` from the same `client_id` as a
+live, attachable session of that tag answers with that session and
+`reused: true` when `spec` matches, and otherwise starts a new one; either
+way it kills the creator's other sessions of the tag. A client that lost a
+session id so gets it back rather than piling up holders. Concurrent
+creates of one tag start one holder.
+
+`session.reconcile` kills the caller's tagged sessions whose tag isn't in
+`tags` (at most 1024), except those created in the last 2 minutes (a client
+may not have recorded a new session's tag yet), and answers with them.
+Untagged sessions and other clients' are never touched. Servers before tags
+answer it `bad_request` (unknown method) and ignore `tag`.
+
+`osewa local ls | kill <id> | reconcile` does the same on the host without
+the server or an enrolled device, for tools on the host acting for one
+(moshi-hook): JSON on stdout, and for reconcile
+`{"creator","keep","grace_seconds"?}` on stdin.
 
 `argv` defaults to the account's login shell from passwd (not the server's
 `$SHELL`), run with `-l`. `own: true` claims ownership on

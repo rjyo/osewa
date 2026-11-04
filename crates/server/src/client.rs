@@ -18,7 +18,7 @@ use crate::flight::Flight;
 use crate::limits::{err_size, valid_client_id, valid_size};
 use crate::path;
 use crate::queue::{Class, SendQueue};
-use crate::{read_frame, refused, Server};
+use crate::{read_frame, Server};
 
 /// How long after a keystroke the connection counts as typed on: its
 /// forwards and execs keep their in-flight window tight.
@@ -304,7 +304,7 @@ impl Client {
             return self.fail(0, wire::ERR_BAD_REQUEST, "malformed request");
         };
         match req.method.as_str() {
-            wire::METHOD_CREATE | wire::METHOD_LIST | wire::METHOD_KILL => {
+            wire::METHOD_CREATE | wire::METHOD_LIST | wire::METHOD_KILL | wire::METHOD_RECONCILE => {
                 if !self.acquire() {
                     return self.fail(req.id, wire::ERR_UNAVAILABLE, "too many requests in flight");
                 }
@@ -318,6 +318,12 @@ impl Client {
                         wire::METHOD_LIST => {
                             tokio::select! {
                                 _ = c.list(req) => {}
+                                _ = c.cancelled() => {}
+                            }
+                        }
+                        wire::METHOD_RECONCILE => {
+                            tokio::select! {
+                                _ = c.reconcile(req) => {}
                                 _ = c.cancelled() => {}
                             }
                         }
@@ -373,10 +379,13 @@ impl Client {
         // The client's own entries come after, so they win.
         let mut env = login_env(self.conn.addrs());
         env.extend(req.env);
-        let id = new_session_id();
+        if !req.tag.is_empty() && !valid_client_id(&req.tag) {
+            return self.fail(req.id, wire::ERR_BAD_REQUEST, "tag must be printable and at most 128 bytes");
+        }
+        let creator = self.id.borrow().clone();
+        let spec = osewa_holder::spec(&argv, &req.cwd);
         let cfg = osewa_holder::Config {
             run_dir: self.srv.cfg.run_dir.clone(),
-            id: id.clone(),
             cols: req.cols,
             rows: req.rows,
             width: req.width,
@@ -385,49 +394,70 @@ impl Client {
             cwd: req.cwd,
             env,
             look,
+            spec: spec.clone(),
             home: self.srv.cfg.home.clone(),
             ..Default::default()
         };
-        match (self.srv.spawn)(cfg).await {
-            Err(e) => self.fail(req.id, wire::ERR_INTERNAL, &e),
-            Ok(()) => self.respond(wire::Response { id: req.id, session_id: id, ..Default::default() }),
+        if req.tag.is_empty() {
+            return self.spawn(req.id, cfg).await;
+        }
+        let tag = req.tag;
+        self.srv
+            .with_tag(&creator, &tag, async {
+                match self.tagged(&creator, &tag, &spec).await {
+                    Ok(Some(id)) => self.respond(wire::Response { id: req.id, session_id: id, reused: true, ..Default::default() }),
+                    Ok(None) => self.spawn(req.id, osewa_holder::Config { tag: tag.clone(), creator: creator.clone(), ..cfg }).await,
+                    Err(e) => self.fail(req.id, wire::ERR_INTERNAL, &e.to_string()),
+                }
+            })
+            .await
+    }
+
+    /// The live session creator made with tag that runs spec, if any. The
+    /// rest of creator's sessions with tag are killed: a create of a tag
+    /// means the client no longer has them, so they would only pile up.
+    async fn tagged(&self, creator: &str, tag: &str, spec: &str) -> io::Result<Option<String>> {
+        let h = self.srv.holders();
+        let mine: Vec<wire::SessionInfo> = h.list(creator).await?.into_iter().filter(|s| s.creator == creator && s.tag == tag).collect();
+        // The newest that can be attached as it is.
+        let reuse = mine.iter().rev().find(|s| !s.exited && s.incompatible.is_empty() && s.spec == spec).map(|s| s.id.clone());
+        for s in &mine {
+            if Some(&s.id) != reuse.as_ref() {
+                let _ = h.kill(&s.id, creator).await;
+            }
+        }
+        Ok(reuse)
+    }
+
+    /// Starts a holder for cfg under a new id.
+    async fn spawn(&self, req_id: u64, cfg: osewa_holder::Config) {
+        let id = new_session_id();
+        match (self.srv.spawn)(osewa_holder::Config { id: id.clone(), ..cfg }).await {
+            Err(e) => self.fail(req_id, wire::ERR_INTERNAL, &e),
+            Ok(()) => self.respond(wire::Response { id: req_id, session_id: id, ..Default::default() }),
         }
     }
 
     async fn list(&self, req: wire::Request) {
-        let ents = match std::fs::read_dir(&self.srv.cfg.run_dir) {
-            Ok(e) => e,
-            Err(e) => return self.fail(req.id, wire::ERR_INTERNAL, &e.to_string()),
-        };
         let client_id = self.id.borrow().clone();
-        let mut calls = Vec::new();
-        for e in ents.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let Some(id) = name.strip_suffix(".sock").map(str::to_string) else { continue };
-            if !valid_id(&id) {
-                continue;
-            }
-            let (srv, client_id, path) = (self.srv.clone(), client_id.clone(), e.path());
-            calls.push(tokio::task::spawn_local(async move {
-                match srv.holder_info(&id, &client_id).await {
-                    Err(e) => {
-                        if refused(&e) {
-                            srv.remove_if_stale(&path).await;
-                        }
-                        None
-                    }
-                    Ok(s) => s,
-                }
-            }));
+        match self.srv.holders().list(&client_id).await {
+            Err(e) => self.fail(req.id, wire::ERR_INTERNAL, &e.to_string()),
+            Ok(sessions) => self.respond(wire::Response { id: req.id, sessions, ..Default::default() }),
         }
-        let mut sessions = Vec::new();
-        for c in calls {
-            if let Ok(Some(s)) = c.await {
-                sessions.push(s);
-            }
+    }
+
+    /// Kills this client's tagged sessions whose tag isn't in req.tags,
+    /// and answers with them.
+    async fn reconcile(&self, req: wire::Request) {
+        if req.tags.len() > crate::local::MAX_RECONCILE_TAGS {
+            return self.fail(req.id, wire::ERR_BAD_REQUEST, &format!("more than {} tags", crate::local::MAX_RECONCILE_TAGS));
         }
-        sessions.sort_by(|a: &wire::SessionInfo, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
-        self.respond(wire::Response { id: req.id, sessions, ..Default::default() });
+        let client_id = self.id.borrow().clone();
+        let grace = self.srv.cfg.tune.reconcile_grace;
+        match self.srv.holders().reconcile(&client_id, &client_id, &req.tags, grace).await {
+            Err(e) => self.fail(req.id, wire::ERR_INTERNAL, &e.to_string()),
+            Ok(sessions) => self.respond(wire::Response { id: req.id, sessions, ..Default::default() }),
+        }
     }
 
     async fn kill(&self, req: wire::Request) {
@@ -435,7 +465,7 @@ impl Client {
             return self.fail(req.id, wire::ERR_NOT_FOUND, "no such session");
         }
         let client_id = self.id.borrow().clone();
-        match self.srv.holder_call(&req.session.clone(), &client_id, req.clone()).await {
+        match self.srv.holders().call(&req.session.clone(), &client_id, req.clone()).await {
             Err(e) => self.fail_dial(req.id, &e),
             Ok(resp) => self.respond(resp),
         }

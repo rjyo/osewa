@@ -417,6 +417,7 @@ impl Worker {
                     // Before the program starts: one that asks for colors
                     // right away (herdr) gets ours, not libghostty's.
                     look: osewa_client::look(o.appearance.dark, &o.appearance.colors),
+                    tag: o.tag.clone(),
                 };
                 let created = self.or_fatal(osewa_client::timeout(REQUEST_TIMEOUT, c.create(create))).await?;
                 match created {
@@ -666,6 +667,32 @@ pub fn kill_id(o: Opened) -> Result<(), String> {
         Some(Err(e)) => Err(fatal(&e).unwrap_or_else(|| e.to_string())),
         Some(Ok(())) => Ok(()),
     }
+}
+
+/// Kills the client's tagged sessions whose tag isn't in keep, over a
+/// connection of its own, and returns them as a JSON array of
+/// wire::SessionInfo. A server before tags kills nothing: an empty array.
+pub fn reconcile(o: Opened, keep: Vec<String>) -> Result<String, String> {
+    let r = osewa_client::block_on(osewa_client::timeout(KILL_ID_TIMEOUT, async {
+        struct CloseOnDrop(osewa_client::Conn);
+        impl Drop for CloseOnDrop {
+            fn drop(&mut self) {
+                self.0.close_now();
+            }
+        }
+        let c = CloseOnDrop(osewa_client::Conn::dial(o.cfg).await?);
+        let r = c.0.reconcile(keep).await;
+        c.0.close().await;
+        r
+    }));
+    let gone = match r {
+        None => return Err("osewa: reconcile: timed out".into()),
+        // "unknown method": a server before tags has no tagged sessions.
+        Some(Err(e)) if e.is_code(wire::ERR_BAD_REQUEST) && e.to_string().contains("unknown method") => Vec::new(),
+        Some(Err(e)) => return Err(fatal(&e).unwrap_or_else(|| e.to_string())),
+        Some(Ok(gone)) => gone,
+    };
+    serde_json::to_string(&gone).map_err(|e| e.to_string())
 }
 
 /// Kills session id over c, then closes c, however this ends: dropped by

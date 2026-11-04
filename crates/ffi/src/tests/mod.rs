@@ -135,6 +135,8 @@ impl Host {
                         shell: vec!["/bin/sh".into()],
                         // Sessions run in a sandbox home, never the real one.
                         home: Some(osewa_paths::sandbox_home()),
+                        // Reconcile tests end sessions they just started.
+                        tune: osewa_server::Tunables { reconcile_grace: Duration::ZERO, ..Default::default() },
                         ..Default::default()
                     };
                     let s = osewa_server::Server::new(cfg).unwrap();
@@ -333,6 +335,7 @@ struct Open<'a> {
     session_id: Option<String>,
     argv: Option<&'a str>,
     appearance: Option<&'a str>,
+    tag: Option<&'a str>,
     cols: u16,
     rows: u16,
     predict: i32,
@@ -347,6 +350,7 @@ impl Host {
             session_id: None,
             argv: Some(r#"["/bin/sh"]"#),
             appearance: None,
+            tag: None,
             cols: 80,
             rows: 24,
             predict: 0,
@@ -373,6 +377,7 @@ fn c_opts(o: &Open, s: &mut Strings) -> OpenOptions {
         height_px: 0,
         predict: o.predict,
         appearance_json: s.opt(o.appearance),
+        tag: s.opt(o.tag),
     }
 }
 
@@ -413,6 +418,31 @@ fn kill_id(o: &Open) -> Result<(), String> {
             Err(e)
         }
         n => panic!("osewa_kill_id returned {n}"),
+    }
+}
+
+/// Reconciles through osewa_reconcile: the ended sessions' ids, or the
+/// error.
+fn reconcile(o: &Open, keep: &[&str]) -> Result<Vec<String>, String> {
+    let mut s = Strings::default();
+    let opts = c_opts(o, &mut s);
+    let keep = CString::new(serde_json::to_string(keep).unwrap()).unwrap();
+    let (mut out, mut err): (*mut c_char, *mut c_char) = (std::ptr::null_mut(), std::ptr::null_mut());
+    match unsafe { osewa_reconcile(&opts, keep.as_ptr(), &mut out, &mut err) } {
+        0 => {
+            assert!(err.is_null() && !out.is_null(), "0 without out, or with an error");
+            let j = unsafe { CStr::from_ptr(out) }.to_string_lossy().into_owned();
+            unsafe { osewa_string_free(out) };
+            let gone: Vec<wire::SessionInfo> = serde_json::from_str(&j).unwrap();
+            Ok(gone.into_iter().map(|g| g.id).collect())
+        }
+        ERR => {
+            assert!(!err.is_null(), "ERR without an error");
+            let e = unsafe { CStr::from_ptr(err) }.to_string_lossy().into_owned();
+            unsafe { osewa_string_free(err) };
+            Err(e)
+        }
+        n => panic!("osewa_reconcile returned {n}"),
     }
 }
 

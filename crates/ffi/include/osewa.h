@@ -61,6 +61,10 @@ typedef struct osewa_open_options {
   uint32_t width_px, height_px;
   int32_t predict;             /* 1 = local echo prediction */
   const char *appearance_json; /* NULL or {"color_scheme":"dark"|"light","fg":"#rrggbb","bg":"#rrggbb","palette":["#..",...]} */
+  const char *tag;             /* NULL or what the session is for (a card): a create
+                                  reuses this client's live session of the same tag, or
+                                  replaces it when argv/cwd differ; osewa_reconcile ends
+                                  tags no longer kept. Printable, at most 128 bytes. */
 } osewa_open_options;
 
 /* Never blocks on the network; connection progress arrives via callbacks.
@@ -96,6 +100,13 @@ void osewa_kill(osewa_session *s);
    (up to 15 s): call it off the main thread. 0 (also when the session is
    already gone), or OSEWA_ERR + *err (free with osewa_string_free). */
 int32_t osewa_kill_id(const osewa_open_options *opts, char **err);
+/* End this client's tagged sessions whose tag isn't in keep_json (a JSON
+   array of strings), except those started in the last 2 minutes. Uses opts'
+   addr, keys, client_id and device_name. Blocks for the network (up to
+   15 s). 0 and *out (a JSON array of the ended sessions; free with
+   osewa_string_free), or OSEWA_ERR + *err. A server before tags ends
+   nothing: "[]". */
+int32_t osewa_reconcile(const osewa_open_options *opts, const char *keep_json, char **out, char **err);
 
 /* Links: one connection to a server, kept up and redialed as a session's
    is, that several sessions share (osewa_open_on) and that carries forwards.
