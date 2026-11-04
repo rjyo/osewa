@@ -185,7 +185,7 @@ Methods (REQUEST `method`):
 
 | Method | Arguments | Result |
 | --- | --- | --- |
-| `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?,"tag"?,"creator"?,"spec"?}]}` |
+| `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?,"tag"?,"creator"?}]}` |
 | `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`?, `tag`? | `{"session_id","reused"?}` |
 | `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
 | `session.detach` | `stream` | `{}` |
@@ -235,13 +235,13 @@ before them ignore them.
 
 `tag` names what a session is for to the client that creates it (an app's
 card): printable, at most 128 bytes. The holder keeps it with its creator,
-the HELLO `client_id`, and `spec`, a hash of its argv and cwd; the list
-reports all three. A tagged `session.create` from the same `client_id` as a
-live, attachable session of that tag answers with that session and
-`reused: true` when `spec` matches, and otherwise starts a new one; either
-way it kills the creator's other sessions of the tag. A client that lost a
-session id so gets it back rather than piling up holders. Concurrent
-creates of one tag start one holder.
+the HELLO `client_id`; the list reports both. A tagged `session.create`
+from the same `client_id` as a live, attachable session of that tag answers
+with the oldest such session and `reused: true`, whatever argv it asks for
+(a client recovering a lost id may not rebuild the first create's), and
+kills the creator's other sessions of the tag; with none it starts a new
+one. A client that lost a session id so gets it back rather than piling up
+holders. Concurrent creates of one tag start one holder.
 
 `session.reconcile` kills the caller's tagged sessions whose tag isn't in
 `tags` (at most 1024), except those created in the last 2 minutes (a client

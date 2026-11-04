@@ -141,9 +141,9 @@ pub struct Request {
     #[serde(default, deserialize_with = "null_vec", skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
     /// session.create: the caller's name for what the session is for (a
-    /// card in an app). A live session the same client created with the
-    /// same tag is reused, or replaced when its argv or cwd differ, so a
-    /// client that lost a session id can't pile up holders.
+    /// card in an app). The oldest live session the same client created
+    /// with the same tag is reused, so a client that lost a session id gets
+    /// it back instead of piling up holders.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tag: String,
     /// session.reconcile: the tags the caller still wants.
@@ -255,10 +255,6 @@ pub struct SessionInfo {
     pub tag: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub creator: String,
-    /// What the session runs (osewa_holder::spec of its argv and cwd), for
-    /// a tagged create to tell reuse from replace.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub spec: String,
 }
 
 /// A build as far as snapshots go: the fields of WELCOME, and of

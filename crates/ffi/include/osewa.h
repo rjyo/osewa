@@ -62,9 +62,9 @@ typedef struct osewa_open_options {
   int32_t predict;             /* 1 = local echo prediction */
   const char *appearance_json; /* NULL or {"color_scheme":"dark"|"light","fg":"#rrggbb","bg":"#rrggbb","palette":["#..",...]} */
   const char *tag;             /* NULL or what the session is for (a card): a create
-                                  reuses this client's live session of the same tag, or
-                                  replaces it when argv/cwd differ; osewa_reconcile ends
-                                  tags no longer kept. Printable, at most 128 bytes. */
+                                  reuses this client's live session of the same tag;
+                                  osewa_reconcile ends tags no longer kept. Printable, at
+                                  most 128 bytes. */
 } osewa_open_options;
 
 /* Never blocks on the network; connection progress arrives via callbacks.

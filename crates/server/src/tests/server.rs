@@ -796,11 +796,12 @@ async fn live_ids(c: &mut Tc, want: usize) -> Vec<String> {
     }
 }
 
-/// A create of a tag this client has a live session of reuses it; another
-/// argv replaces it; another client's tag of the same name, and untagged
-/// sessions, are its own.
+/// A create of a tag this client has a live session of reuses it, whatever
+/// argv it asks for (a resume may rebuild another); another client's tag of
+/// the same name, and untagged sessions, are its own; an ended session of
+/// the tag gives way to a new one.
 #[test]
-fn tagged_create_reuses_or_replaces() {
+fn tagged_create_reuses() {
     run(async {
         let e = Env::new();
         let mut c = e.connect("phone").await;
@@ -808,23 +809,26 @@ fn tagged_create_reuses_or_replaces() {
         assert!(a.error.is_empty() && !a.reused, "first create {a:?}");
         let list = c.list().await;
         let s = &list.sessions[0];
-        assert!(s.tag == "card-1" && s.creator == "phone" && s.spec == osewa_holder::spec(&["/bin/cat".into()], ""), "info {s:?}");
+        assert!(s.tag == "card-1" && s.creator == "phone", "info {s:?}");
 
-        let again = c.call(tagged("card-1", &["/bin/cat"])).await;
-        assert!(again.reused && again.session_id == a.session_id, "same tag and argv {again:?}");
+        let again = c.call(tagged("card-1", &["/bin/sh"])).await;
+        assert!(again.reused && again.session_id == a.session_id, "same tag, other argv {again:?}");
 
         let mut other = e.connect("laptop").await;
         let theirs = other.call(tagged("card-1", &["/bin/cat"])).await;
         assert!(!theirs.reused && theirs.session_id != a.session_id, "another client's tag {theirs:?}");
         let plain = c.create(&["/bin/cat"]).await;
-
-        let replaced = c.call(tagged("card-1", &["/bin/sh"])).await;
-        assert!(!replaced.reused && replaced.session_id != a.session_id, "another argv {replaced:?}");
         let mut ids = live_ids(&mut c, 3).await;
         ids.sort();
-        let mut want = vec![replaced.session_id, theirs.session_id, plain];
+        let mut want = vec![a.session_id.clone(), theirs.session_id, plain];
         want.sort();
-        assert_eq!(ids, want, "the replaced session lives on");
+        assert_eq!(ids, want, "one session per client and tag");
+
+        let r = c.call(wire::Request { session: a.session_id.clone(), ..req(wire::METHOD_KILL) }).await;
+        assert!(r.error.is_empty(), "kill {r:?}");
+        live_ids(&mut c, 2).await;
+        let fresh = c.call(tagged("card-1", &["/bin/cat"])).await;
+        assert!(!fresh.reused && fresh.session_id != a.session_id, "an ended session reused {fresh:?}");
 
         let r = c.call(tagged("bad\ntag", &["/bin/cat"])).await;
         assert_eq!(r.error, wire::ERR_BAD_REQUEST, "control character in a tag {r:?}");

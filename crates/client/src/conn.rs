@@ -61,7 +61,7 @@ pub struct CreateOptions {
     /// queries with from the start; empty leaves its defaults. Servers
     /// before it ignore it.
     pub look: wire::Look,
-    /// What the session is for, to this client (a card): a live session
+    /// What the session is for, to this client (a card): the live session
     /// this client created with the same tag is reused (wire::Request.tag).
     /// Servers before tags ignore it.
     pub tag: String,

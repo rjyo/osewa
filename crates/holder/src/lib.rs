@@ -124,11 +124,10 @@ pub struct Config {
     /// the client's rather than libghostty's. The CLI reads it from stdin
     /// with --stdin-json.
     pub look: wire::Look,
-    /// The create's tag and its client_id (wire::SessionInfo), and spec of
-    /// what it runs; the CLI reads them from stdin with --stdin-json.
+    /// The create's tag and its client_id (wire::SessionInfo); the CLI
+    /// reads them from stdin with --stdin-json.
     pub tag: String,
     pub creator: String,
-    pub spec: String,
     /// The session's home in place of the account's (OSEWA_HOME, which
     /// the CLI reads at start).
     pub home: Option<PathBuf>,
@@ -150,24 +149,6 @@ pub struct Config {
     /// it from $OSEWA_TRACE.
     pub trace_dir: String,
     pub tune: Tunables,
-}
-
-/// Names what a session runs, its argv and cwd, in a few bytes: a tagged
-/// create reuses a session only when this matches. FNV-1a over the
-/// length-prefixed fields; stable across builds, and not a secret.
-pub fn spec(argv: &[String], cwd: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut put = |b: &[u8]| {
-        for &x in (b.len() as u64).to_le_bytes().iter().chain(b) {
-            h ^= x as u64;
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
-    };
-    put(cwd.as_bytes());
-    for a in argv {
-        put(a.as_bytes());
-    }
-    format!("{h:016x}")
 }
 
 /// Where the holder for session id listens.
@@ -206,9 +187,6 @@ impl Config {
         }
         if self.argv.is_empty() {
             return Err("holder: no argv".into());
-        }
-        if self.spec.is_empty() {
-            self.spec = spec(&self.argv, &self.cwd);
         }
         if !valid_size(self.cols, self.rows) {
             return Err(format!("holder: bad size {}x{}", self.cols, self.rows));
@@ -345,7 +323,6 @@ fn parse_flags(args: &[String]) -> Result<Config, String> {
     };
     let (cwd, argv) = (p.str("cwd"), p.args.clone());
     Ok(Config {
-        spec: spec(&argv, &cwd),
         tag: stdin.tag,
         creator: stdin.creator,
         run_dir: p.str("run").into(),

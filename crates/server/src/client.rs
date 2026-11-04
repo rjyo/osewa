@@ -383,7 +383,6 @@ impl Client {
             return self.fail(req.id, wire::ERR_BAD_REQUEST, "tag must be printable and at most 128 bytes");
         }
         let creator = self.id.borrow().clone();
-        let spec = osewa_holder::spec(&argv, &req.cwd);
         let cfg = osewa_holder::Config {
             run_dir: self.srv.cfg.run_dir.clone(),
             cols: req.cols,
@@ -394,7 +393,6 @@ impl Client {
             cwd: req.cwd,
             env,
             look,
-            spec: spec.clone(),
             home: self.srv.cfg.home.clone(),
             ..Default::default()
         };
@@ -404,7 +402,7 @@ impl Client {
         let tag = req.tag;
         self.srv
             .with_tag(&creator, &tag, async {
-                match self.tagged(&creator, &tag, &spec).await {
+                match self.tagged(&creator, &tag).await {
                     Ok(Some(id)) => self.respond(wire::Response { id: req.id, session_id: id, reused: true, ..Default::default() }),
                     Ok(None) => self.spawn(req.id, osewa_holder::Config { tag: tag.clone(), creator: creator.clone(), ..cfg }).await,
                     Err(e) => self.fail(req.id, wire::ERR_INTERNAL, &e.to_string()),
@@ -413,14 +411,18 @@ impl Client {
             .await
     }
 
-    /// The live session creator made with tag that runs spec, if any. The
-    /// rest of creator's sessions with tag are killed: a create of a tag
-    /// means the client no longer has them, so they would only pile up.
-    async fn tagged(&self, creator: &str, tag: &str, spec: &str) -> io::Result<Option<String>> {
+    /// The oldest live session creator made with tag, if any. The rest of
+    /// creator's sessions with tag are killed: a create of a tag means the
+    /// client no longer has them, so they would only pile up. Reused
+    /// whatever it runs: a client that lost the id may not rebuild the same
+    /// argv (a resume drops the first open's cwd), and the session is the
+    /// card's all the same. The oldest, so a duplicate that slipped in
+    /// (a holder that didn't answer the list) is the one that goes.
+    async fn tagged(&self, creator: &str, tag: &str) -> io::Result<Option<String>> {
         let h = self.srv.holders();
         let mine: Vec<wire::SessionInfo> = h.list(creator).await?.into_iter().filter(|s| s.creator == creator && s.tag == tag).collect();
-        // The newest that can be attached as it is.
-        let reuse = mine.iter().rev().find(|s| !s.exited && s.incompatible.is_empty() && s.spec == spec).map(|s| s.id.clone());
+        // Listed oldest first; the first that can be attached as it is.
+        let reuse = mine.iter().find(|s| !s.exited && s.incompatible.is_empty()).map(|s| s.id.clone());
         for s in &mine {
             if Some(&s.id) != reuse.as_ref() {
                 let _ = h.kill(&s.id, creator).await;

@@ -340,8 +340,7 @@ fn cli_stdin_json() {
     assert_eq!(p.line(), "ready\n", "stdout");
     let mut c = Client::dial(&socket_path(&dir.0, "j1"), "dev1");
     let info = c.request(method(wire::METHOD_INFO)).sessions.remove(0);
-    let argv: Vec<String> = ["/bin/sh", "-c", script].iter().map(|s| s.to_string()).collect();
-    assert!(info.tag == "card" && info.creator == "phone" && info.spec == crate::spec(&argv, ""), "info {info:?}");
+    assert!(info.tag == "card" && info.creator == "phone", "info {info:?}");
     c.attach(wire::Request::default());
     c.wait_for("env and look", |c| unwrapped(&c.text()).contains("E=vi R:]11;rgb:1010/2020/3030:END"));
     p.signal(libc::SIGTERM);
