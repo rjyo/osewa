@@ -128,7 +128,7 @@ p { line-height: 1.5; margin: 0; }
 .map { position: relative; margin: 30px 0 10px; }
 .map .line { position: absolute; left: 3%; right: 3%; top: 21px; height: 4px; background: repeating-linear-gradient(90deg, var(--ink) 0 10px, transparent 10px 18px); }
 .map .done { position: absolute; left: 3%; top: 21px; height: 4px; background: var(--red); width: 0; transition: width 1.4s ease .2s; }
-.on .map .done { width: 47%; }
+.on .map .done { width: 61.3%; }
 .nodes { display: grid; grid-template-columns: repeat(7, 1fr); position: relative; }
 .node { text-align: center; font: 11px var(--mono); padding: 0 4px; }
 .node .dot { width: 46px; height: 46px; margin: 0 auto 10px; border: 3px solid var(--ink); background: #fff; display: grid; place-items: center; font: 700 14px var(--mono); }
@@ -334,12 +334,14 @@ html:not(.js) .combo { transform: none; }
         <div class="node ok"><div class="dot">✓</div>M0<b>Wire protocol v0</b></div>
         <div class="node ok"><div class="dot">✓</div>M1<b>Sessions that survive</b></div>
         <div class="node ok"><div class="dot">✓</div>M2<b>Agent-aware</b></div>
-        <div class="node here"><div class="dot">M3</div><span class="here-tag">YOU ARE HERE</span><b>The osewa CLI</b></div>
-        <div class="node"><div class="dot">M4</div>next<b>In the Moshi app</b></div>
-        <div class="node"><div class="dot">M5</div>later<b>Mux</b></div>
+        <div class="node ok"><div class="dot">✓</div>M3<b>The osewa CLI</b></div>
+        <div class="node here"><div class="dot">M4</div><span class="here-tag">YOU ARE HERE</span><b>In the Moshi app</b></div>
+        <div class="node"><div class="dot">M5</div>next<b>Mux</b></div>
         <div class="node"><div class="dot">M6</div>later<b>Every screen</b></div>
       </div>
     </div>
+    <p style="font-size: 16px; margin: 20px 0 14px; max-width: 640px">On your phone today: Moshi for iOS and Android has osewa as an experimental transport beside mosh. The host needs osewa and moshi-hook.</p>
+    <div class="row cta" style="gap: 10px"><a class="btn p" href="https://getmoshi.app">Get Moshi ↗</a><a class="btn" href="https://apps.apple.com/app/id6757859949">App Store</a><a class="btn" href="https://play.google.com/store/apps/details?id=app.getmoshi.android">Google Play</a></div>
   </section>
 
   <!-- 07 HOW -->

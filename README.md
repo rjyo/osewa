@@ -209,9 +209,9 @@ ride, and a multiplexer on top of it.
 
 1. **Transport.** What ships today: QUIC with TLS WebSocket fallback,
    sessions held on the host, exactly-once input, keystrokes ahead of bulk,
-   and the latest screen instead of a backlog on a slow link. Next:
-    - osewa as a transport in Moshi, the iOS and Android terminal app,
-      beside mosh.
+   and the latest screen instead of a backlog on a slow link. It is also
+   an experimental transport in [Moshi](https://getmoshi.app), the iOS and
+   Android terminal app, beside mosh.
 2. **Mux.** Tabs, splits and workspaces held on the host, like tmux, but
    built from osewa sessions instead of running inside one. Every pane is
    its own session with its own flow control, the layout lives on the host,
