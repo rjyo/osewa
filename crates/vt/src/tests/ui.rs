@@ -161,13 +161,25 @@ fn other_viewers_keep_the_keyboard_modes() {
     assert!(out.string().contains("\x1b[=5;1u"), "{:?}", out.string());
 }
 
-/// An owner event between reading the owner and setting it must not be
-/// undone: the set that follows is of the older owner, so it goes again.
+/// An owner event after the session's owner was read must not be undone
+/// by that older read; with none in between, the read counts.
 #[test]
-fn settling_the_owner_ends_on_the_newest() {
-    use std::cell::RefCell;
-    let reads = RefCell::new(vec!["new", "new", "old"]);
-    let mut sets = Vec::new();
-    crate::ui::settle_owner_for_test(|| reads.borrow_mut().pop().unwrap().to_string(), |o| sets.push(o.to_string()));
-    assert_eq!(sets, ["old", "new"]);
+fn an_owner_read_never_undoes_a_newer_event() {
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let out = Buf::default();
+    let mut ui = Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())).with_legacy_viewer();
+    let mut t = osewa_ghostty::Terminal::new(20, 4, osewa_ghostty::Options::default()).unwrap();
+    t.write(b"\x1b[>5u");
+    ui.ready(&t);
+    let owner = |o: &str| osewa_wire::EventMsg { owner: o.into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_OWNER) };
+
+    // The id is empty here, so "" is this client.
+    let events = ui.owner_events;
+    ui.event(&owner("someone"), true);
+    ui.read_owner("", events);
+    assert!(!out.string().contains("\x1b[=5;1u"), "a stale read made this client the owner");
+
+    let events = ui.owner_events;
+    ui.read_owner("", events);
+    assert!(out.string().ends_with("\x1b[=5;1u"), "{:?}", out.string());
 }

@@ -113,11 +113,6 @@ struct KeyModes {
     other: bool,
 }
 
-#[cfg(test)]
-pub(crate) fn settle_owner_for_test(read: impl Fn() -> String, set: impl FnMut(&str)) {
-    settle_owner(read, set)
-}
-
 /// What the UI draws with, made to repaint later (a notice's timer).
 struct Later {
     m: Mirror,
@@ -175,6 +170,8 @@ pub struct Ui {
     /// This client's id, and whether it owns the session as last reported.
     id: String,
     owned: bool,
+    /// Owner events so far, to tell a read of the owner from a newer event.
+    pub(crate) owner_events: u64,
     /// Keeps a viewer's terminal out of the program's keyboard modes: its
     /// keys are for us, not the program, and a program's modes would encode
     /// them past recognition (Ctrl-T as CSI u; with Kitty's "report all
@@ -215,6 +212,7 @@ impl Ui {
             session: Arc::default(),
             id: String::new(),
             owned: false,
+            owner_events: 0,
             legacy_viewer: false,
             keys: KeyModes::default(),
             sent_keys: Some(KeyModes::default()),
@@ -329,6 +327,14 @@ impl Ui {
             self.keys.other = t.modify_other_keys();
         }
         self.sync_keys();
+    }
+
+    /// Takes an owner read from the session after `events` owner events,
+    /// unless a later event already said who it is.
+    pub(crate) fn read_owner(&mut self, owner: &str, events: u64) {
+        if self.owner_events == events {
+            self.set_owner(owner);
+        }
     }
 
     /// Takes who owns the session. No output need follow, so the modes
@@ -475,6 +481,7 @@ impl Ui {
         }
         if e.kind == wire::EVENT_OWNER {
             // Catch-up ones too: they end at the current owner.
+            self.owner_events += 1;
             self.set_owner(&e.owner);
             return;
         }
@@ -602,24 +609,6 @@ struct Look {
     colors: osewa_client::TermColors,
 }
 
-/// Sets the owner read, until a read after setting agrees. An owner event
-/// landing between the read and the set would otherwise be overwritten with
-/// the older owner. Reading inside the set can't avoid that: events take the
-/// session's lock, then the mirror's, and the set holds the mirror's. They
-/// reach the UI before the session's lock lets a read see them, so what
-/// agrees here is never older than what the UI was told.
-fn settle_owner(read: impl Fn() -> String, mut set: impl FnMut(&str)) {
-    let mut owner = read();
-    loop {
-        set(&owner);
-        let now = read();
-        if now == owner {
-            return;
-        }
-        owner = now;
-    }
-}
-
 fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
     ui.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -739,7 +728,13 @@ impl Attached {
     /// one that attaches to its own session hears of it this way alone.
     pub fn sync_owner(&self) {
         let Some(s) = self.session() else { return };
-        settle_owner(|| s.owner(), |owner| self.m.view(|_| lock(&self.ui).set_owner(owner)));
+        // Counted before the read: an event after it is newer than what the
+        // read may return. Reading under the mirror can't settle that, as
+        // events take the session's lock and then the mirror's. An event the
+        // read does see reached the UI first, under the session's lock.
+        let events = lock(&self.ui).owner_events;
+        let owner = s.owner();
+        self.m.view(|_| lock(&self.ui).read_owner(&owner, events));
     }
 
     /// Claims ownership for this client and says how it went. It blocks:
