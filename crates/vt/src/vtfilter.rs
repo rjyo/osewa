@@ -4,7 +4,8 @@
 /// Decides what remote output reaches the local terminal, which is not the
 /// remote program's to command. Plain text and CSI pass, minus queries the
 /// holder's terminal already answered (their local replies would arrive as
-/// typed input: DSR, DA, DECRQM, XTVERSION, kitty keyboard). String
+/// typed input: DSR, DA, DECRQM, XTVERSION, kitty keyboard) and keyboard
+/// modes, which the UI sets from the mirror (Ui::sync_keys). String
 /// sequences are allowlisted: OSC 0/1/2 (titles, control characters
 /// stripped), 7 (cwd), 8 (hyperlinks) and 133 (prompt marks) pass; every
 /// other OSC (clipboard, notifications, color queries, file transfer), DCS
@@ -56,6 +57,8 @@ pub struct QueryFilter {
     /// A color set or reset (OSC 4, 10-12, 21, 104, 110-112) passed since
     /// the UI last cleared it.
     pub passed_colors: bool,
+    /// A modifyOtherKeys change went by since the UI last cleared it.
+    pub saw_other_keys: bool,
 }
 
 /// Bounds the tracked style; a program that never resets loses exactness
@@ -239,7 +242,9 @@ impl QueryFilter {
                 }
                 self.buf.push(b);
                 if (0x40..=0x7e).contains(&b) {
-                    if !csi_query(&self.buf) {
+                    let keys = key_mode(&self.buf);
+                    self.saw_other_keys |= keys == Some(KeyMode::Other);
+                    if keys.is_none() && !csi_query(&self.buf) {
                         out.extend_from_slice(&without_own_modes(&self.buf));
                     }
                     if b == b'm' {
@@ -488,6 +493,24 @@ pub fn printable_lines(s: &str) -> String {
 /// terminal.
 pub fn printable(s: &str) -> String {
     s.chars().map(|c| if is_control(c) { '?' } else { c }).collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyMode {
+    Kitty,
+    Other,
+}
+
+/// Which keyboard mode a complete CSI sequence sets, if any: Kitty's push,
+/// pop and set, or xterm's modifyOtherKeys. They decide how the local
+/// terminal encodes keys, which only the session's owner sends the program.
+fn key_mode(seq: &[u8]) -> Option<KeyMode> {
+    let (body, fin) = (&seq[2..seq.len() - 1], seq[seq.len() - 1]);
+    match (body.first(), fin) {
+        (Some(b'>' | b'<' | b'='), b'u') => Some(KeyMode::Kitty),
+        (Some(b'>'), b'm') if body[1..].split(|&c| c == b';').next() == Some(b"4") => Some(KeyMode::Other),
+        _ => None,
+    }
 }
 
 /// Reports whether a complete CSI sequence asks the terminal for a reply.

@@ -97,7 +97,21 @@ const TYPING_QUIET: Duration = Duration::from_secs(2);
 
 /// Takes ownership when typed by a viewer. A viewer's keys are dropped
 /// anyway, so it needs no escape; the owner's Ctrl-T reaches the program.
+/// It is this one byte because a viewer's terminal stays out of the
+/// program's keyboard modes (Ui::legacy_viewer).
 const TAKE_KEY: char = '\x14';
+
+/// How the local terminal encodes keys.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct KeyModes {
+    /// Kitty keyboard flags.
+    kitty: u8,
+    /// Each screen has its own flags, so a switch needs them set again.
+    /// Always false without flags, when there is nothing to set.
+    alt: bool,
+    /// xterm modifyOtherKeys mode 2.
+    other: bool,
+}
 
 /// What the UI draws with, made to repaint later (a notice's timer).
 struct Later {
@@ -153,6 +167,19 @@ pub struct Ui {
     clipboard_read: bool,
     /// The session, to answer clipboard reads.
     session: Arc<Mutex<Option<Session>>>,
+    /// This client's id, and whether it owns the session as last reported.
+    id: String,
+    owned: bool,
+    /// Keeps a viewer's terminal out of the program's keyboard modes: its
+    /// keys are for us, not the program, and a program's modes would encode
+    /// them past recognition (Ctrl-T as CSI u; with Kitty's "report all
+    /// keys", the ~t escape too).
+    legacy_viewer: bool,
+    /// The keyboard modes the mirror has.
+    keys: KeyModes,
+    /// The ones the local terminal has; None when a redraw may have changed
+    /// them.
+    sent_keys: Option<KeyModes>,
 }
 
 impl Ui {
@@ -181,6 +208,11 @@ impl Ui {
             colored: false,
             clipboard_read: false,
             session: Arc::default(),
+            id: String::new(),
+            owned: false,
+            legacy_viewer: false,
+            keys: KeyModes::default(),
+            sent_keys: Some(KeyModes::default()),
         }
     }
 
@@ -195,6 +227,14 @@ impl Ui {
     /// which may ask first.
     pub fn with_clipboard_read(mut self) -> Ui {
         self.clipboard_read = true;
+        self
+    }
+
+    /// Reads keys for this client alone while it only views. Not for an app
+    /// whose first key takes over: that key goes to the program, encoded in
+    /// the program's modes.
+    pub fn with_legacy_viewer(mut self) -> Ui {
+        self.legacy_viewer = true;
         self
     }
 
@@ -230,6 +270,7 @@ impl Ui {
         self.filter.reset(&tail_style(t));
         (self.real_x, self.real_y) = t.cursor();
         self.sync_pointer(t);
+        self.redrawn_keys(t);
         let (colors, colored) = colors_redraw(t, self.colored || std::mem::take(&mut self.filter.passed_colors));
         self.colored = colored;
         self.write(&colors);
@@ -249,6 +290,7 @@ impl Ui {
         (self.real_x, self.real_y) = t.cursor();
         self.pointer = "";
         self.sync_pointer(t);
+        self.redrawn_keys(t);
         let (colors, colored) = colors_redraw(t, self.colored);
         self.colored = colored;
         self.write(&colors);
@@ -259,6 +301,45 @@ impl Ui {
         }
         self.paint_buffered(t);
         self.flush();
+    }
+
+    /// After a redraw, which can switch the local screen under the modes
+    /// and skip output that changed them.
+    fn redrawn_keys(&mut self, t: &Terminal) {
+        if self.sent_keys != Some(KeyModes::default()) {
+            self.sent_keys = None;
+        }
+        self.filter.saw_other_keys = true;
+        self.read_keys(t);
+    }
+
+    /// Takes the keyboard modes from the mirror. They aren't passed along
+    /// with the output: which ones the local terminal gets depends on who
+    /// owns the session, and setting the mirror's current flags keeps it
+    /// right however the program pushed and popped them.
+    fn read_keys(&mut self, t: &Terminal) {
+        self.keys.kitty = t.kitty_flags();
+        self.keys.alt = self.keys.kitty != 0 && t.alt_screen();
+        if std::mem::take(&mut self.filter.saw_other_keys) {
+            self.keys.other = t.modify_other_keys();
+        }
+        self.sync_keys();
+    }
+
+    /// Gives the local terminal the keyboard modes it should have now.
+    fn sync_keys(&mut self) {
+        let want = if self.legacy_viewer && !self.owned { KeyModes::default() } else { self.keys };
+        let had = self.sent_keys;
+        if had == Some(want) {
+            return;
+        }
+        if had.is_none_or(|h| (h.kitty, h.alt) != (want.kitty, want.alt)) {
+            self.write(format!("\x1b[={};1u", want.kitty).as_bytes());
+        }
+        if had.is_none_or(|h| h.other != want.other) {
+            self.write(if want.other { b"\x1b[>4;2m" } else { b"\x1b[>4m" });
+        }
+        self.sent_keys = Some(want);
     }
 
     /// Gives the local terminal the pointer shape the program asked for.
@@ -307,6 +388,7 @@ impl Ui {
             self.displaced = false;
         }
         self.sync_pointer(t);
+        self.read_keys(t);
         self.colored |= std::mem::take(&mut self.filter.passed_colors);
         self.pred.check(t);
         self.paint_buffered(t);
@@ -376,6 +458,14 @@ impl Ui {
                 // Not blocking the mirror on a round trip.
                 std::thread::spawn(move || osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.clipboard(b""))));
             }
+            return;
+        }
+        if e.kind == wire::EVENT_OWNER {
+            // Catch-up ones too: they end at the current owner. No output
+            // need follow, so this can't wait for the next flush.
+            self.owned = e.owner == self.id;
+            self.sync_keys();
+            self.flush();
             return;
         }
         if e.kind == wire::EVENT_NOTIFY {
@@ -507,7 +597,8 @@ fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
 }
 
 impl Attached {
-    pub fn new(ui: Ui, id: String) -> Attached {
+    pub fn new(mut ui: Ui, id: String) -> Attached {
+        ui.id = id.clone();
         let ui = Arc::new(Mutex::new(ui));
         let (u1, u2, u3, u4, u5) = (ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui.clone());
         let m = Mirror::new(osewa_mirror::Options {

@@ -42,7 +42,7 @@ fn mouse_format(t: &Terminal) -> Vec<u8> {
 const ORIGIN_ON: &[u8] = b"\x1b[?6h";
 
 fn vt(t: &Terminal) -> Vec<u8> {
-    t.format(Format::Vt, false, false).unwrap_or_default()
+    t.format(Format::VtNoKeys, false, false).unwrap_or_default()
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {

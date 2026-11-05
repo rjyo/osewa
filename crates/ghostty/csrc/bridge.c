@@ -297,6 +297,12 @@ bool osewa_term_animate(GhosttyTerminal t, uint64_t now_ms,
          GHOSTTY_SUCCESS;
 }
 
+int osewa_term_kitty_flags(GhosttyTerminal t) {
+  GhosttyKittyKeyFlags v = 0;
+  ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS, &v);
+  return (int)v;
+}
+
 int osewa_term_mouse_shape(GhosttyTerminal t) {
   GhosttyMouseShape v = GHOSTTY_MOUSE_SHAPE_TEXT;
   ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &v);
@@ -488,7 +494,7 @@ int osewa_snapshot_encode(GhosttyTerminal t, void *ud) {
 }
 
 int osewa_format(GhosttyTerminal t, bool vt, bool trim, bool unwrap,
-                 bool palette, bool active, void *ud) {
+                 bool palette, bool keys, bool active, void *ud) {
   GhosttyFormatterTerminalOptions opts =
       GHOSTTY_INIT_SIZED(GhosttyFormatterTerminalOptions);
   opts.emit = vt ? GHOSTTY_FORMATTER_FORMAT_VT : GHOSTTY_FORMATTER_FORMAT_PLAIN;
@@ -514,13 +520,13 @@ int osewa_format(GhosttyTerminal t, bool vt, bool trim, bool unwrap,
     opts.extra.scrolling_region = true;
     opts.extra.tabstops = true;
     opts.extra.pwd = true;
-    opts.extra.keyboard = true;
+    opts.extra.keyboard = keys;
     opts.extra.screen.size = sizeof(opts.extra.screen);
     opts.extra.screen.cursor = true;
     opts.extra.screen.style = true;
     opts.extra.screen.hyperlink = true;
     opts.extra.screen.protection = true;
-    opts.extra.screen.kitty_keyboard = true;
+    opts.extra.screen.kitty_keyboard = keys;
     opts.extra.screen.charsets = true;
   }
   GhosttyFormatter f = NULL;
