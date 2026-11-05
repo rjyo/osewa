@@ -118,3 +118,68 @@ fn clipboard_reads_ask_only_when_allowed() {
     }
 }
 
+
+/// An attached UI showing a snapshot of a program with Kitty flags 5.
+fn keyed_ui(legacy_viewer: bool) -> (Attached, Buf) {
+    use osewa_ghostty::{self as ghostty, Terminal};
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let out = Buf::default();
+    let mut ui = Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default()));
+    if legacy_viewer {
+        ui = ui.with_legacy_viewer();
+    }
+    let a = Attached::new(ui, "me".into());
+    let mut t = Terminal::new(20, 4, ghostty::Options::default()).unwrap();
+    t.write(b"\x1b[>5u$ ");
+    let snap = t.snapshot().unwrap();
+    a.m.snapshot_begin(&osewa_wire::SnapshotBegin { history: Some(false), ..Default::default() }).unwrap();
+    a.m.snapshot_data(&snap[..ghostty::ready_end(&snap)], false).unwrap();
+    a.m.snapshot_ready().unwrap();
+    (a, out)
+}
+
+/// A legacy viewer's terminal gets the program's keyboard modes only while
+/// it owns the session, the moment ownership moves, with no output needed.
+#[test]
+fn legacy_viewer_keyboard_modes_follow_ownership() {
+    let owner = |o: &str| osewa_wire::EventMsg { owner: o.into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_OWNER) };
+    let (a, out) = keyed_ui(true);
+    assert!(!out.string().contains("\x1b[=5;1u"), "a viewer got the modes");
+    a.m.event(&owner("someone"), true).unwrap();
+    assert!(!out.string().contains("\x1b[=5;1u"), "another owner gave a viewer the modes");
+    a.m.event(&owner("me"), false).unwrap();
+    assert!(out.string().ends_with("\x1b[=5;1u"), "taking over: {:?}", out.string());
+    a.m.event(&owner("someone"), true).unwrap();
+    assert!(out.string().ends_with("\x1b[=0;1u"), "losing it: {:?}", out.string());
+}
+
+/// An app's viewer keeps the modes: its first key takes over and reaches
+/// the program, encoded by the app from them.
+#[test]
+fn other_viewers_keep_the_keyboard_modes() {
+    let (_a, out) = keyed_ui(false);
+    assert!(out.string().contains("\x1b[=5;1u"), "{:?}", out.string());
+}
+
+/// An owner event after the session's owner was read must not be undone
+/// by that older read; with none in between, the read counts.
+#[test]
+fn an_owner_read_never_undoes_a_newer_event() {
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let out = Buf::default();
+    let mut ui = Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())).with_legacy_viewer();
+    let mut t = osewa_ghostty::Terminal::new(20, 4, osewa_ghostty::Options::default()).unwrap();
+    t.write(b"\x1b[>5u");
+    ui.ready(&t);
+    let owner = |o: &str| osewa_wire::EventMsg { owner: o.into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_OWNER) };
+
+    // The id is empty here, so "" is this client.
+    let events = ui.owner_events;
+    ui.event(&owner("someone"), true);
+    ui.read_owner("", events);
+    assert!(!out.string().contains("\x1b[=5;1u"), "a stale read made this client the owner");
+
+    let events = ui.owner_events;
+    ui.read_owner("", events);
+    assert!(out.string().ends_with("\x1b[=5;1u"), "{:?}", out.string());
+}

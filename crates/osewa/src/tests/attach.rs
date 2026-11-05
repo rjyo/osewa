@@ -414,6 +414,75 @@ fn live_viewer_and_takeover() {
     a.code();
 }
 
+/// A program's keyboard modes reach only the owner's terminal: a viewer's
+/// keys are for osewa, and Ctrl-T must stay the byte it looks for. They
+/// follow ownership both ways, whether they were set before the attach or
+/// during it.
+#[test]
+fn live_keyboard_modes_follow_the_owner() {
+    let keys = |s: String| -> Vec<String> {
+        let mut seen = Vec::new();
+        for (i, _) in s.match_indices("\x1b[") {
+            let rest = &s[i + 2..];
+            let n = rest.find(|c: char| c.is_ascii_alphabetic() || c == '~').unwrap_or(0);
+            let (body, fin) = (&rest[..n], rest[n..].chars().next());
+            if (fin == Some('u') && !body.is_empty()) || (fin == Some('m') && body.starts_with(">4")) {
+                seen.push(rest[..=n].to_string());
+            }
+        }
+        seen
+    };
+    let h = LiveHost::new();
+    let id = h.run_ok(&["new", "h"]).trim().to_string();
+    let mut a = attach_async(&h, &["h", &id]);
+    a.stdin.write("printf '\\033[>5u\\033[>4;2m'; echo mode-$((1+1))\r");
+    wait_for(&a.out, "mode-2");
+    eventually(|| keys(a.out.string()) == ["=5;1u", ">4;2m"]);
+
+    let mut b = attach_with(&h, "phone-abcd", None, &["h", &id]);
+    wait_for(&b.out, "viewing:");
+    a.stdin.write("printf '\\033[>9u'; echo live-$((2+2))\r");
+    wait_for(&b.out, "live-4");
+    assert_eq!(keys(b.out.string()), Vec::<String>::new(), "a viewer got the program's modes");
+
+    b.stdin.write("\x14");
+    wait_for(&b.out, "you own this session now");
+    eventually(|| keys(b.out.string()) == ["=9;1u", ">4;2m"]);
+    eventually(|| keys(a.out.string()).ends_with(&["=0;1u".to_string(), ">4m".to_string()]));
+
+    // A pop reaches the owner as the flags under it, which its own terminal
+    // never had pushed.
+    b.stdin.write("printf '\\033[<u'; echo pop-$((3+3))\r");
+    wait_for(&b.out, "pop-6");
+    eventually(|| keys(b.out.string()).last().map(String::as_str) == Some("=5;1u"));
+
+    b.stdin.close();
+    b.code();
+    a.stdin.close();
+    a.code();
+}
+
+/// Attaching to a session this client already owns changes no owner, so
+/// the holder says nothing: the attach response has to be enough for the
+/// terminal to get the program's modes.
+#[test]
+fn live_keyboard_modes_on_attach_as_the_owner() {
+    let h = LiveHost::new();
+    let id = h.run_ok(&["new", "h"]).trim().to_string();
+    let mut a = attach_with(&h, "laptop-1", None, &["h", &id]);
+    a.stdin.write("printf '\\033[>5u'; echo mode-$((1+1))\r");
+    wait_for(&a.out, "mode-2");
+    wait_for(&a.out, "\x1b[=5;1u");
+    a.stdin.close();
+    a.code();
+
+    let mut b = attach_with(&h, "laptop-1", None, &["h", &id]);
+    wait_for(&b.out, "mode-2");
+    wait_for(&b.out, "\x1b[=5;1u");
+    b.stdin.close();
+    b.code();
+}
+
 #[test]
 fn live_attach_take() {
     let h = LiveHost::new();

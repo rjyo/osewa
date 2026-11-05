@@ -97,7 +97,21 @@ const TYPING_QUIET: Duration = Duration::from_secs(2);
 
 /// Takes ownership when typed by a viewer. A viewer's keys are dropped
 /// anyway, so it needs no escape; the owner's Ctrl-T reaches the program.
+/// It is this one byte because a viewer's terminal stays out of the
+/// program's keyboard modes (Ui::legacy_viewer).
 const TAKE_KEY: char = '\x14';
+
+/// How the local terminal encodes keys.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct KeyModes {
+    /// Kitty keyboard flags.
+    kitty: u8,
+    /// Each screen has its own flags, so a switch needs them set again.
+    /// Always false without flags, when there is nothing to set.
+    alt: bool,
+    /// xterm modifyOtherKeys mode 2.
+    other: bool,
+}
 
 /// What the UI draws with, made to repaint later (a notice's timer).
 struct Later {
@@ -153,6 +167,21 @@ pub struct Ui {
     clipboard_read: bool,
     /// The session, to answer clipboard reads.
     session: Arc<Mutex<Option<Session>>>,
+    /// This client's id, and whether it owns the session as last reported.
+    id: String,
+    owned: bool,
+    /// Owner events so far, to tell a read of the owner from a newer event.
+    pub(crate) owner_events: u64,
+    /// Keeps a viewer's terminal out of the program's keyboard modes: its
+    /// keys are for us, not the program, and a program's modes would encode
+    /// them past recognition (Ctrl-T as CSI u; with Kitty's "report all
+    /// keys", the ~t escape too).
+    legacy_viewer: bool,
+    /// The keyboard modes the mirror has.
+    keys: KeyModes,
+    /// The ones the local terminal has; None when a redraw may have changed
+    /// them.
+    sent_keys: Option<KeyModes>,
 }
 
 impl Ui {
@@ -181,6 +210,12 @@ impl Ui {
             colored: false,
             clipboard_read: false,
             session: Arc::default(),
+            id: String::new(),
+            owned: false,
+            owner_events: 0,
+            legacy_viewer: false,
+            keys: KeyModes::default(),
+            sent_keys: Some(KeyModes::default()),
         }
     }
 
@@ -195,6 +230,14 @@ impl Ui {
     /// which may ask first.
     pub fn with_clipboard_read(mut self) -> Ui {
         self.clipboard_read = true;
+        self
+    }
+
+    /// Reads keys for this client alone while it only views. Not for an app
+    /// whose first key takes over: that key goes to the program, encoded in
+    /// the program's modes.
+    pub fn with_legacy_viewer(mut self) -> Ui {
+        self.legacy_viewer = true;
         self
     }
 
@@ -230,6 +273,7 @@ impl Ui {
         self.filter.reset(&tail_style(t));
         (self.real_x, self.real_y) = t.cursor();
         self.sync_pointer(t);
+        self.redrawn_keys(t);
         let (colors, colored) = colors_redraw(t, self.colored || std::mem::take(&mut self.filter.passed_colors));
         self.colored = colored;
         self.write(&colors);
@@ -249,6 +293,7 @@ impl Ui {
         (self.real_x, self.real_y) = t.cursor();
         self.pointer = "";
         self.sync_pointer(t);
+        self.redrawn_keys(t);
         let (colors, colored) = colors_redraw(t, self.colored);
         self.colored = colored;
         self.write(&colors);
@@ -259,6 +304,61 @@ impl Ui {
         }
         self.paint_buffered(t);
         self.flush();
+    }
+
+    /// After a redraw, which can switch the local screen under the modes
+    /// and skip output that changed them.
+    fn redrawn_keys(&mut self, t: &Terminal) {
+        if self.sent_keys != Some(KeyModes::default()) {
+            self.sent_keys = None;
+        }
+        self.filter.saw_other_keys = true;
+        self.read_keys(t);
+    }
+
+    /// Takes the keyboard modes from the mirror. They aren't passed along
+    /// with the output: which ones the local terminal gets depends on who
+    /// owns the session, and setting the mirror's current flags keeps it
+    /// right however the program pushed and popped them.
+    fn read_keys(&mut self, t: &Terminal) {
+        self.keys.kitty = t.kitty_flags();
+        self.keys.alt = self.keys.kitty != 0 && t.alt_screen();
+        if std::mem::take(&mut self.filter.saw_other_keys) {
+            self.keys.other = t.modify_other_keys();
+        }
+        self.sync_keys();
+    }
+
+    /// Takes an owner read from the session after `events` owner events,
+    /// unless a later event already said who it is.
+    pub(crate) fn read_owner(&mut self, owner: &str, events: u64) {
+        if self.owner_events == events {
+            self.set_owner(owner);
+        }
+    }
+
+    /// Takes who owns the session. No output need follow, so the modes
+    /// can't wait for the next flush.
+    fn set_owner(&mut self, owner: &str) {
+        self.owned = owner == self.id;
+        self.sync_keys();
+        self.flush();
+    }
+
+    /// Gives the local terminal the keyboard modes it should have now.
+    fn sync_keys(&mut self) {
+        let want = if self.legacy_viewer && !self.owned { KeyModes::default() } else { self.keys };
+        let had = self.sent_keys;
+        if had == Some(want) {
+            return;
+        }
+        if had.is_none_or(|h| (h.kitty, h.alt) != (want.kitty, want.alt)) {
+            self.write(format!("\x1b[={};1u", want.kitty).as_bytes());
+        }
+        if had.is_none_or(|h| h.other != want.other) {
+            self.write(if want.other { b"\x1b[>4;2m" } else { b"\x1b[>4m" });
+        }
+        self.sent_keys = Some(want);
     }
 
     /// Gives the local terminal the pointer shape the program asked for.
@@ -307,6 +407,7 @@ impl Ui {
             self.displaced = false;
         }
         self.sync_pointer(t);
+        self.read_keys(t);
         self.colored |= std::mem::take(&mut self.filter.passed_colors);
         self.pred.check(t);
         self.paint_buffered(t);
@@ -376,6 +477,12 @@ impl Ui {
                 // Not blocking the mirror on a round trip.
                 std::thread::spawn(move || osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.clipboard(b""))));
             }
+            return;
+        }
+        if e.kind == wire::EVENT_OWNER {
+            // Catch-up ones too: they end at the current owner.
+            self.owner_events += 1;
+            self.set_owner(&e.owner);
             return;
         }
         if e.kind == wire::EVENT_NOTIFY {
@@ -507,7 +614,8 @@ fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
 }
 
 impl Attached {
-    pub fn new(ui: Ui, id: String) -> Attached {
+    pub fn new(mut ui: Ui, id: String) -> Attached {
+        ui.id = id.clone();
         let ui = Arc::new(Mutex::new(ui));
         let (u1, u2, u3, u4, u5) = (ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui.clone());
         let m = Mirror::new(osewa_mirror::Options {
@@ -615,6 +723,20 @@ impl Attached {
         let _ = s.send_text(text);
     }
 
+    /// Takes the owner from the session, as attaching and claiming it
+    /// reported. The holder only sends an event when the owner changes, so
+    /// one that attaches to its own session hears of it this way alone.
+    pub fn sync_owner(&self) {
+        let Some(s) = self.session() else { return };
+        // Counted before the read: an event after it is newer than what the
+        // read may return. Reading under the mirror can't settle that, as
+        // events take the session's lock and then the mirror's. An event the
+        // read does see reached the UI first, under the session's lock.
+        let events = lock(&self.ui).owner_events;
+        let owner = s.owner();
+        self.m.view(|_| lock(&self.ui).read_owner(&owner, events));
+    }
+
     /// Claims ownership for this client and says how it went. It blocks:
     /// never call it from the session's callbacks.
     pub fn take_over(&self) {
@@ -635,6 +757,7 @@ impl Attached {
         let Some(s) = self.session() else { return Err("not attached".into()) };
         match osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.own())) {
             Some(Ok(())) => {
+                self.sync_owner();
                 osewa_client::block_on(self.send_appearance());
                 Ok(())
             }

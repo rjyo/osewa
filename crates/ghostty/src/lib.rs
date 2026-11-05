@@ -290,6 +290,19 @@ impl Terminal {
         POINTER_SHAPES.get(i as usize).copied().unwrap_or("text")
     }
 
+    /// The Kitty keyboard flags the program has set on the active screen.
+    pub fn kitty_flags(&self) -> u8 {
+        unsafe { ffi::osewa_term_kitty_flags(self.t) as u8 }
+    }
+
+    /// Whether the program turned on xterm's modifyOtherKeys mode 2. No
+    /// getter says so, only the VT format; the active area keeps this from
+    /// costing the scrollback's length.
+    pub fn modify_other_keys(&self) -> bool {
+        let vt = self.format_in(Format::Vt, false, false, true).unwrap_or_default();
+        vt.windows(MODIFY_OTHER_KEYS.len()).any(|w| w == MODIFY_OTHER_KEYS)
+    }
+
     /// Whether the parser is between sequences, where bytes can be inserted
     /// without changing how the stream is interpreted.
     pub fn at_ground(&self) -> bool {
@@ -361,7 +374,7 @@ impl Terminal {
         let mut sink = Sink { b: Vec::new(), stop_at_ready: false, end: None };
         let vt = f != Format::Plain;
         let r = unsafe {
-            ffi::osewa_format(self.t, vt, trim, unwrap, f == Format::VtPalette, active, (&mut sink as *mut Sink).cast())
+            ffi::osewa_format(self.t, vt, trim, unwrap, f == Format::VtPalette, f != Format::VtNoKeys, active, (&mut sink as *mut Sink).cast())
         };
         check(r, "format")?;
         Ok(sink.b)
@@ -405,7 +418,13 @@ pub enum Format {
     Vt,
     /// Vt plus all 256 palette entries as OSC 4.
     VtPalette,
+    /// Vt without the keyboard modes, for a client that decides those
+    /// itself.
+    VtNoKeys,
 }
+
+/// How the VT format says modifyOtherKeys mode 2 is on.
+const MODIFY_OTHER_KEYS: &[u8] = b"\x1b[>4;2m";
 
 // Snapshot record framing, from libghostty's src/terminal/snapshot: a
 // 10-byte envelope, then records of tag u16, length u32, CRC32C u32 and the

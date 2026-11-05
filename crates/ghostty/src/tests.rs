@@ -203,6 +203,22 @@ fn encode_key_follows_modes() {
 }
 
 #[test]
+fn keyboard_modes() {
+    let mut term = Terminal::new(20, 4, Options::default()).unwrap();
+    assert_eq!((term.kitty_flags(), term.modify_other_keys()), (0, false));
+    term.write(b"\x1b[>5u\x1b[>4;2m");
+    assert_eq!((term.kitty_flags(), term.modify_other_keys()), (5, true));
+    let has = |f, term: &Terminal| {
+        let vt = term.format(f, false, false).unwrap();
+        [&b"\x1b[=5;1u"[..], b"\x1b[>4;2m"].map(|s| vt.windows(s.len()).any(|w| w == s))
+    };
+    assert_eq!(has(Format::Vt, &term), [true, true]);
+    assert_eq!(has(Format::VtNoKeys, &term), [false, false]);
+    term.write(b"\x1b[<u\x1b[>4m");
+    assert_eq!((term.kitty_flags(), term.modify_other_keys()), (0, false));
+}
+
+#[test]
 fn parse_mods_names() {
     let both = parse_mods(&["ctrl", "shift"]).unwrap();
     let ctrl = parse_mods(&["ctrl"]).unwrap();

@@ -18,7 +18,7 @@ use osewa_vt::{viewer_notice, Attached, Ui};
 /// Undoes modes the remote program may have left on our terminal (alt
 /// screen, hidden cursor, mouse and focus reporting, bracketed paste, kitty
 /// keyboard), since the local terminal outlives the attach.
-pub(crate) const RESET_MODES: &str = "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[?2031l\x1b]22;\x1b\\\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\\r\n";
+pub(crate) const RESET_MODES: &str = "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[>4m\x1b[?2031l\x1b]22;\x1b\\\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\\r\n";
 
 /// Asks the local terminal for its appearance, for the programs that ask
 /// the holder: dark or light, now (DSR 996) and whenever that changes
@@ -80,7 +80,7 @@ async fn attach_on(
     // so no late remote mode lands after the reset.
     let restore = make_raw(env)?;
     let me = env.client_id();
-    let mut ui = Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() }));
+    let mut ui = Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() })).with_legacy_viewer();
     if graphics {
         ui = ui.with_graphics();
     }
@@ -147,6 +147,7 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
             None => return Ok(1), // interrupted, as in the loop below
             Some(r) => r?,
         }
+        a.sync_owner();
         a.send_appearance().await;
     } else {
         let _ = tokio::time::timeout(Duration::from_secs(5), a.m.wait_text("")).await;
