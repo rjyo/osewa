@@ -160,3 +160,14 @@ fn other_viewers_keep_the_keyboard_modes() {
     let (_a, out) = keyed_ui(false);
     assert!(out.string().contains("\x1b[=5;1u"), "{:?}", out.string());
 }
+
+/// An owner event between reading the owner and setting it must not be
+/// undone: the set that follows is of the older owner, so it goes again.
+#[test]
+fn settling_the_owner_ends_on_the_newest() {
+    use std::cell::RefCell;
+    let reads = RefCell::new(vec!["new", "new", "old"]);
+    let mut sets = Vec::new();
+    crate::ui::settle_owner_for_test(|| reads.borrow_mut().pop().unwrap().to_string(), |o| sets.push(o.to_string()));
+    assert_eq!(sets, ["old", "new"]);
+}

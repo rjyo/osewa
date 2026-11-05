@@ -113,6 +113,11 @@ struct KeyModes {
     other: bool,
 }
 
+#[cfg(test)]
+pub(crate) fn settle_owner_for_test(read: impl Fn() -> String, set: impl FnMut(&str)) {
+    settle_owner(read, set)
+}
+
 /// What the UI draws with, made to repaint later (a notice's timer).
 struct Later {
     m: Mirror,
@@ -597,6 +602,24 @@ struct Look {
     colors: osewa_client::TermColors,
 }
 
+/// Sets the owner read, until a read after setting agrees. An owner event
+/// landing between the read and the set would otherwise be overwritten with
+/// the older owner. Reading inside the set can't avoid that: events take the
+/// session's lock, then the mirror's, and the set holds the mirror's. They
+/// reach the UI before the session's lock lets a read see them, so what
+/// agrees here is never older than what the UI was told.
+fn settle_owner(read: impl Fn() -> String, mut set: impl FnMut(&str)) {
+    let mut owner = read();
+    loop {
+        set(&owner);
+        let now = read();
+        if now == owner {
+            return;
+        }
+        owner = now;
+    }
+}
+
 fn lock(ui: &Mutex<Ui>) -> MutexGuard<'_, Ui> {
     ui.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -716,8 +739,7 @@ impl Attached {
     /// one that attaches to its own session hears of it this way alone.
     pub fn sync_owner(&self) {
         let Some(s) = self.session() else { return };
-        let owner = s.owner();
-        self.m.view(|_| lock(&self.ui).set_owner(&owner));
+        settle_owner(|| s.owner(), |owner| self.m.view(|_| lock(&self.ui).set_owner(owner)));
     }
 
     /// Claims ownership for this client and says how it went. It blocks:
