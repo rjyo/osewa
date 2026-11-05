@@ -322,7 +322,7 @@ impl LinkInner {
                     _ = self.cancel.wait() => return,
                 }
                 wait = (wait * 2).clamp(BACKOFF_MIN, BACKOFF_MAX);
-                let deadline = tokio::time::Instant::now() + ATTEMPT_TIMEOUT;
+                let deadline = tokio::time::Instant::now() + self.cfg.attempt_timeout.unwrap_or(ATTEMPT_TIMEOUT);
                 let mut cfg = self.cfg.clone();
                 cfg.quic_port = self.quic_port.load(Ordering::Relaxed);
                 let r = match tokio::time::timeout_at(deadline, (self.dial)(cfg)).await {

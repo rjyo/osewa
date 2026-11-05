@@ -9,7 +9,10 @@ OSEWA_CARRIER=quic osewa ls devbox   # UDP only`;
 <h2>Connecting</h2>
 
 <h3>can't be reached from here … open TCP port 7322</h3>
-<p>login set up the server, but your machine can't reach its port. Open TCP (and UDP) 7322 in the host's firewall or cloud security group. If the host is reached at a different address than ssh uses, for example through a tailnet, log in again with <code>--addr</code>. Nothing was saved, so just run login again once it's fixed.</p>
+<p>login set up the server, but your machine can't reach its port. Open TCP (and UDP) 7322 in the host's firewall or cloud security group. If the host is reached at a different address than ssh uses, for example through a tailnet, log in again with <code>--addr</code>. If only ssh can reach the host, as through a bastion, log in with <code>--via-ssh</code>; see <a href="/docs/install#bastion">Behind a bastion</a>. Nothing was saved, so just run login again once it's fixed.</p>
+
+<h3>can't be reached through ssh</h3>
+<p>Connecting through ssh runs it with no prompts. Check that <code>ssh -o BatchMode=yes -W 127.0.0.1:7322 &lt;target&gt;</code> connects without asking anything: every hop needs a key or an agent, and the target must allow TCP forwarding.</p>
 
 <h3>unknown host "devbox"; run osewa login first</h3>
 <p>No host by that name in your <code>hosts.json</code>. Names are what you passed to <code>--name</code>, or the ssh target without <code>user@</code>.</p>

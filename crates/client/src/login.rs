@@ -52,6 +52,11 @@ pub struct Options {
     /// Saves the host without first dialing it from here (it is reachable
     /// only later, say over a VPN not up yet).
     pub no_check: bool,
+    /// Connects through `ssh -W` from now on, for a host only ssh reaches.
+    /// `addr` is then the server as the host sees it, default its loopback.
+    /// Without this, a target ssh_config sends through a proxy still falls
+    /// back to it when dialing the host directly fails.
+    pub via_ssh: bool,
 
     /// Default [`run_ssh`].
     pub ssh: Option<SshFn>,
@@ -125,24 +130,40 @@ pub async fn login(mut o: Options) -> Result<Outcome, Error> {
         .await
         .map_err(|e| Error::Other(format!("ssh {} {command}: {e}", o.target)))?;
     let resp = parse_enroll(&out)?;
-    if o.addr.is_empty() {
-        let host = ssh_hostname(o.ssh_config.as_ref(), &o.target).await;
-        o.addr = join_host_port(&host, &resp.port.to_string());
+    let loopback = join_host_port("127.0.0.1", &resp.port.to_string());
+    let chosen_addr = !o.addr.is_empty();
+    let (host, proxied) = ssh_route(o.ssh_config.as_ref(), &o.target).await;
+    if !chosen_addr {
+        o.addr = if o.via_ssh { loopback.clone() } else { join_host_port(&host, &resp.port.to_string()) };
     }
-    res.host = Host { name: o.name.clone(), addr: o.addr.clone(), server_key: resp.server_key, ssh: o.target.clone(), quic_port: 0 };
+    res.host = Host { name: o.name.clone(), addr: o.addr.clone(), server_key: resp.server_key, ssh: o.target.clone(), quic_port: 0, via_ssh: o.via_ssh };
     // A host saved but unreachable is worse than none: clients (app-hook)
     // would take it for the way to the host and wait on it.
     if !o.no_check {
-        let checked = match &o.check {
-            Some(check) => check(o.dir.clone(), res.host.clone()).await,
-            None => check_host(&o.dir, &res.host, CHECK_TIMEOUT).await,
-        };
+        let mut checked = check(&o, &res.host).await;
+        // ssh needing a proxy to get there says a direct dial never will.
+        if checked.is_err() && proxied && !o.via_ssh && !chosen_addr {
+            let through = Host { addr: loopback, via_ssh: true, ..res.host.clone() };
+            checked = check(&o, &through).await;
+            if checked.is_ok() {
+                res.host = through;
+            }
+        }
         if let Err(e) = checked {
+            if o.via_ssh || proxied {
+                return Err(Error::Other(format!(
+                    "the osewa server on {} is running, but it can't be reached through ssh ({e}): connecting runs \
+                     ssh with no prompts, so it needs a key or agent, for every hop, and TCP forwarding allowed on {0}; \
+                     the host was not saved",
+                    o.target
+                )));
+            }
             let port = o.addr.rsplit_once(':').map_or("", |(_, p)| p);
             return Err(Error::Other(format!(
                 "the osewa server on {} is running, but {} can't be reached from here ({e}): \
                  open TCP port {port} to this device (the host's firewall, a cloud security group), \
-                 or log in again with --addr set to an address that reaches it; the host was not saved",
+                 log in again with --addr set to an address that reaches it, \
+                 or with --via-ssh to connect through ssh; the host was not saved",
                 o.target, o.addr
             )));
         }
@@ -154,6 +175,13 @@ pub async fn login(mut o: Options) -> Result<Outcome, Error> {
         }
     }
     Ok(res)
+}
+
+async fn check(o: &Options, h: &Host) -> Result<(), Error> {
+    match &o.check {
+        Some(check) => check(o.dir.clone(), h.clone()).await,
+        None => check_host(&o.dir, h, CHECK_TIMEOUT).await,
+    }
 }
 
 fn join_host_port(host: &str, port: &str) -> String {
@@ -181,7 +209,9 @@ pub async fn check_host(dir: &Path, h: &Host, within: Duration) -> Result<(), Er
     let deadline = Instant::now() + within;
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
-        let attempt = crate::rt::timeout(left.min(Duration::from_secs(3)), async {
+        // An ssh through a bastion can take longer than a retry's worth.
+        let bound = if h.via_ssh { left } else { left.min(Duration::from_secs(3)) };
+        let attempt = crate::rt::timeout(bound, async {
             let c = crate::Conn::dial(cfg.clone()).await?;
             let w = c.welcome().await;
             c.close().await;
@@ -247,21 +277,26 @@ async fn output(prog: &'static str, args: Vec<String>, stdin: Vec<u8>, stderr: b
 /// Resolves target the way ssh does (Host aliases, HostName), since the
 /// server address must be dialable without ssh. Falls back to the target's
 /// host part when ssh can't say.
-async fn ssh_hostname(cfg: Option<&SshConfigFn>, target: &str) -> String {
-    let host = target[target.rfind('@').map_or(0, |i| i + 1)..].to_string();
+/// The host ssh resolves target to, and whether ssh_config sends it through
+/// a proxy.
+async fn ssh_route(cfg: Option<&SshConfigFn>, target: &str) -> (String, bool) {
+    let mut host = target[target.rfind('@').map_or(0, |i| i + 1)..].to_string();
     let out = match cfg {
         Some(cfg) => cfg(target.to_string()).await,
         None => run_ssh_config(target).await,
     };
-    let Ok(out) = out else { return host };
-    for line in String::from_utf8_lossy(&out).split_inclusive('\n') {
-        if let Some(v) = line.strip_prefix("hostname ") {
-            if !v.trim().is_empty() {
-                return v.trim().to_string();
-            }
+    let Ok(out) = out else { return (host, false) };
+    let mut proxied = false;
+    for line in String::from_utf8_lossy(&out).lines() {
+        let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+        let value = value.trim();
+        match key {
+            "hostname" if !value.is_empty() => host = value.to_string(),
+            "proxyjump" | "proxycommand" if !value.is_empty() && value != "none" => proxied = true,
+            _ => {}
         }
     }
-    host
+    (host, proxied)
 }
 
 /// This machine's platform, named as the release binaries are.
@@ -485,7 +520,7 @@ mod tests {
             let e = enrolled.lock().unwrap();
             assert!(e.name == "laptop" && !e.key.is_empty(), "enrolled {e:?}");
         }
-        let want = Host { name: "box".into(), addr: "box.lan:7400".into(), server_key: key, ssh: "me@box".into(), quic_port: 0 };
+        let want = Host { name: "box".into(), addr: "box.lan:7400".into(), server_key: key, ssh: "me@box".into(), ..Default::default() };
         assert_eq!(
             res,
             Outcome {
@@ -546,10 +581,74 @@ mod tests {
         assert!(crate::block_on(login(o)).is_err(), "bad dir");
     }
 
+    /// A login to a host whose server answers on port 7400, where the
+    /// check passes only for hosts `reachable` accepts, with `ssh_g` as
+    /// ssh -G's answer.
+    fn route_login(dir: &Path, ssh_g: &'static str, reachable: fn(&Host) -> bool) -> Options {
+        Options {
+            target: "box".into(),
+            dir: dir.to_path_buf(),
+            device: "laptop".into(),
+            no_install: true,
+            ssh: Some(Arc::new(|_, _, _| {
+                let resp = EnrollResponse { server_key: zero_key(), port: 7400, version: 0 };
+                ok(serde_json::to_vec(&resp).unwrap())
+            })),
+            ssh_config: Some(Arc::new(move |_| ok(ssh_g.as_bytes().to_vec()))),
+            check: Some(Arc::new(move |_, h| if reachable(&h) { ok(()) } else { fail("unreachable") })),
+            ..Default::default()
+        }
+    }
+
+    const PROXIED: &str = "hostname inner.lan\nproxyjump bastion\n";
+    const DIRECT: &str = "hostname inner.lan\nproxyjump none\n";
+
+    #[test]
+    fn via_ssh_is_asked_for() {
+        let tmp = TempDir::new();
+        let res = crate::block_on(login(Options { via_ssh: true, ..route_login(tmp.path(), DIRECT, |h| h.via_ssh) })).unwrap();
+        assert!(res.host.via_ssh && res.host.addr == "127.0.0.1:7400", "{:?}", res.host);
+        // --addr is then the server as the host sees it.
+        let o = Options { via_ssh: true, addr: "10.0.0.5:7322".into(), ..route_login(tmp.path(), DIRECT, |h| h.via_ssh) };
+        assert_eq!(crate::block_on(login(o)).unwrap().host.addr, "10.0.0.5:7322");
+    }
+
+    /// Behind a proxy a direct dial still goes first, since one that works
+    /// keeps QUIC, and failing it falls back to ssh.
+    #[test]
+    fn a_proxied_target_falls_back_to_ssh() {
+        let tmp = TempDir::new();
+        let res = crate::block_on(login(route_login(tmp.path(), PROXIED, |h| h.via_ssh))).unwrap();
+        assert!(res.host.via_ssh && res.host.addr == "127.0.0.1:7400", "{:?}", res.host);
+        assert!(hosts::find(tmp.path(), "box").unwrap().via_ssh, "saved without via_ssh");
+
+        let res = crate::block_on(login(route_login(tmp.path(), PROXIED, |h| !h.via_ssh))).unwrap();
+        assert!(!res.host.via_ssh && res.host.addr == "inner.lan:7400", "{:?}", res.host);
+    }
+
+    #[test]
+    fn nothing_else_falls_back_to_ssh() {
+        let tmp = TempDir::new();
+        // ssh goes straight there: a closed port is the likely reason.
+        let e = crate::block_on(login(route_login(tmp.path(), DIRECT, |h| h.via_ssh))).unwrap_err().to_string();
+        assert!(e.contains("open TCP port 7400") && e.contains("--via-ssh"), "{e}");
+        // The address was chosen: it isn't ours to replace.
+        let o = Options { addr: "chosen:1".into(), ..route_login(tmp.path(), PROXIED, |h| h.via_ssh) };
+        assert!(crate::block_on(login(o)).is_err(), "--addr fell back");
+        // Neither way works.
+        let e = crate::block_on(login(route_login(tmp.path(), PROXIED, |_| false))).unwrap_err().to_string();
+        assert!(e.contains("through ssh") && e.contains("key or agent"), "{e}");
+        assert!(hosts::find(tmp.path(), "box").is_err(), "an unreachable host was saved");
+    }
+
     #[test]
     fn ssh_hostnames() {
         let cfg = |out: &'static str| -> SshConfigFn { Arc::new(move |_| ok(out.as_bytes().to_vec())) };
-        assert_eq!(crate::block_on(ssh_hostname(Some(&cfg("hostname \n")), "u@alias")), "alias");
-        assert_eq!(crate::block_on(ssh_hostname(Some(&cfg("port 22\nhostname real\n")), "alias")), "real");
+        let route = |out, target| crate::block_on(ssh_route(Some(&cfg(out)), target));
+        assert_eq!(route("hostname \n", "u@alias"), ("alias".to_string(), false));
+        assert_eq!(route("port 22\nhostname real\n", "alias"), ("real".to_string(), false));
+        assert!(!route("hostname real\nproxyjump none\nproxycommand none\n", "a").1);
+        assert!(route("hostname real\nproxyjump bastion\n", "a").1);
+        assert!(route("hostname real\nproxycommand nc %h %p\n", "a").1);
     }
 }
