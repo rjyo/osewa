@@ -32,6 +32,8 @@ if [[ ${SKIP_MACOS_NOTARIZE:-} != 1 ]]; then
 	if [[ -n ${NOTARY_PROFILE:-} ]]; then
 		notary=(--keychain-profile "$NOTARY_PROFILE")
 	elif [[ -n ${ASC_PRIVATE_KEY_PATH:-} && -n ${ASC_KEY_ID:-} && -n ${ASC_ISSUER_ID:-} ]]; then
+		# The shared .env stores ~/...: nothing has expanded it by now.
+		ASC_PRIVATE_KEY_PATH=${ASC_PRIVATE_KEY_PATH/#\~\//$HOME/}
 		[[ -f $ASC_PRIVATE_KEY_PATH ]] || die "no $ASC_PRIVATE_KEY_PATH"
 		notary=(--key "$ASC_PRIVATE_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
 	else
