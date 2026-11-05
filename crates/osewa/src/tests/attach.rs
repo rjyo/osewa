@@ -462,6 +462,27 @@ fn live_keyboard_modes_follow_the_owner() {
     a.code();
 }
 
+/// Attaching to a session this client already owns changes no owner, so
+/// the holder says nothing: the attach response has to be enough for the
+/// terminal to get the program's modes.
+#[test]
+fn live_keyboard_modes_on_attach_as_the_owner() {
+    let h = LiveHost::new();
+    let id = h.run_ok(&["new", "h"]).trim().to_string();
+    let mut a = attach_with(&h, "laptop-1", None, &["h", &id]);
+    a.stdin.write("printf '\\033[>5u'; echo mode-$((1+1))\r");
+    wait_for(&a.out, "mode-2");
+    wait_for(&a.out, "\x1b[=5;1u");
+    a.stdin.close();
+    a.code();
+
+    let mut b = attach_with(&h, "laptop-1", None, &["h", &id]);
+    wait_for(&b.out, "mode-2");
+    wait_for(&b.out, "\x1b[=5;1u");
+    b.stdin.close();
+    b.code();
+}
+
 #[test]
 fn live_attach_take() {
     let h = LiveHost::new();

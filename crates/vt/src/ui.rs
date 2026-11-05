@@ -326,6 +326,14 @@ impl Ui {
         self.sync_keys();
     }
 
+    /// Takes who owns the session. No output need follow, so the modes
+    /// can't wait for the next flush.
+    fn set_owner(&mut self, owner: &str) {
+        self.owned = owner == self.id;
+        self.sync_keys();
+        self.flush();
+    }
+
     /// Gives the local terminal the keyboard modes it should have now.
     fn sync_keys(&mut self) {
         let want = if self.legacy_viewer && !self.owned { KeyModes::default() } else { self.keys };
@@ -461,11 +469,8 @@ impl Ui {
             return;
         }
         if e.kind == wire::EVENT_OWNER {
-            // Catch-up ones too: they end at the current owner. No output
-            // need follow, so this can't wait for the next flush.
-            self.owned = e.owner == self.id;
-            self.sync_keys();
-            self.flush();
+            // Catch-up ones too: they end at the current owner.
+            self.set_owner(&e.owner);
             return;
         }
         if e.kind == wire::EVENT_NOTIFY {
@@ -706,6 +711,15 @@ impl Attached {
         let _ = s.send_text(text);
     }
 
+    /// Takes the owner from the session, as attaching and claiming it
+    /// reported. The holder only sends an event when the owner changes, so
+    /// one that attaches to its own session hears of it this way alone.
+    pub fn sync_owner(&self) {
+        let Some(s) = self.session() else { return };
+        let owner = s.owner();
+        self.m.view(|_| lock(&self.ui).set_owner(&owner));
+    }
+
     /// Claims ownership for this client and says how it went. It blocks:
     /// never call it from the session's callbacks.
     pub fn take_over(&self) {
@@ -726,6 +740,7 @@ impl Attached {
         let Some(s) = self.session() else { return Err("not attached".into()) };
         match osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.own())) {
             Some(Ok(())) => {
+                self.sync_owner();
                 osewa_client::block_on(self.send_appearance());
                 Ok(())
             }

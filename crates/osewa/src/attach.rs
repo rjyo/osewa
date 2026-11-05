@@ -147,6 +147,7 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
             None => return Ok(1), // interrupted, as in the loop below
             Some(r) => r?,
         }
+        a.sync_owner();
         a.send_appearance().await;
     } else {
         let _ = tokio::time::timeout(Duration::from_secs(5), a.m.wait_text("")).await;
