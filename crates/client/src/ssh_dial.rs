@@ -60,9 +60,10 @@ struct Stream {
 }
 
 impl Stream {
-    /// Why ssh went away, once it has said all it will: TLS on its own could
-    /// only report an unexpected end of stream.
-    fn poll_why(&mut self, cx: &mut Context<'_>) -> Poll<Option<io::Error>> {
+    /// Reads what ssh has said, ready when it will say no more. Every read
+    /// of the stream does, and a connection is always reading: left alone,
+    /// a chatty ssh would fill the pipe and block with the session behind it.
+    fn poll_said(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         while let Some(err) = self.err.as_mut() {
             let mut b = [0u8; 512];
             let mut buf = ReadBuf::new(&mut b);
@@ -75,6 +76,13 @@ impl Stream {
                 _ => self.err = None,
             }
         }
+        Poll::Ready(())
+    }
+
+    /// Why ssh went away, once it has said all it will: TLS on its own could
+    /// only report an unexpected end of stream.
+    fn poll_why(&mut self, cx: &mut Context<'_>) -> Poll<Option<io::Error>> {
+        ready!(self.poll_said(cx));
         Poll::Ready(said_error(&self.said))
     }
 }
@@ -91,6 +99,7 @@ impl AsyncRead for Stream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let s = self.get_mut();
         let before = buf.filled().len();
+        let _ = s.poll_said(cx);
         ready!(Pin::new(&mut s.out).poll_read(cx, buf))?;
         if buf.filled().len() > before {
             return Poll::Ready(Ok(()));
@@ -153,6 +162,19 @@ mod tests {
             let e = s.read(&mut [0u8; 8]).await.unwrap_err().to_string();
             assert!(e.contains("Permission denied"), "{e}");
             assert!(!e.contains('\x1b'), "{e:?}");
+        });
+    }
+
+    /// A chatty ssh or ProxyCommand must not fill stderr's pipe and block
+    /// with the session behind it.
+    #[test]
+    fn stderr_cannot_stall_the_stream() {
+        on_runtime(|| async {
+            let mut s = sh("yes noise | head -c 300000 >&2; echo done; exec cat").unwrap();
+            let mut got = [0u8; 5];
+            let read = crate::rt::timeout(std::time::Duration::from_secs(5), s.read_exact(&mut got)).await;
+            assert!(matches!(read, Some(Ok(_))), "stalled behind stderr: {read:?}");
+            assert_eq!(&got, b"done\n");
         });
     }
 
