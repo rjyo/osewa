@@ -57,6 +57,7 @@ impl Env {
             ("no-install", Kind::Bool),
             ("service", Kind::Bool),
             ("no-check", Kind::Bool),
+            ("via-ssh", Kind::Bool),
         ]);
         let pos = fs.parse(args)?;
         if pos.len() != 1 {
@@ -73,6 +74,7 @@ impl Env {
             no_install: fs.bool("no-install"),
             service: as_service,
             no_check: fs.bool("no-check"),
+            via_ssh: fs.bool("via-ssh"),
             ssh: self.ssh.clone(),
             ssh_config: self.ssh_config.clone(),
             install: self.install.clone(),
@@ -89,7 +91,8 @@ impl Env {
         } else if res.installed {
             writeln!(out, "installed osewa on {target}")?;
         }
-        writeln!(out, "enrolled as {} on {} ({})", wire::quote(&res.device), res.host.name, res.host.addr)?;
+        let via = if res.host.via_ssh { " through ssh" } else { "" };
+        writeln!(out, "enrolled as {} on {} ({}{via})", wire::quote(&res.device), res.host.name, res.host.addr)?;
         // What the host said about its server.
         for line in &res.server {
             writeln!(out, "{}", printable_lines(line))?;

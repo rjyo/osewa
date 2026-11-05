@@ -51,13 +51,25 @@ enrolled as "laptop" on devbox (devbox.example.com:7322)`;
     <tr><td><code>--device N</code></td><td>This device's name on the host. Defaults to your machine's hostname.</td></tr>
     <tr><td><code>--no-install</code></td><td>Don't copy osewa; use the <code>osewa</code> already on the host's <code>PATH</code>.</td></tr>
     <tr><td><code>--no-check</code></td><td>Save the host without dialing it first.</td></tr>
+    <tr><td><code>--via-ssh</code></td><td>Connect through ssh from now on, for a host only ssh can reach. See <a href="#bastion">Behind a bastion</a>.</td></tr>
   </tbody>
 </table></div>
 
 <h2>Open the port</h2>
 <p>The server listens on port 7322: TCP for the TLS WebSocket, UDP for QUIC. TCP is required; UDP is what makes it fast. If the host has a firewall or sits behind a cloud security group, open both. If only TCP gets through, osewa still works, over the WebSocket.</p>
 <p>When the check can't reach the port, login stops and tells you:</p>
-<pre><code>the osewa server on devbox is running, but devbox.example.com:7322 can't be reached from here (...): open TCP port 7322 to this device (the host's firewall, a cloud security group), or log in again with --addr set to an address that reaches it; the host was not saved</code></pre>
+<pre><code>the osewa server on devbox is running, but devbox.example.com:7322 can't be reached from here (...): open TCP port 7322 to this device (the host's firewall, a cloud security group), log in again with --addr set to an address that reaches it, or with --via-ssh to connect through ssh; the host was not saved</code></pre>
+
+<h2 id="bastion">Behind a bastion</h2>
+<p>A host you reach with <code>ProxyJump</code> or <code>ProxyCommand</code> has no port you can open. login notices: when ssh_config sends the target through a proxy and dialing it directly fails, it saves the host to connect through ssh instead. <code>--via-ssh</code> asks for that up front. Nothing runs on the bastion, and it needs nothing beyond what <code>ProxyJump</code> already does.</p>
+<p>Each connection then runs <code>ssh -W 127.0.0.1:7322</code> to the target, using your ssh config. TLS runs inside it from your machine to the server, pinned as always, so the bastion sees only ciphertext. Your sessions still live on the host. When the network drops, osewa starts a new ssh and resumes, so there is no tunnel to keep alive.</p>
+<p>Three things differ from a direct connection:</p>
+<ul>
+  <li>Connecting can't ask you anything, because it happens in the background while your terminal shows the session. Every hop needs a key or an agent. A password or a 2FA prompt won't work, unless a <code>ControlPersist</code> connection is already up.</li>
+  <li>The target must allow TCP forwarding, which is sshd's default.</li>
+  <li>It runs over the WebSocket, not QUIC, and reconnects cost the ssh handshakes. It's slower to come back than a host you can dial directly.</li>
+</ul>
+<p>With <code>--via-ssh</code>, <code>--addr</code> is the server's address as the host sees it. Apps that embed osewa can't run ssh, so they can't reach a host that only works this way.</p>
 
 <h2>Logging in again</h2>
 <p>Running login again for the same host is safe. It replaces the saved entry, re-enrolls the same device name, and only copies osewa if the host's copy differs. To change the port, see <a href="/docs/server#port">Changing the port</a>.</p>

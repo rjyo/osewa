@@ -40,6 +40,8 @@ mod dial;
 mod link;
 mod rt;
 mod session;
+#[cfg(feature = "process")]
+mod ssh_dial;
 mod trace;
 
 pub mod hosts;
@@ -157,6 +159,8 @@ pub struct Config {
     /// How long a pending TCP connect waits before a second attempt races
     /// it. None is the default, 250 ms; zero never races.
     pub race_after: Option<Duration>,
+    /// Bounds one attempt of a Link to connect. None is the default, 3 s.
+    pub attempt_timeout: Option<Duration>,
 
     pub(crate) knobs: Knobs,
 }

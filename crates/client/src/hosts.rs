@@ -32,6 +32,15 @@ pub struct Host {
     /// (`Config::quic_port`).
     #[serde(skip_serializing_if = "is_zero")]
     pub quic_port: i64,
+    /// Connections go through `ssh -W` to the `ssh` target, for a host only
+    /// ssh can reach (a ProxyJump), and `addr` is the server as the host
+    /// sees it. Clients that can't run ssh can't reach such a host.
+    #[serde(skip_serializing_if = "is_false")]
+    pub via_ssh: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -249,7 +258,7 @@ impl Host {
         let key = osewa_auth::decode_key(&self.server_key)
             .map_err(|e| Error::Invalid(format!("host {}: {e}", wire::quote(&self.name))))?;
         let (dir, h) = (dir.to_path_buf(), self.clone());
-        Ok(crate::Config {
+        let cfg = crate::Config {
             url: format!("wss://{}{}", self.addr, wire::PATH),
             tls: Some(Arc::new(osewa_auth::client_config(&id, key))),
             client_id: client_id.to_string(),
@@ -258,7 +267,34 @@ impl Host {
             // Remember what the server advertises, for the next connection.
             on_carriers: Some(Arc::new(move |cs: &[wire::Carrier]| remember_quic(&dir, &h, cs))),
             ..Default::default()
-        })
+        };
+        if self.via_ssh {
+            return self.through_ssh(cfg);
+        }
+        Ok(cfg)
+    }
+
+    /// Dials cfg's address from the host, over the one carrier a byte
+    /// stream can take. A second attempt would only be a second ssh.
+    #[cfg(feature = "process")]
+    fn through_ssh(&self, mut cfg: crate::Config) -> Result<crate::Config, Error> {
+        if self.ssh.is_empty() || self.ssh.starts_with('-') {
+            return Err(Error::Invalid(format!("host {}: bad ssh target {}", wire::quote(&self.name), wire::quote(&self.ssh))));
+        }
+        cfg.carrier = "ws".into();
+        cfg.quic_port = 0;
+        cfg.on_carriers = None;
+        cfg.race_after = Some(std::time::Duration::ZERO);
+        // Two ssh handshakes through a bastion can outlast the default,
+        // and an attempt cut short would only start them over.
+        cfg.attempt_timeout = Some(std::time::Duration::from_secs(20));
+        cfg.knobs.dial = Some(crate::ssh_dial::dial(self.ssh.clone()));
+        Ok(cfg)
+    }
+
+    #[cfg(not(feature = "process"))]
+    fn through_ssh(&self, _cfg: crate::Config) -> Result<crate::Config, Error> {
+        Err(Error::Invalid(format!("host {} is reached through ssh, which this client can't run", wire::quote(&self.name))))
     }
 }
 
@@ -432,6 +468,29 @@ mod tests {
         fs::write(path(&dir), r#"[{"name":"old","addr":"o:1","server_key":"k"}]"#).unwrap();
         let old = find(&dir, "old").unwrap();
         assert!(old.ssh.is_empty() && old.server_key == "k", "old = {old:?}");
+    }
+
+    // A host reached through ssh takes the one carrier a byte stream can,
+    // never remembers QUIC, and never starts a second ssh to race the first.
+    #[test]
+    fn via_ssh_config() {
+        let t = TempDir::new();
+        let dir = t.path().join("cfg");
+        let key = osewa_auth::encode_key(&[0u8; 32]);
+        let host = Host { ssh: "me@box".into(), via_ssh: true, quic_port: 7323, ..h("a", "127.0.0.1:7322", &key) };
+        let c = host.config(&dir, "id", "name").unwrap();
+        assert_eq!((c.carrier.as_str(), c.quic_port), ("ws", 0));
+        assert!(c.on_carriers.is_none() && c.knobs.dial.is_some());
+        assert_eq!(c.race_after, Some(std::time::Duration::ZERO));
+        assert!(c.attempt_timeout.is_some());
+
+        let direct = Host { via_ssh: false, ..host.clone() }.config(&dir, "id", "name").unwrap();
+        assert!(direct.knobs.dial.is_none() && direct.attempt_timeout.is_none());
+
+        // hosts.json is private, but ssh must still never take it for an option.
+        for bad in ["", "-oProxyCommand=x"] {
+            assert!(Host { ssh: bad.into(), ..host.clone() }.config(&dir, "id", "name").is_err(), "{bad:?}");
+        }
     }
 
     // The v0 hosts.json bytes, and a newline.

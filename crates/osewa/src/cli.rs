@@ -28,7 +28,7 @@ host commands:
                                        stdin): for tools on the host
 
 client commands:
-  login <ssh-target> [--name N] [--addr host:port] [--device N] [--no-install] [--service] [--no-check]
+  login <ssh-target> [--name N] [--addr host:port] [--device N] [--no-install] [--service] [--no-check] [--via-ssh]
   ls <host>
   new <host> [-- argv...]
   attach [--take] [--quiet] [--predict auto|always|never] [--graphics auto|always|never] [--clipboard-read] <host> [id]
