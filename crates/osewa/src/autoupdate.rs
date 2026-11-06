@@ -1,10 +1,11 @@
 //! Updates from osewa's GitHub releases, as moshi-hook's do.
 //!
-//! `osewa set auto-update auto|ask|off` picks the mode; auto is the
-//! default. `osewa update` (no host) installs the latest release over this
-//! binary. A released build checks for a newer release at most once a day,
-//! after a client command, in a background process; a server checks
-//! hourly.
+//! `osewa set auto-update auto|ask|off` picks the mode; ask is the
+//! default, because an update runs what it downloads: on a remote-access
+//! tool, a compromised release shouldn't reach every machine unattended.
+//! `osewa update` (no host) installs the latest release over this binary.
+//! A released build checks for a newer release at most once a day, after
+//! a client command, in a background process; a server checks hourly.
 //!
 //! Auto installs on its own only a release that interoperates with this
 //! build (the same protocol and snapshot version): a server moving to
@@ -86,12 +87,12 @@ fn write_json(p: &Path, v: &serde_json::Map<String, serde_json::Value>) -> io::R
     r
 }
 
-/// $OSEWA_AUTO_UPDATE, else the setting, else auto.
+/// $OSEWA_AUTO_UPDATE, else the setting, else ask.
 pub(crate) fn mode() -> Mode {
     if let Some(m) = std::env::var("OSEWA_AUTO_UPDATE").ok().and_then(|v| Mode::parse(&v)) {
         return m;
     }
-    read_json(&settings_path()).get("auto_update").and_then(|v| v.as_str()).and_then(Mode::parse).unwrap_or(Mode::Auto)
+    read_json(&settings_path()).get("auto_update").and_then(|v| v.as_str()).and_then(Mode::parse).unwrap_or(Mode::Ask)
 }
 
 const SET_USAGE: &str = "usage: osewa set [auto-update [auto|ask|off]]";

@@ -14,7 +14,7 @@ enrolled as "laptop" on devbox (devbox.example.com:7322)`;
 <h2>Get osewa on your machine</h2>
 <p>On Linux or macOS, amd64 or arm64:</p>
 <pre><code><span class="p">$ </span>{curl}</code></pre>
-<p>It downloads the latest <a href="https://github.com/rjyo/osewa/releases">release</a> for your OS and CPU, checks it against the release's <code>SHA256SUMS</code> and puts it at <code>~/.local/bin/osewa</code>. Set <code>OSEWA_VERSION=v0.1.0</code> for a particular release, or <code>OSEWA_INSTALL_DIR</code> for another directory. The macOS builds are signed and notarized. From then on osewa keeps itself up to date; see <a href="/docs/server#auto-update">Auto-update</a>.</p>
+<p>It downloads the latest <a href="https://github.com/rjyo/osewa/releases">release</a> for your OS and CPU, checks it against the release's <code>SHA256SUMS</code> and puts it at <code>~/.local/bin/osewa</code>. Set <code>OSEWA_VERSION=v0.1.0</code> for a particular release, or <code>OSEWA_INSTALL_DIR</code> for another directory. The macOS builds are signed and notarized. From then on osewa tells you when a release is out; see <a href="/docs/server#auto-update">Auto-update</a>.</p>
 <h3>From source</h3>
 <p>With Rust and Zig installed (Zig builds libghostty-vt):</p>
 <pre><code>{build}</code></pre>

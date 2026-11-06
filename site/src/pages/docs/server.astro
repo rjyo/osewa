@@ -69,13 +69,18 @@ devbox's server restarted with it`;
 <p>Your machine and the host must run compatible builds: the same protocol version and the same snapshot version (they may link different libghostty-vt commits). When they don't, commands fail with <code>update osewa on the host or here</code>.</p>
 
 <h3 id="auto-update">Auto-update</h3>
-<p>A released osewa keeps itself up to date from the <a href="https://github.com/rjyo/osewa/releases">GitHub releases</a>, unless you turn it off:</p>
+<p>By default a released osewa checks the <a href="https://github.com/rjyo/osewa/releases">GitHub releases</a> and tells you when there's a newer one, but runs nothing new until you do: an update runs what it downloads, and osewa has access to your machines.</p>
 <ul>
-  <li><strong>On your machine</strong>, after a command run in a terminal, osewa checks at most once a day, in the background. A newer release that works with this one is installed over it; you get it from the next command.</li>
-  <li><strong>A server</strong> run as a service or with <code>--daemon</code> checks every hour. It installs a newer release that works with this one, waits until no port forward or command is running (a restart would end them; sessions survive it), and restarts into it. Attached windows reconnect.</li>
-  <li><strong>A release that can't talk to this one</strong> (another protocol or snapshot version) is never installed by itself: it would leave every running session unattachable and lock out devices still on this build. osewa says it's out, after commands and in the server log. Update everything together when you're ready: <code>osewa update</code> here, then <code>osewa update &lt;host&gt;</code>.</li>
+  <li><strong>On your machine</strong>, after a command run in a terminal, osewa checks at most once a day, in the background. Later commands say when a release is out; <code>osewa update</code> installs it.</li>
+  <li><strong>A server</strong> run as a service or with <code>--daemon</code> checks every hour and says so in its log. Update it from your machine with <code>osewa update &lt;host&gt;</code>.</li>
 </ul>
-<p><code>osewa set auto-update ask</code> only tells you about releases; <code>osewa set auto-update off</code> stops checking. A host's setting is its own: run it there. <code>OSEWA_AUTO_UPDATE=off</code> in the environment overrides the setting. Builds from source never update themselves.</p>
+<p><code>osewa set auto-update auto</code> installs releases by itself instead:</p>
+<ul>
+  <li><strong>On your machine</strong>, a newer release that works with this one is installed over it; you get it from the next command.</li>
+  <li><strong>A server</strong> installs a newer release that works with this one, waits until no port forward or command is running (a restart would end them; sessions survive it), and restarts into it. Attached windows reconnect.</li>
+  <li><strong>A release that can't talk to this one</strong> (another protocol or snapshot version) is still never installed by itself: it would leave every running session unattachable and lock out devices still on this build. osewa says it's out, after commands and in the server log. Update everything together when you're ready: <code>osewa update</code> here, then <code>osewa update &lt;host&gt;</code>.</li>
+</ul>
+<p><code>osewa set auto-update off</code> stops checking. A host's setting is its own: run it there. <code>OSEWA_AUTO_UPDATE=off</code> in the environment overrides the setting. Builds from source never check on their own.</p>
 
 <h2>Logs</h2>
 <div class="tbl"><table>

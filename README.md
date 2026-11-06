@@ -269,7 +269,8 @@ to command it.
 - **Device keys:** Ed25519 per device, TLS 1.3, pinned server key. No
   passwords, no trust on first use.
 - **Self-hosting:** `osewa login` installs over ssh once; `osewa update`
-  upgrades over osewa, and released builds keep themselves up to date
+  upgrades over osewa, and released builds say when a release is out, or
+  install it themselves if you opt in
   (`osewa set auto-update auto|ask|off`).
 - **Open protocol and a client library,** built on Ghostty's
   terminal engine. Linux and macOS hosts.
