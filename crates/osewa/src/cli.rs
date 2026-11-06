@@ -46,9 +46,9 @@ client commands:
                                        (and restart the server here with it); with one:
                                        put this build on the host over osewa (no ssh)
                                        and restart its server with it
-  set [auto-update [auto|ask|off]]     auto (default) installs releases that work with
-                                       this one by itself, here and on servers; ask only
-                                       says when one is out
+  set [auto-update [auto|ask|off]]     ask (default) only says when a release is out;
+                                       auto installs ones that work with this one by
+                                       itself, here and on servers
   forward <host> [bind:]port[:host:hostport]...
                                        forward local ports through the host, as ssh -L
                                        (bind defaults to 127.0.0.1, the target to the

@@ -43,14 +43,17 @@ fn set_auto_update() {
         let code = autoupdate::set_main(&args(a), Out::new(out.clone()), Out::new(err.clone()));
         (code, out.string(), err.string())
     };
-    assert_eq!(run(&[]), (0, "auto-update auto\n".into(), String::new()), "auto by default");
-    assert_eq!(run(&["auto-update", "ask"]).0, 0);
-    assert_eq!(autoupdate::mode(), Mode::Ask);
-    assert_eq!(run(&["auto-update"]).1, "auto-update ask\n");
+    assert_eq!(run(&[]), (0, "auto-update ask\n".into(), String::new()), "ask by default");
+    assert_eq!(run(&["auto-update", "auto"]).0, 0);
+    assert_eq!(autoupdate::mode(), Mode::Auto);
+    assert_eq!(run(&["auto-update"]).1, "auto-update auto\n");
     let st = std::fs::metadata(dir.path().join("config/settings.json")).unwrap();
     assert_eq!(st.permissions().mode() & 0o777, 0o600);
     assert_eq!(run(&["auto-update", "sometimes"]).0, 2);
     assert_eq!(run(&["colour", "blue"]).0, 2);
+    // A setting it can't read never turns installing on.
+    std::fs::write(dir.path().join("config/settings.json"), r#"{"auto_update":"sometimes"}"#).unwrap();
+    assert_eq!(autoupdate::mode(), Mode::Ask);
     // The environment wins, for a host that must never update itself.
     g.set("OSEWA_AUTO_UPDATE", "off");
     assert_eq!(autoupdate::mode(), Mode::Off);
