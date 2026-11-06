@@ -1,0 +1,83 @@
+---
+import Docs from "../../layouts/Docs.astro";
+---
+<Docs slug="vs-et" description="osewa compared with Eternal Terminal (ET): how each reconnects, measured on the same host, and what ET does that osewa doesn't.">
+<p class="lede">Eternal Terminal (ET) is the closest tool to osewa: a reconnecting terminal with forwards and sessions that outlive the network. ET makes a TCP connection that can't die and replays what you missed. osewa keeps the screen on the host and sends you the current one.</p>
+<p>This page comes from reading ET 7.1.1's source and running it beside osewa on one host.</p>
+
+<h2>The main difference</h2>
+<p>ET puts a layer under the TCP socket. Each side numbers what it sends and keeps it, encrypted, in a buffer. After a reconnect the two sides swap sequence numbers and resend whatever the other missed, so your terminal gets every byte, in order, as if the link had never dropped. Your terminal does the rendering, and its own scrollback holds the output.</p>
+<p>osewa runs the program under libghostty-vt on the host, which keeps the screen. A reconnect sends that screen as one snapshot, however much you missed. The output in between stays on the host, in the session's scrollback, rather than in your terminal's.</p>
+<p>That shapes what each does badly. While the link is down, ET holds up to 64 MiB of new output, then stops reading from the program, which pauses it until you're back. And a client that starts fresh, after a crash or a reboot, resets the stream: <code>et --attach</code> gets the shell back, but no replay and no screen, so you see only what comes next. osewa's cost is that it has to parse everything the program writes, and it can only show what its engine understands.</p>
+
+<h2>At a glance</h2>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa</th><th>ET</th></tr></thead>
+  <tbody>
+    <tr><td>Transport</td><td>QUIC, falling back to TLS WebSocket over TCP</td><td>TCP</td></tr>
+    <tr><td>Port</td><td>7322, TCP and UDP</td><td>2022, TCP</td></tr>
+    <tr><td>Encryption</td><td>TLS 1.3, pinned keys on both ends</td><td>libsodium secretbox, with a key sent over ssh</td></tr>
+    <tr><td>Login</td><td>ssh once, then a device key</td><td>ssh for each new session</td></tr>
+    <tr><td>On the host</td><td>A server you run as your user</td><td><code>etserver</code>, usually a root service</td></tr>
+    <tr><td>After a reconnect</td><td>A snapshot of the screen</td><td>Every byte you missed</td></tr>
+    <tr><td>After a client crash</td><td>The screen, from any enrolled device</td><td>The shell, on that client, with no screen</td></tr>
+    <tr><td>Scrollback</td><td>On the host, up to 10 MiB</td><td>Your terminal's own</td></tr>
+    <tr><td>Local echo prediction</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Several devices at once</td><td>Yes: one owner, the rest view</td><td>One client per session</td></tr>
+    <tr><td>Session left alone</td><td>Ends after 24 hours with nobody attached and no output</td><td>Lasts until the shell exits, by default</td></tr>
+    <tr><td>Port forwards</td><td>Local</td><td>Local, reverse, SOCKS, stdio, Unix sockets</td></tr>
+    <tr><td>Agent forwarding</td><td>No</td><td>Yes</td></tr>
+    <tr><td>Commands without a terminal</td><td>Yes, <code>osewa exec</code></td><td>Yes, <code>et -T</code></td></tr>
+    <tr><td>VS Code and Cursor Remote-SSH</td><td>No</td><td>Yes</td></tr>
+    <tr><td>tmux control mode</td><td>No</td><td>Yes, through its multiplexer, HTM</td></tr>
+    <tr><td>Platforms</td><td>Linux and macOS</td><td>Linux, macOS, FreeBSD, WSL</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Measured</h2>
+<p>One host and one path: a 1-vCPU, 1 GB Linode in Tokyo, from a Mac in Thailand over the public internet, about 104 ms round trip. Medians of 5 runs in the same session. These numbers describe this path, not every network. Echo is timed with prediction off.</p>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa QUIC</th><th>osewa WebSocket</th><th>ET</th></tr></thead>
+  <tbody>
+    <tr><td>Connect and run a command</td><td>316 ms</td><td>520 ms</td><td>2,145 ms</td></tr>
+    <tr><td>Echo, idle</td><td>104 ms</td><td>103 ms</td><td>102 ms</td></tr>
+    <tr><td>Echo during a download</td><td>106 ms</td><td>109 ms</td><td>132 ms</td></tr>
+    <tr><td>Download alone</td><td>39.0 MB/s</td><td>26.4 MB/s</td><td>18.5 MB/s</td></tr>
+    <tr><td>Download while typing</td><td>37.9 MB/s</td><td>26.5 MB/s</td><td>18.8 MB/s</td></tr>
+  </tbody>
+</table></div>
+<p>On an idle link there's no difference in echo. ET's connect includes an ssh login and a login shell, which osewa's doesn't. Its download ran through a forward on the terminal's connection, and swung between 12.8 and 24.1 MB/s across the runs. ET also keeps its kernel send queue small, which is why its keys held up far better during a download than ssh's on the same run (208 ms).</p>
+<p>A second test cut the link both ways for 15 seconds, then timed how long after it came back each tool caught up. Two rounds, so read these as rough.</p>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa</th><th>ET</th></tr></thead>
+  <tbody>
+    <tr><td>First new output</td><td>0.9 s</td><td>1.8–2.2 s</td></tr>
+    <tr><td>Caught up after 22 MB of output</td><td>1.0 s, reading 2 kB</td><td>3.3–3.5 s, reading 22.5 MB</td></tr>
+    <tr><td>Caught up after 240 MB of output</td><td>36 s, reading 1.1 MB</td><td>50–52 s, reading 241 MB</td></tr>
+  </tbody>
+</table></div>
+<p>The gap in resuming comes from how each looks for the link: osewa retries every 500 ms, and ET once a second, after a keepalive that can take up to 10 seconds to call the link dead. The 240 MB case is slow on both sides for different reasons. osewa sent only 1.1 MB, so the time went on the small host working through the output, not the network. ET had to carry all of it, and paused the program at its 64 MiB limit. Our test read as fast as it could, so a real terminal drawing ET's replay would take longer. The method and raw output are in the <a href="https://github.com/rjyo/osewa/blob/main/bench/RESULTS.md">benchmark results</a>.</p>
+
+<h2>Where the transport matters</h2>
+<p>ET sends everything down one TCP connection: terminal output, your keys and every forward, in one line. osewa gives each forward its own QUIC stream, so a lost packet in one doesn't hold up the others, and it holds bulk data back while you type. ET does take care over floods, though: it keeps pending output in a buffer of its own, so Ctrl-C can throw the rest away.</p>
+<p>ET needs one open TCP port, while osewa wants UDP as well. With UDP blocked, osewa falls back to TCP and loses what QUIC adds.</p>
+
+<h2>Where ET is the better choice</h2>
+<ul>
+  <li>You want every byte in your own terminal's scrollback, with nothing rendering in between.</li>
+  <li>You leave sessions disconnected for days.</li>
+  <li>You need reverse or SOCKS forwards, agent forwarding, tmux control mode or FreeBSD.</li>
+  <li>You use VS Code or Cursor Remote-SSH and want those windows to survive sleep.</li>
+  <li>You want a more mature tool. osewa is young, and its protocol is still at v0.</li>
+</ul>
+
+<h2>Where osewa is the better choice</h2>
+<ul>
+  <li>You type on a slow link, where local echo prediction hides the round trip.</li>
+  <li>You move between devices, or want to watch one session from several.</li>
+  <li>A client crash or a reboot shouldn't cost you the screen.</li>
+  <li>Your program writes a lot while you're away, and shouldn't pause or make you wait through a replay.</li>
+  <li>You move a lot of data over the same connection.</li>
+  <li>You want no root service, and no ssh needed after enrollment.</li>
+</ul>
+</Docs>

@@ -1,0 +1,64 @@
+---
+import Docs from "../../layouts/Docs.astro";
+---
+<Docs slug="vs-mosh" description="osewa compared with mosh: how each keeps a session alive, UDP and TCP, scrollback, forwards, and when mosh is still the better choice.">
+<p class="lede">mosh proved that a remote terminal can survive roaming and echo keys before the host answers. osewa takes both ideas from it. They differ in what the host keeps, how the session is carried, and what else the connection can do.</p>
+
+<h2>The main difference</h2>
+<p>mosh synchronizes the visible screen, using a terminal emulator of its own, over its own UDP protocol. Its client and server, in its own words, "last only for the life of the connection", and it suggests screen or tmux on the host for anything longer. osewa keeps the screen with libghostty-vt, Ghostty's terminal engine, in a process that doesn't depend on any connection, so you can detach and attach again from anywhere.</p>
+
+<h2>At a glance</h2>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa</th><th>mosh</th></tr></thead>
+  <tbody>
+    <tr><td>Transport</td><td>QUIC, falling back to TLS WebSocket over TCP</td><td>UDP only</td></tr>
+    <tr><td>Port</td><td>7322, TCP and UDP</td><td>UDP, from 60000–61000 by default</td></tr>
+    <tr><td>With UDP blocked</td><td>Works</td><td>Doesn't connect</td></tr>
+    <tr><td>Sleep or IP change</td><td>Resumes by itself</td><td>Resumes by itself</td></tr>
+    <tr><td>Local echo prediction</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Scrollback</td><td>Up to 10 MiB per session</td><td>Visible screen only</td></tr>
+    <tr><td>Detach and reattach</td><td>Yes, from any enrolled device</td><td>Through screen or tmux</td></tr>
+    <tr><td>Several devices at once</td><td>Yes: one owner, the rest view</td><td>Through screen or tmux</td></tr>
+    <tr><td>Session left alone</td><td>Ends after 24 hours with nobody attached and no output</td><td>As long as screen or tmux keeps it</td></tr>
+    <tr><td>Port forwards, exec</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Kitty keyboard and graphics</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Login</td><td>ssh once, then a device key</td><td>ssh every time</td></tr>
+    <tr><td>On the host</td><td>A server you run as your user</td><td><code>mosh-server</code>, no daemon</td></tr>
+  </tbody>
+</table></div>
+<p>mosh 1.4.0 added true color and OSC 52 copy, so those are no longer gaps. It's the latest release, from October 2022.</p>
+
+<h2>Measured</h2>
+<p>Medians of 5 runs on the same path in the same session, from a Mac in Thailand to a Mac mini in Tokyo over Tailscale, about 125 ms round trip. osewa is over QUIC. Echo is timed with prediction off on both, so it's the real round trip of a key.</p>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa</th><th>mosh</th></tr></thead>
+  <tbody>
+    <tr><td>Connect and run a command</td><td>387 ms</td><td>2,366 ms</td></tr>
+    <tr><td>Echo, idle</td><td>126 ms</td><td>142 ms</td></tr>
+    <tr><td>Echo during a download</td><td>129 ms</td><td>198 ms</td></tr>
+    <tr><td>Host memory, idle session</td><td>14.3 MB</td><td>20.6 MB</td></tr>
+  </tbody>
+</table></div>
+<p>Resuming is a separate test, on a shaped link in Docker: after moving the client to a new IP address following 5 seconds offline, osewa came back in 0.4 s and mosh in 1.1 s. That's one scenario on one rig, not a general figure.</p>
+<p>mosh carries only the terminal, so its download ran over a separate ssh connection on the same path, as a mosh user's would. Part of mosh's connect time is that ssh login. Differences under about 20 ms on this path are noise. The memory figure comes from a separate run in a container. Under an output flood, mosh used less memory (20.2 MB against osewa's 35.6 MB). All of it, with the method, is in <a href="/paper">the paper</a> and the <a href="https://github.com/rjyo/osewa/blob/main/bench/RESULTS.md">benchmark results</a>.</p>
+
+<h2>What the emulator changes</h2>
+<p>Whatever mosh's emulator doesn't model never reaches your terminal, and when it reads output differently from your terminal, the screen can garble. osewa's engine is the one Ghostty draws with, so hyperlinks, Kitty keyboard and graphics, prompt marks and pointer shapes come through. It doesn't make osewa immune to bugs. It means the host keeps a modern terminal's screen, and sends it whole when you reconnect.</p>
+
+<h2>Where mosh is the better choice</h2>
+<ul>
+  <li>You want nothing running between sessions. mosh has no daemon and no privileged code.</li>
+  <li>You'd rather not trust a new login path. mosh leaves authentication to ssh, and osewa adds device keys of its own.</li>
+  <li>You need a long-proven tool, packaged nearly everywhere. osewa is young, and its protocol is still at v0.</li>
+  <li>Your link is so thin that every byte counts. mosh sends small screen diffs.</li>
+  <li>You need Windows or a platform osewa doesn't build for.</li>
+</ul>
+
+<h2>Where osewa is the better choice</h2>
+<ul>
+  <li>UDP is blocked, as on many office, hotel and public networks.</li>
+  <li>You want scrollback, and sessions that outlive the client, without tmux on top.</li>
+  <li>You want port forwards and commands on the same connection.</li>
+  <li>You use modern terminal features, or a full-screen agent TUI.</li>
+</ul>
+</Docs>

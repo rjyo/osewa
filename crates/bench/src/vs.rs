@@ -1,10 +1,10 @@
-//! `osewa-bench vs`: osewa against ssh and mosh on a real host, the
+//! `osewa-bench vs`: osewa against ssh, mosh and ET on a real host, the
 //! numbers an interactive user feels on that path: connecting and running a
 //! command from cold, a bulk download alone, a keystroke's echo idle, and
 //! the echo while a download shares the link.
 //!
 //! ```text
-//! osewa-bench vs [-runs N] [-keys N] [-quic] [-mosh] <host>
+//! osewa-bench vs [-runs N] [-keys N] [-quic] [-mosh] [-et] <host>
 //! ```
 //!
 //! The host is an osewa host name (hosts.json) whose `ssh` target is also
@@ -12,16 +12,22 @@
 //! as its terminal, and ssh's on the same ControlMaster, as a user's
 //! terminal and their forwards or scp share one link. mosh can carry only a
 //! terminal, so its download runs over a separate ssh connection on the same
-//! path, as a mosh user's would.
+//! path, as a mosh user's would. ET's runs through a forward on its
+//! terminal's connection, to a port on the host serving random bytes
+//! (`-et-port`): `socat TCP-LISTEN:9099,bind=127.0.0.1,reuseaddr,fork
+//! SYSTEM:"cat /dev/urandom"`.
 //!
 //! Echo is timed without prediction, so it is the round trip a key really
 //! takes: osewa and ssh from the bytes coming back (cat echoes only the
-//! letter), mosh from a libghostty rendering of its screen, since mosh
-//! redraws with escape sequences.
+//! letter), mosh and ET from a libghostty rendering of the screen: mosh
+//! redraws with escape sequences, and ET needs a terminal to run in.
 
+use std::cell::{Cell, RefCell};
 use std::io::{Read, Write};
+use std::net::{Shutdown, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -93,7 +99,9 @@ pub fn vs_main(args: &[String], w: &mut dyn Write) -> Result<(), Error> {
         .value("connects", "5", "cold connects per protocol")
         .bool("quic", true, "measure osewa over QUIC too")
         .bool("mosh", true, "measure mosh too")
-        .value("mosh-server", "", "mosh-server path on the host, if not on its PATH");
+        .value("mosh-server", "", "mosh-server path on the host, if not on its PATH")
+        .bool("et", false, "measure ET too")
+        .value("et-port", "9099", "port on the host's localhost serving ET's download");
     let p = crate::parse(&fs, args)?;
     if p.args.len() != 1 {
         return Err(Error("vs: usage: osewa-bench vs [flags] <host>".into()));
@@ -125,6 +133,9 @@ pub fn vs_main(args: &[String], w: &mut dyn Write) -> Result<(), Error> {
     protos.push(Box::new(ssh.clone()));
     if p.bool("mosh") {
         protos.push(Box::new(Mosh { target: target.clone(), server: p.str("mosh-server") }));
+    }
+    if p.bool("et") {
+        protos.push(Box::new(Et::new(&target, crate::int(&p, "et-port")? as u16)));
     }
 
     let mut all: Vec<Vec<Side>> = vec![Vec::new(); protos.len()];
@@ -555,6 +566,107 @@ impl Echo for MoshEcho {
     }
 }
 
+/// Eternal Terminal, in a terminal of its own, forwarding et-port so its
+/// download shares the connection its terminal uses. The session starts
+/// with the first of the two and ends with the terminal.
+struct Et {
+    target: String,
+    port: u16,
+    session: RefCell<Option<Display>>,
+    live: Rc<Cell<bool>>,
+}
+
+impl Et {
+    fn new(target: &str, port: u16) -> Et {
+        Et { target: target.into(), port, session: RefCell::new(None), live: Rc::new(Cell::new(false)) }
+    }
+
+    fn argv(&self, forward: bool, command: &str) -> Vec<String> {
+        // Telemetry off: a benchmark shouldn't report to anyone.
+        let mut a: Vec<String> = ["env", "ET_NO_TELEMETRY=1", "LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8", "et"].map(String::from).into();
+        if forward {
+            a.extend(["--tunnel".into(), format!("{0}:{0}", self.port)]);
+        }
+        a.extend(["--command".into(), command.into(), self.target.clone()]);
+        a
+    }
+
+    fn start(&self) -> Result<(), Error> {
+        if self.live.get() {
+            return Ok(());
+        }
+        let d = Display::start(&self.argv(true, "exec cat"), 80, 24).map_err(Error::io)?;
+        // ET pastes the command into a login shell once connected.
+        thread::sleep(Duration::from_secs(3));
+        *self.session.borrow_mut() = Some(d);
+        self.live.set(true);
+        Ok(())
+    }
+}
+
+impl Proto for Et {
+    fn name(&self) -> &'static str {
+        "ET"
+    }
+
+    fn connect(&self) -> Result<Duration, Error> {
+        let t0 = Instant::now();
+        let d = Display::start(&self.argv(false, "true"), 80, 24).map_err(Error::io)?;
+        // Exiting isn't enough: et exits at once on an error too, which
+        // would pass for a very fast connect.
+        let mut failed = None;
+        let exited = !d.wait_for(Duration::from_secs(30), |rows, _| {
+            failed = rows.iter().find(|r| r.contains("Error") || r.contains("Unknown")).cloned();
+            false
+        });
+        let el = t0.elapsed();
+        d.close();
+        if let Some(e) = failed {
+            return Err(Error(format!("et connect: {e}")));
+        }
+        if !exited || el >= Duration::from_secs(30) {
+            return Err(Error("et connect: didn't finish within 30 s".into()));
+        }
+        Ok(el)
+    }
+
+    fn stream(&self, got: Arc<AtomicU64>) -> Result<Stream, Error> {
+        self.start()?;
+        let c = TcpStream::connect(("127.0.0.1", self.port)).map_err(Error::io)?;
+        let stop = c.try_clone().map_err(Error::io)?;
+        let t = count_into(c, got);
+        Ok(Stream {
+            stop: Box::new(move || {
+                let _ = stop.shutdown(Shutdown::Both);
+                let _ = t.join();
+            }),
+        })
+    }
+
+    fn terminal(&self) -> Result<Box<dyn Echo>, Error> {
+        self.start()?;
+        let d = self.session.borrow_mut().take().ok_or_else(|| Error("et: the terminal is already in use".into()))?;
+        Ok(Box::new(EtEcho { line: MoshEcho { d: Some(d), line: String::new() }, live: self.live.clone() }))
+    }
+}
+
+struct EtEcho {
+    line: MoshEcho,
+    live: Rc<Cell<bool>>,
+}
+
+impl Echo for EtEcho {
+    fn key(&mut self, k: char) -> Duration {
+        self.line.key(k)
+    }
+
+    fn close(self: Box<Self>) {
+        let EtEcho { line, live } = *self;
+        Box::new(line).close();
+        live.set(false);
+    }
+}
+
 /// The p-th (0..1) of d.
 fn percentile(d: &[Duration], p: f64) -> Option<Duration> {
     if d.is_empty() {
@@ -669,6 +781,14 @@ mod tests {
         assert!(!t.contains("tried again"), "{t}");
         let t = table(&["x", "y"], &[vec![s.clone()], vec![Side { connect_failed: 2, ..s }]]);
         assert!(t.contains("tried again (not in the timings): y 2\n"), "{t}");
+    }
+
+    #[test]
+    fn et_forwards_only_for_its_session() {
+        let e = Et::new("box", 9099);
+        let s = e.argv(true, "exec cat").join(" ");
+        assert!(s.contains("ET_NO_TELEMETRY=1") && s.ends_with("et --tunnel 9099:9099 --command exec cat box"), "{s}");
+        assert!(e.argv(false, "true").join(" ").ends_with("et --command true box"));
     }
 
     // The ssh side against a local cat: each key's echo is the letter

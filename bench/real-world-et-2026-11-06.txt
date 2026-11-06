@@ -1,0 +1,37 @@
+# osewa vs ET on a Tokyo Linode Nanode (1 vCPU, 1 GB), from a Mac in Thailand, 2026-11-06.
+# ET 7.1.1 on both ends, telemetry off. mosh 1.4.0. osewa-bench vs -runs 5 -quic -mosh -et
+8 packets transmitted, 8 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 102.359/103.985/104.876/0.825 ms
+
+| median of 5 run(s) | osewa QUIC | osewa WebSocket | ssh | mosh | ET |
+|---|---:|---:|---:|---:|---:|
+| connect + run p50 ms | 316 | 520 | 1352 | 1982 | 2145 |
+| echo idle p50 / p95 ms | 104 / 105 | 103 / 104 | 111 / 116 | 117 / 122 | 102 / 103 |
+| echo during a download p50 / p95 ms | 106 / 111 | 109 / 160 | 208 / 259 | 116 / 121 | 132 / 158 |
+| download alone MB/s | 38.99 | 26.38 | 10.79 | — | 18.52 |
+| download during the echo MB/s | 37.89 | 26.50 | 8.99 | 13.59 | 18.76 |
+
+per run, echo during a download p50 ms:
+- osewa QUIC: 104 106 106 109 106
+- osewa WebSocket: 110 109 108 105 116
+- ssh: 257 160 157 252 208
+- mosh: 119 115 114 116 119
+- ET: 132 121 144 120 147
+
+8 packets transmitted, 8 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 104.082/105.039/105.449/0.400 ms
+
+# Outage: 15 s, both ways, on the host (bench/outage.py, 2 rounds, ET then osewa). Seconds after the link came back.
+clock offset +0.608 s
+run 1 resume et: 2.183777093887329
+run 1 backlog20 et: 3.518672466278076 (22.500 MB read)
+run 1 backlog200 et: 49.96301221847534 (241.000 MB read)
+run 1 resume osewa: 0.8834733963012695
+run 1 backlog20 osewa: 1.0448203086853027 (0.002 MB read)
+run 1 backlog200 osewa: 35.979846239089966 (1.112 MB read)
+run 2 resume et: 1.758664846420288
+run 2 backlog20 et: 3.3416879177093506 (22.500 MB read)
+run 2 backlog200 et: 52.15940809249878 (241.000 MB read)
+run 2 resume osewa: 0.8891372680664062
+run 2 backlog20 osewa: 1.0048675537109375 (0.002 MB read)
+run 2 backlog200 osewa: 36.30599927902222 (1.172 MB read)

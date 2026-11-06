@@ -125,3 +125,36 @@ on the same connection. Recovery is measured by moving the client to a new
 IP address after 5 s offline. Real-path checks ran against a host in Tokyo
 over Tailscale. The rig is an e2e suite in Docker, run against an image of
 this build (`docker build --target binary`).
+
+## Real world: ET, Thailand to a Tokyo VPS
+
+Eternal Terminal 7.1.1 on a fresh 1-vCPU, 1 GB Linode in Tokyo, from a Mac in
+Thailand over the public internet, about 104 ms round trip. Every tool ran in
+the same session on the same host. ET's telemetry was off.
+
+| Median of 5 runs | osewa QUIC | osewa WebSocket | ET |
+| --- | ---: | ---: | ---: |
+| Connect + run a command | **316 ms** | 520 ms | 2,145 ms |
+| Echo p50, idle | 104 ms | 103 ms | **102 ms** |
+| Echo p50 / p95 during a download | **106 / 111 ms** | 109 / 160 ms | 132 / 158 ms |
+| Download alone | **38.99 MB/s** | 26.38 MB/s | 18.52 MB/s |
+| Download while typing | **37.89 MB/s** | 26.50 MB/s | 18.76 MB/s |
+
+ET's download runs through a forward on its terminal's connection, to a port
+on the host serving random bytes. It swung from run to run, 12.8–24.1 MB/s
+alone. Raw output in [real-world-et-2026-11-06.txt](real-world-et-2026-11-06.txt).
+
+A separate test cut the link both ways for 15 s from the host
+([outage.py](outage.py)), 2 rounds each. Times are seconds after the link
+came back, good to a few tens of ms.
+
+| | osewa | ET |
+| --- | ---: | ---: |
+| First new output | 0.88, 0.89 | 2.18, 1.76 |
+| Last line of a command that wrote 22 MB in the outage | 1.04, 1.00 | 3.52, 3.34 |
+| Bytes the client read for that | 2 kB | 22.5 MB |
+| Last line of a command that wrote 240 MB | 36.0, 36.3 | 50.0, 52.2 |
+| Bytes the client read for that | 1.1 MB | 241 MB |
+
+The reader drained its terminal as fast as it could, so a real terminal
+drawing ET's replay would take longer.

@@ -1,0 +1,61 @@
+---
+import Docs from "../../layouts/Docs.astro";
+---
+<Docs slug="vs-ssh" description="osewa compared with ssh: what happens when the network changes, echo under load, connect time, and what ssh still does better.">
+<p class="lede">ssh is on every host and does far more than open a shell. osewa does one part of its job, the long interactive session, and is built for the network dropping out from under it. You still need ssh once, to install osewa.</p>
+
+<h2>The main difference</h2>
+<p>An ssh session is its TCP connection. When your laptop sleeps or changes network, the connection dies and takes the session with it, unless you run tmux or screen on the host. An osewa session is a process on the host. Connections come and go, and the client redials and resumes by itself.</p>
+
+<h2>At a glance</h2>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa</th><th>ssh</th></tr></thead>
+  <tbody>
+    <tr><td>Transport</td><td>QUIC, falling back to TLS WebSocket over TCP</td><td>TCP</td></tr>
+    <tr><td>Sleep or IP change</td><td>Resumes by itself</td><td>Session dies</td></tr>
+    <tr><td>Session lives</td><td>On the host, in its own process</td><td>In the connection</td></tr>
+    <tr><td>Local echo prediction</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Port forwards</td><td>Local, like <code>-L</code></td><td>Local, remote, SOCKS</td></tr>
+    <tr><td>Commands without a terminal</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Agent and X11 forwarding</td><td>No</td><td>Yes</td></tr>
+    <tr><td>File transfer</td><td>Through <code>osewa exec</code> pipes</td><td>scp, sftp</td></tr>
+    <tr><td>Login</td><td>Ed25519 device key, pinned server key</td><td>Keys, passwords, certificates, 2FA and more</td></tr>
+    <tr><td>On the host</td><td>osewa, on port 7322 (TCP and UDP)</td><td>Already there, usually</td></tr>
+    <tr><td>Platforms</td><td>Linux and macOS</td><td>Nearly everything</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Measured</h2>
+<p>Medians of 5 runs on the same path in the same session, from a Mac in Thailand to a Mac mini in Tokyo over Tailscale, about 125 ms round trip. osewa is over QUIC.</p>
+<div class="tbl"><table>
+  <thead><tr><th></th><th>osewa</th><th>ssh</th></tr></thead>
+  <tbody>
+    <tr><td>Connect and run a command</td><td>387 ms</td><td>1,627 ms</td></tr>
+    <tr><td>Echo, idle</td><td>126 ms</td><td>136 ms</td></tr>
+    <tr><td>Echo during a download</td><td>129 ms</td><td>178 ms</td></tr>
+    <tr><td>Download alone</td><td>9.86 MB/s</td><td>9.82 MB/s</td></tr>
+    <tr><td>Download while typing</td><td>9.82 MB/s</td><td>10.87 MB/s</td></tr>
+  </tbody>
+</table></div>
+<p>The gap grows on worse links. On a shaped cellular link with a deep buffer, keys echoed in 138 ms under osewa and 1,714 ms under ssh during a download. On a 1 Mbit/s link with 1% loss, ssh showed no echo within 15 seconds. Part of that is a trade: while you type, osewa leaves room in the queue, so ssh's download kept about 1 MB/s more in the run above.</p>
+<p>osewa also costs more host CPU on steady output, because it parses everything to keep the real screen: 302 ms per MB against ssh's 66 ms on a log tail. Idle, it uses less memory on the host (14.3 MB against 27.4 MB). All of it, with the method, is in <a href="/paper">the paper</a> and the <a href="https://github.com/rjyo/osewa/blob/main/bench/RESULTS.md">benchmark results</a>.</p>
+
+<h2>Where ssh is the better choice</h2>
+<ul>
+  <li>You need agent forwarding, X11, remote or SOCKS forwards, scp or sftp.</li>
+  <li>You can't open another port on the host, or install anything on it.</li>
+  <li>You need Windows, or a host that isn't Linux or macOS.</li>
+  <li>Your login needs passwords, certificates or 2FA. osewa only has device keys.</li>
+  <li>You leave sessions alone for days. An osewa session ends after 24 hours with nobody attached and no output; tmux on the host keeps it.</li>
+  <li>Audits matter. OpenSSH has decades of them and osewa has none yet. osewa's device key is a plain file (mode 0600), not behind a passphrase or an agent.</li>
+</ul>
+
+<h2>Where osewa is the better choice</h2>
+<ul>
+  <li>You work from a laptop or phone that sleeps and changes network.</li>
+  <li>A long job or coding agent should keep running and stay reachable, without setting up tmux.</li>
+  <li>You type on a slow or busy link, and a download shouldn't hold your keys back.</li>
+  <li>Several devices should see the same session.</li>
+</ul>
+<p>They work side by side: <code>osewa login</code> uses ssh once, and a host behind a bastion can be <a href="/docs/install">reached through ssh</a>.</p>
+</Docs>
