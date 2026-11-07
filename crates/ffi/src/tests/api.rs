@@ -142,7 +142,9 @@ fn pause_and_wake() {
 }
 
 /// redraw repaints everything for a new view: a fresh terminal fed only
-/// what came after it shows the screen.
+/// what came after it shows the screen. The repaint is one synchronized
+/// update, so the view shows it at once rather than scrolling through the
+/// history while it parses.
 #[test]
 fn redraw_repaints() {
     let host = Host::new();
@@ -153,8 +155,12 @@ fn redraw_repaints() {
     r.wait_screen("before\n");
     std::thread::sleep(Duration::from_millis(100));
     *r.term.lock().unwrap() = Terminal::new(80, 24, Options::default()).unwrap();
+    let mark = r.out.lock().unwrap().len();
     unsafe { osewa_redraw(h) };
     r.wait_screen("before\n");
+    let out = String::from_utf8_lossy(&r.out.lock().unwrap()[mark..]).into_owned();
+    assert!(out.starts_with("\x1b[?2026h"), "redraw not synchronized: {out:?}");
+    assert!(out.contains("\x1b[?2026l"), "synchronized redraw never ends: {out:?}");
     unsafe { osewa_close(h) };
 }
 

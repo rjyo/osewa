@@ -95,6 +95,10 @@ pub const NOTICE_EVERY: Duration = Duration::from_secs(1);
 /// How long after a keystroke status notices wait.
 const TYPING_QUIET: Duration = Duration::from_secs(2);
 
+/// Synchronized output (mode 2026) around a redraw.
+const SYNC_BEGIN: &[u8] = b"\x1b[?2026h";
+const SYNC_END: &[u8] = b"\x1b[?2026l";
+
 /// Takes ownership when typed by a viewer. A viewer's keys are dropped
 /// anyway, so it needs no escape; the owner's Ctrl-T reaches the program.
 /// It is this one byte because a viewer's terminal stays out of the
@@ -245,6 +249,22 @@ impl Ui {
         self.buf.extend_from_slice(b);
     }
 
+    /// Opens a synchronized update (mode 2026) around a redraw, so the local
+    /// terminal shows it at once instead of rendering while it parses: a
+    /// redraw with a long scrollback would otherwise show the screen
+    /// scrolling down from the top.
+    fn sync_begin(&mut self) {
+        self.write(SYNC_BEGIN);
+    }
+
+    /// Ends the synchronized update, unless the remote program has one open
+    /// (the redraw set it from the mirror): its own end comes with its frame.
+    fn sync_end(&mut self, t: &Terminal) {
+        if !t.mode(2026, false) {
+            self.write(SYNC_END);
+        }
+    }
+
     /// Writes out what was drawn since the last flush.
     pub fn flush(&mut self) {
         if !self.buf.is_empty() {
@@ -264,6 +284,7 @@ impl Ui {
         // echo of what was typed shows up in one of them.
         self.repaint_later = false;
         self.displaced = false;
+        self.sync_begin();
         if !self.drawn {
             self.drawn = true;
             self.write(&attach_redraw(t));
@@ -281,6 +302,7 @@ impl Ui {
             let draw = images_draw(t, &mut self.sent);
             self.write(&draw);
         }
+        self.sync_end(t);
         self.flush();
     }
 
@@ -288,6 +310,7 @@ impl Ui {
     /// was replaced. Unlike ready, the remote stream goes on from where it
     /// is: the filter keeps what it holds.
     pub fn redraw(&mut self, t: &Terminal) {
+        self.sync_begin();
         self.write(&attach_redraw(t));
         self.displaced = false;
         (self.real_x, self.real_y) = t.cursor();
@@ -303,6 +326,7 @@ impl Ui {
             self.write(&draw);
         }
         self.paint_buffered(t);
+        self.sync_end(t);
         self.flush();
     }
 
