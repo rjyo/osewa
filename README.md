@@ -2,6 +2,8 @@
 
 **The terminal protocol that never drops.**
 
+[Watch the 2-minute intro](https://www.youtube.com/watch?v=3oR_9WRLMgM)
+
 osewa runs your remote shell over a TCP/UDP hybrid: QUIC when UDP gets
 through, TLS WebSocket when it doesn't. The session lives on the host, not
 in the connection, so a dead link is just a reconnect, and your shell,

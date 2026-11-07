@@ -4,7 +4,7 @@
 interface Props { page?: [string, string][] }
 const { page } = Astro.props;
 const columns = [
-  { title: "Project", links: [["GitHub ↗", "https://github.com/rjyo/osewa"], ["License", "https://github.com/rjyo/osewa/blob/main/LICENSE"], ["The paper", "/paper"], ["Roadmap", "/paper#roadmap"], ["Moshi app ↗", "https://getmoshi.app"]] },
+  { title: "Project", links: [["GitHub ↗", "https://github.com/rjyo/osewa"], ["2-min intro ↗", "https://www.youtube.com/watch?v=3oR_9WRLMgM"], ["License", "https://github.com/rjyo/osewa/blob/main/LICENSE"], ["The paper", "/paper"], ["Roadmap", "/paper#roadmap"], ["Moshi app ↗", "https://getmoshi.app"]] },
   { title: "Docs", links: [["Install", "/docs/install"], ["Command line", "/docs/cli"], ["Wire protocol ↗", "https://github.com/rjyo/osewa/blob/main/docs/PROTOCOL.md"], ["Benchmark results ↗", "https://github.com/rjyo/osewa/blob/main/bench/RESULTS.md"]] },
   { title: "Compare", links: [["vs ssh", "/docs/vs-ssh"], ["vs mosh", "/docs/vs-mosh"], ["vs Eternal Terminal", "/docs/vs-et"]] },
   ...(page ? [{ title: "This page", links: page }] : []),
