@@ -94,12 +94,16 @@ fn forward_echoes_and_survives_restart() {
     r.wait_state(CONNECTED);
     round_trip(p, b"again");
 
-    // Unforwarded, the port stops answering.
+    // Unforwarded, the port stops answering. Not "connect fails": under
+    // load macOS can complete a connect to the closing listener and reset
+    // it at once, which is no forward either.
     unsafe { osewa_link_unforward(l, p) };
-    assert!(
-        TcpStream::connect(("127.0.0.1", p)).is_err(),
-        "still listening"
-    );
+    let answers = TcpStream::connect(("127.0.0.1", p)).is_ok_and(|mut c| {
+        c.set_read_timeout(Some(WAIT)).unwrap();
+        let mut b = [0u8; 1];
+        c.write_all(b"x").is_ok() && c.shutdown(std::net::Shutdown::Write).is_ok() && matches!(c.read(&mut b), Ok(1))
+    });
+    assert!(!answers, "still forwarding");
 
     unsafe { osewa_link_close(l) };
     let calls = r.calls();
