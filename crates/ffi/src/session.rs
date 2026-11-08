@@ -159,6 +159,27 @@ enum Cmd {
     Send(Vec<u8>),
     Paste(String),
     Redraw,
+    RedrawSnapshot(SnapshotTarget),
+}
+
+/// Where osewa_redraw_snapshot hands the snapshot.
+pub type SnapshotFn = unsafe extern "C" fn(ctx: *mut c_void, bytes: *const u8, len: usize);
+
+/// osewa_redraw_snapshot's callback, called through the session's sink so
+/// it never runs once the session is quiesced.
+struct SnapshotTarget {
+    f: SnapshotFn,
+    ctx: *mut c_void,
+    sink: Arc<Sink>,
+}
+
+// The app owns ctx and keeps it valid until the session closes.
+unsafe impl Send for SnapshotTarget {}
+
+impl SnapshotTarget {
+    fn deliver(&self, b: &[u8]) {
+        self.sink.with(|_| unsafe { (self.f)(self.ctx, b.as_ptr(), b.len()) });
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -271,6 +292,10 @@ impl Handle {
 
     pub fn redraw(&self) {
         let _ = self.cmds.send(Cmd::Redraw);
+    }
+
+    pub fn redraw_snapshot(&self, f: SnapshotFn, ctx: *mut c_void) {
+        let _ = self.cmds.send(Cmd::RedrawSnapshot(SnapshotTarget { f, ctx, sink: self.sink.clone() }));
     }
 
     pub fn resize(&self, cols: u16, rows: u16, width: u32, height: u32) {
@@ -574,7 +599,7 @@ async fn input(cmds: &mut mpsc::UnboundedReceiver<Cmd>, s: &Session, a: &Attache
         let n = match &cmd {
             Cmd::Send(b) => b.len(),
             Cmd::Paste(t) => t.len(),
-            Cmd::Redraw => 0,
+            Cmd::Redraw | Cmd::RedrawSnapshot(_) => 0,
         };
         match cmd {
             Cmd::Send(b) => {
@@ -593,6 +618,7 @@ async fn input(cmds: &mut mpsc::UnboundedReceiver<Cmd>, s: &Session, a: &Attache
                 let _ = s.paste(&text);
             }
             Cmd::Redraw => a.redraw(),
+            Cmd::RedrawSnapshot(target) => a.redraw_snapshot(&mut |b| target.deliver(b)),
         }
         // Handed to the session, whose own count (unacked) takes over.
         backlog.unacked.store(s.pending_bytes(), Ordering::SeqCst);

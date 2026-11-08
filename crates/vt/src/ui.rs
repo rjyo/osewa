@@ -330,6 +330,40 @@ impl Ui {
         self.flush();
     }
 
+    /// Repaints a local terminal that was replaced by handing it the mirror
+    /// as a terminal snapshot (deliver), scrollback included, instead of
+    /// redrawing it as VT: a terminal that restores snapshots takes it in
+    /// one step, where a long scrollback redrawn as VT parses over many
+    /// frames. What the local terminal keeps apart from the mirror
+    /// (keyboard modes, pointer, colors, images, predictions) follows as VT,
+    /// as after redraw. False, with nothing written, when the mirror can't
+    /// be encoded: redraw instead.
+    pub fn redraw_snapshot(&mut self, t: &Terminal, deliver: &mut dyn FnMut(&[u8])) -> bool {
+        let Ok(snapshot) = t.snapshot() else { return false };
+        // Output drawn before the snapshot comes before it.
+        self.flush();
+        deliver(&snapshot);
+        self.displaced = false;
+        (self.real_x, self.real_y) = t.cursor();
+        self.pointer = "";
+        self.sync_pointer(t);
+        // The snapshot set the program's keyboard modes; the local terminal
+        // gets the ones it should have (they follow the owner) again.
+        self.sent_keys = None;
+        self.redrawn_keys(t);
+        let (colors, colored) = colors_redraw(t, self.colored);
+        self.colored = colored;
+        self.write(&colors);
+        if self.filter.graphics {
+            self.sent.clear();
+            let draw = images_draw(t, &mut self.sent);
+            self.write(&draw);
+        }
+        self.paint_buffered(t);
+        self.flush();
+        true
+    }
+
     /// After a redraw, which can switch the local screen under the modes
     /// and skip output that changed them.
     fn redrawn_keys(&mut self, t: &Terminal) {
@@ -823,6 +857,21 @@ impl Attached {
         self.m.view(|t| {
             if let Some(t) = t {
                 lock(&self.ui).redraw(t)
+            }
+        });
+    }
+
+    /// Repaints through a snapshot handed to deliver, in order with the
+    /// output (Ui::redraw_snapshot); as redraw when the mirror can't be
+    /// encoded. Nothing before the first snapshot of the attach: its own
+    /// draw comes then.
+    pub fn redraw_snapshot(&self, deliver: &mut dyn FnMut(&[u8])) {
+        self.m.view(|t| {
+            if let Some(t) = t {
+                let mut ui = lock(&self.ui);
+                if !ui.redraw_snapshot(t, deliver) {
+                    ui.redraw(t)
+                }
             }
         });
     }

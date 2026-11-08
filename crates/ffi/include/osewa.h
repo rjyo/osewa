@@ -77,6 +77,15 @@ int32_t osewa_paste(osewa_session *s, const char *utf8); /* as osewa_send */
 void osewa_resize(osewa_session *s, uint16_t cols, uint16_t rows, uint32_t width_px, uint32_t height_px);
 /* Repaint the whole screen through `output` (the app's view was recreated). */
 void osewa_redraw(osewa_session *s);
+/* As osewa_redraw, for a view that restores Ghostty terminal snapshots
+   (libghostty's snapshot format at the commit osewa pins): the screen and
+   its scrollback come as one snapshot through `snapshot`, called once on
+   osewa's thread in order with `output` (what came before it is replaced),
+   then the rest of the repaint follows through `output`. Falls back to
+   osewa_redraw's VT when the snapshot can't be encoded. Nothing comes
+   before the session's first repaint, which is drawn anyway. Bytes are
+   borrowed for the call only; ctx stays valid until the session closes. */
+void osewa_redraw_snapshot(osewa_session *s, void (*snapshot)(void *ctx, const uint8_t *bytes, size_t len), void *ctx);
 /* Wake/foreground hint: probe the link now instead of waiting for keepalive. */
 void osewa_network_changed(osewa_session *s);
 /* Background/hidden: close the connection and stop keepalive and redials

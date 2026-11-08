@@ -164,6 +164,41 @@ fn redraw_repaints() {
     unsafe { osewa_close(h) };
 }
 
+/// Takes osewa_redraw_snapshot's snapshot as a view that restores snapshots
+/// does: the restored terminal replaces the one output was going to.
+unsafe extern "C" fn on_snapshot(ctx: *mut c_void, b: *const u8, n: usize) {
+    let r = unsafe { &*(ctx as *const Rec) };
+    let b = unsafe { std::slice::from_raw_parts(b, n) };
+    let restored = osewa_ghostty::restore(b, osewa_ghostty::Callbacks::default()).expect("snapshot decodes");
+    *r.term.lock().unwrap() = restored;
+    r.out.lock().unwrap().extend_from_slice(b"<snapshot>");
+}
+
+/// redraw_snapshot hands a new view the whole terminal, scrollback
+/// included, as one snapshot in order with the output: a fresh terminal
+/// restored from it and fed only what came after shows both.
+#[test]
+fn redraw_snapshot_restores_screen_and_history() {
+    let host = Host::new();
+    let r = Rec::new(80, 24);
+    let h = open(&host.open_opts(), &r);
+    r.wait_state(CONNECTED);
+    send(h, "seq 1 60; echo done-$((40+2))\r");
+    r.wait_screen("done-42");
+    std::thread::sleep(Duration::from_millis(100));
+    *r.term.lock().unwrap() = Terminal::new(80, 24, Options::default()).unwrap();
+    let mark = r.out.lock().unwrap().len();
+    unsafe { osewa_redraw_snapshot(h, Some(on_snapshot), Arc::as_ptr(&r) as *mut c_void) };
+    eventually("the snapshot", || r.out.lock().unwrap()[mark..].starts_with(b"<snapshot>"), String::new);
+    r.wait_screen("done-42");
+    let term = r.term.lock().unwrap();
+    assert!(term.scrollback_rows() > 0, "no history restored:\n{}", term.text());
+    drop(term);
+    send(h, "echo after-$((40+3))\r");
+    r.wait_screen("after-43");
+    unsafe { osewa_close(h) };
+}
+
 /// The app's appearance reaches programs that ask for it: OSC 11 is
 /// answered with its background.
 #[test]

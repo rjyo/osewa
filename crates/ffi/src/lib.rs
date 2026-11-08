@@ -14,7 +14,7 @@
 //! callbacks are safe while it closes: close waits a running callback out
 //! before freeing (osewa.h).
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
@@ -157,6 +157,17 @@ pub unsafe extern "C" fn osewa_redraw(s: *mut OsewaSession) {
     guard((), || {
         if let Some(s) = unsafe { s.as_ref() } {
             s.0.redraw();
+        }
+    })
+}
+
+/// # Safety
+/// s is from osewa_open and not yet closed; ctx stays valid until it is.
+#[no_mangle]
+pub unsafe extern "C" fn osewa_redraw_snapshot(s: *mut OsewaSession, f: Option<session::SnapshotFn>, ctx: *mut c_void) {
+    guard((), || {
+        if let (Some(s), Some(f)) = (unsafe { s.as_ref() }, f) {
+            s.0.redraw_snapshot(f, ctx);
         }
     })
 }
