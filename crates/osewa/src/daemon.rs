@@ -34,6 +34,60 @@ pub(crate) fn log_path() -> PathBuf {
     state_dir().join("server.log")
 }
 
+/// Makes the state dir private, tightening one of ours that isn't: it holds
+/// only the log and the update cache, never sockets or keys, so a wide mode
+/// there is a leftover, not a sign of tampering. launchd makes the dir 0744
+/// when it creates it for the agent's log, and every restart after an
+/// update failed on that until the user ran chmod. Returns the dir open, so
+/// what's checked, tightened and opened in it is the dir itself even if
+/// someone who could write to a wide one swaps the path.
+pub(crate) fn ensure_state_dir() -> std::io::Result<File> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    let dir = state_dir();
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    let not_private = |msg: String| std::io::Error::new(std::io::ErrorKind::PermissionDenied, msg);
+    let f = OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&dir).map_err(|e| {
+        if e.raw_os_error() == Some(libc::ELOOP) || e.raw_os_error() == Some(libc::ENOTDIR) {
+            not_private(format!("paths: {} is not a directory", dir.display()))
+        } else {
+            e
+        }
+    })?;
+    let st = f.metadata()?;
+    let uid = unsafe { libc::getuid() };
+    if st.uid() != uid {
+        return Err(not_private(format!("paths: {} is owned by uid {}, not {uid}", dir.display(), st.uid())));
+    }
+    if st.mode() & 0o777 != 0o700 {
+        f.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(f)
+}
+
+/// Opens server.log for appending, private, in a private state dir. A log
+/// launchd created is 0644; the mode at open doesn't change an existing one.
+/// Opened in the dir it checked, never through a symlink: while the dir was
+/// wide, anyone could have left one there, or a FIFO, which O_NONBLOCK
+/// turns from a hang into an error (on a regular file it changes nothing).
+pub(crate) fn open_log() -> std::io::Result<File> {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let dir = ensure_state_dir()?;
+    let fd = unsafe {
+        libc::openat(dir.as_raw_fd(), c"server.log".as_ptr(), libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC, 0o600 as libc::c_uint)
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let log = unsafe { File::from_raw_fd(fd) };
+    let st = log.metadata()?;
+    if !st.is_file() || st.uid() != unsafe { libc::getuid() } {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{} is not a file of ours", log_path().display())));
+    }
+    log.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(log)
+}
+
 /// `osewa server [--daemon] [server flags]`.
 pub(crate) fn server_main(args: &[String], mut stdout: Out, mut stderr: Out) -> i32 {
     // Before anything else (the running server, the lock): a test's server
@@ -147,10 +201,7 @@ pub(crate) fn start_daemon(exe: &Path, args: &[String], stdout: &mut impl Write,
         let _ = writeln!(stderr, "osewa server: {e}");
         1
     };
-    if let Err(e) = osewa_paths::ensure(&state_dir()) {
-        return fail(stderr, &e);
-    }
-    let log = match OpenOptions::new().append(true).create(true).mode(0o600).open(log_path()) {
+    let log = match open_log() {
         Ok(f) => f,
         Err(e) => return fail(stderr, &e),
     };

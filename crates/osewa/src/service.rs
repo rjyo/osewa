@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::cli::Out;
-use crate::daemon::{log_path, pid_path, running_server, start_daemon, state_dir, DAEMON_WAIT};
+use crate::daemon::{log_path, open_log, pid_path, running_server, start_daemon, DAEMON_WAIT};
 use crate::vtfilter::printable_lines;
 
 const UNIT_NAME: &str = "osewa.service";
@@ -147,6 +147,9 @@ impl Service {
 </plist>
 "#
         );
+        // Made here, private: launchd would otherwise create the log's dir
+        // 0744 and the log 0644 the first time it starts the agent.
+        open_log().map_err(|e| format!("{}: {e}", log_path().display()))?;
         let path = self.plist_path();
         write_private(&path, &plist)?;
         // The GUI domain exists when the user is logged in at the Mac; over
@@ -227,10 +230,8 @@ impl Service {
     /// end with the server it stops, as the server signals its execs'
     /// process groups as it closes, before it could start it again.
     fn restart_detached(&mut self) -> Result<(), String> {
-        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::process::CommandExt;
-        osewa_paths::ensure(&state_dir()).map_err(|e| e.to_string())?;
-        let log = std::fs::OpenOptions::new().append(true).create(true).mode(0o600).open(log_path()).map_err(|e| e.to_string())?;
+        let log = open_log().map_err(|e| e.to_string())?;
         let err = log.try_clone().map_err(|e| e.to_string())?;
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", "sleep 1; exec \"$0\" service restart"]).arg(&self.exe).stdout(log).stderr(err);

@@ -206,6 +206,62 @@ fn service_launchd() {
     assert!(!path.exists(), "plist left behind");
 }
 
+/// The agent's log dir and log are made private before launchd starts it
+/// (launchd makes them 0744 and 0644), and ones it already made are
+/// tightened, as any update's restart (open_log) does: a wide state dir used
+/// to fail that restart.
+#[test]
+fn service_launchd_private_log() {
+    use std::os::unix::fs::PermissionsExt;
+    let (mut keep, mut g) = (Vec::new(), EnvGuard::new());
+    g.host_dirs(&mut keep);
+    let dir = crate::daemon::state_dir();
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let home = TempDir::new();
+    let mut sv = service("darwin", home.path(), "/x", Buf::default(), Arc::default(), never);
+    sv.install(&[]).unwrap();
+    assert_eq!((mode(&dir), mode(&log_path())), (0o700, 0o600), "fresh install");
+
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o744)).unwrap();
+    std::fs::set_permissions(log_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(osewa_paths::ensure(&dir).is_err(), "0744 passed the strict check");
+    sv.install(&[]).unwrap();
+    assert_eq!((mode(&dir), mode(&log_path())), (0o700, 0o600), "reinstall over launchd's modes");
+
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o744)).unwrap();
+    std::fs::set_permissions(log_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    drop(crate::daemon::open_log().unwrap());
+    assert_eq!((mode(&dir), mode(&log_path())), (0o700, 0o600), "restart over launchd's modes");
+
+    // A log someone left as a symlink while the dir was wide isn't followed.
+    let target = TempDir::new();
+    let victim = target.path().join("victim");
+    std::fs::write(&victim, "").unwrap();
+    std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::remove_file(log_path()).unwrap();
+    std::os::unix::fs::symlink(&victim, log_path()).unwrap();
+    assert!(crate::daemon::open_log().is_err(), "followed a symlinked log");
+    assert_eq!(mode(&victim), 0o644, "chmodded through the symlink");
+    std::fs::remove_file(log_path()).unwrap();
+
+    // A FIFO left as the log fails instead of hanging the open.
+    let fifo = std::ffi::CString::new(log_path().as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    assert!(crate::daemon::open_log().is_err(), "opened a FIFO as the log");
+    std::fs::remove_file(log_path()).unwrap();
+
+    // A dir of ours missing its owner bits is made usable again.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    drop(crate::daemon::open_log().unwrap());
+    assert_eq!(mode(&dir), 0o700, "0500 state dir");
+
+    // Only a real dir is tightened: a symlink in its place still fails.
+    std::fs::remove_dir_all(&dir).unwrap();
+    let real = TempDir::new();
+    std::os::unix::fs::symlink(real.path(), &dir).unwrap();
+    assert!(crate::daemon::open_log().is_err(), "followed a symlinked state dir");
+}
+
 #[test]
 fn service_errors() {
     let (mut keep, mut g) = (Vec::new(), EnvGuard::new());

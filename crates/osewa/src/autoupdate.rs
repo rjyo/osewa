@@ -145,6 +145,7 @@ pub(crate) fn load_cache() -> Cache {
 
 fn save_cache(c: &Cache) -> io::Result<()> {
     let v = serde_json::to_value(c).map_err(io::Error::other)?;
+    crate::daemon::ensure_state_dir()?;
     write_json(&cache_path(), v.as_object().expect("Cache is an object"))
 }
 
