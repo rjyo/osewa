@@ -59,6 +59,13 @@ fn reports_leave_typing() {
         (&["\x1b]10;rgb:f/80/fff\x07\x1b]12;rgb:0/0/0\x07"], "", &[Foreground([0xff, 0x80, 0xff]), Cursor([0, 0, 0])]),
         (&["\x1b]4;1;rgb:cc", "cc/0000/0000\x1b", "\\\x1b]4;255;rgb:1/2/3\x1b\\"], "", &[Palette(1, [0xcc, 0, 0]), Palette(255, [0x11, 0x22, 0x33])]),
         (&["\x1b]1", "1;rgb:0/0/0\x07"], "", &[Background([0, 0, 0])]),
+        // #7: a burst of replies cut at a reply's ESC, ESC ] or ESC [.
+        (&["\x1b]4;35;rgb:0/0/0\x1b\\\x1b", "]4;36;rgb:0000/afaf/8787\x1b\\"], "", &[Palette(35, [0, 0, 0]), Palette(36, [0, 0xaf, 0x87])]),
+        (&["\x1b[?997;1n\x1b]", "11;rgb:0/0/0\x07"], "", &[Scheme(true), Background([0, 0, 0])]),
+        (&["\x1b]10;rgb:0/0/0\x07\x1b[", "?997;2n"], "", &[Foreground([0, 0, 0]), Scheme(false)]),
+        // A key after the burst still arrives, with the next read.
+        (&["\x1b]10;rgb:0/0/0\x07\x1b", "x"], "\x1bx", &[Foreground([0, 0, 0])]),
+        (&["\x1b]10;rgb:0/0/0\x07a\x1b"], "a\x1b", &[Foreground([0, 0, 0])]),
         // Keys: a lone ESC, Alt-], arrows and other reports pass, now.
         (&["\x1b", "x"], "\x1bx", &[]),
         (&["\x1b]", "x"], "\x1b]x", &[]),

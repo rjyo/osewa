@@ -257,7 +257,10 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
 
 /// Takes the local terminal's reports out of what is typed. A report cut
 /// by a read is held for the next one, but only from "ESC [ ?" or "ESC ]"
-/// and a digit on: a lone ESC is a key that must not wait.
+/// and a digit on: a lone ESC is a key that must not wait. Except right
+/// after a report: a burst of replies can be cut anywhere (a macOS pty
+/// read stops near 1 KiB, and tmux's fixed-length replies put that on an
+/// ESC), and a key never trails a reply in the same read.
 #[derive(Default)]
 pub(crate) struct Reports {
     held: Vec<u8>,
@@ -277,19 +280,27 @@ impl Reports {
         let mut data = std::mem::take(&mut self.held);
         data.extend_from_slice(input);
         let (mut out, mut schemes) = (Vec::with_capacity(data.len()), Vec::new());
+        let mut after_report = false;
         let mut i = 0;
         while i < data.len() {
             let rest = &data[i..];
             if rest[0] != 0x1b {
                 out.push(rest[0]);
                 i += 1;
+                after_report = false;
                 continue;
             }
+            if after_report && rest.len() <= 2 {
+                self.held = rest.to_vec();
+                break;
+            }
+            after_report = false;
             if rest.get(1) == Some(&b']') {
                 match color_report(rest) {
                     ColorReport::Done(len, r) => {
                         schemes.extend(r);
                         i += len;
+                        after_report = true;
                     }
                     ColorReport::Partial => {
                         self.held = rest.to_vec();
@@ -326,6 +337,7 @@ impl Reports {
                         _ => {}
                     }
                     i += n + digits + 1;
+                    after_report = true;
                 }
                 None if digits <= 3 => {
                     self.held = rest.to_vec();
