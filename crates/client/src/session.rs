@@ -93,9 +93,9 @@ pub struct AttachOptions {
     /// unknown.
     pub width: i64,
     pub height: i64,
-    /// Claims ownership on attach. Resume never claims it: another client
-    /// may have taken over meanwhile, and the holder keeps our ownership
-    /// through its grace period anyway.
+    /// Claims ownership on attach. Resume never takes it from another
+    /// client, who may have taken over meanwhile; it only claims it back
+    /// when it was ours and the holder let it lapse.
     pub own: bool,
     /// If set, gets the stream first (see [`Renderer`]).
     pub renderer: Option<Box<dyn Renderer>>,
@@ -294,7 +294,7 @@ impl SessionInner {
 
     /// Attaches on c, resuming from the last applied position when there is
     /// a whole screen to resume onto.
-    pub(crate) async fn attach(&self, c: &Conn, own: bool) -> Result<()> {
+    pub(crate) async fn attach(&self, c: &Conn, own: bool, reclaim: bool) -> Result<()> {
         let stream = c.add_stream(self.arc())?;
         let req = {
             let st = self.lock();
@@ -307,6 +307,7 @@ impl SessionInner {
                 width: st.opt.width,
                 height: st.opt.height,
                 own,
+                reclaim,
                 epoch: st.epoch.clone(),
                 // Without a whole screen there is nothing to resume onto;
                 // ask for a snapshot.
@@ -858,22 +859,23 @@ impl Session {
 
     /// Re-attaches on c from the last applied position, falling back to a
     /// fresh snapshot when the holder no longer has it, and resends unacked
-    /// input. It never claims ownership. It fails with [`Error::Ended`]
-    /// when the session is gone.
+    /// input. It claims ownership only back, and only from nobody: when we
+    /// owned the session last and it lapsed while we were gone. It fails
+    /// with [`Error::Ended`] when the session is gone.
     pub async fn resume(&self, c: &Conn) -> Result<()> {
-        let (old, old_stream) = {
+        let (old, old_stream, ours) = {
             let mut st = self.0.lock();
             if st.ended {
                 return Err(Error::Ended(None));
             }
             let old = st.conn.clone();
             SessionInner::detach_locked(&mut st);
-            (old, st.stream)
+            (old, st.stream, !st.owner.is_empty() && st.owner == c.client_id())
         };
         if let Some(old) = old {
             old.drop_stream(old_stream);
         }
-        self.0.attach(c, false).await
+        self.0.attach(c, false, ours).await
     }
 
     /// Waits for a sign that the session should be resumed on a new Conn

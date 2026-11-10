@@ -95,6 +95,27 @@ fn resume_does_not_take_ownership() {
     assert_eq!(f.with(&id, |fs| fs.owner.clone()), "b", "owner after a's resume");
 }
 
+/// #8: back after the holder let our ownership lapse, we own it again
+/// instead of watching a session nobody can type into.
+#[test]
+fn resume_reclaims_lapsed_ownership() {
+    let f = Fake::new();
+    let id = f.create(40, 10);
+    let a = attach(&f.dial("a"), &id, own());
+    let b = attach(&f.dial("b"), &id, Default::default());
+    f.drop_all();
+    wait_for("lost", a.lost());
+    f.with(&id, |fs| fs.owner.clear());
+
+    // A viewer coming back doesn't claim it.
+    wait_for("lost", b.lost());
+    run(b.resume(&f.dial("b"))).unwrap();
+    assert_eq!(f.with(&id, |fs| fs.owner.clone()), "", "owner after b's resume");
+    run(a.resume(&f.dial("a"))).unwrap();
+    assert_eq!(f.with(&id, |fs| fs.owner.clone()), "a", "owner after a's resume");
+    assert_eq!(a.owner(), "a");
+}
+
 #[test]
 fn abandoned_attach_is_detached() {
     let f = Fake::new();

@@ -641,6 +641,30 @@ fn ownership_lapse() {
     assert_eq!(watch.info().owner, "");
 }
 
+/// #8: a resume after the grace claims an ownerless session back, but
+/// never takes one another client owns.
+#[test]
+fn reclaim_only_from_nobody() {
+    let h = start(Config { owner_grace: Duration::from_millis(100), ..cfg(sh("sleep 30")) });
+    let mut watch = h.dial("watcher");
+    watch.attach(wire::Request::default());
+    let reclaim = || wire::Request { reclaim: true, ..Default::default() };
+
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.close();
+    watch.wait_for("lapse", |c| c.has_event(|e| e.kind == wire::EVENT_OWNER && e.owner.is_empty()));
+    let mut a2 = h.dial("a");
+    a2.attach(reclaim());
+    assert_eq!(watch.info().owner, "a", "reclaim of an ownerless session");
+
+    let mut b = h.dial("b");
+    b.attach(own());
+    let mut a3 = h.dial("a");
+    a3.attach(reclaim());
+    assert_eq!(watch.info().owner, "b", "reclaim took a session someone owns");
+}
+
 #[test]
 fn events() {
     let dir = TempDir::new();
