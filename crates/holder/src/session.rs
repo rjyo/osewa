@@ -761,7 +761,7 @@ impl Session {
         let st = Stream::new(core.next_uid, req.stream, req.cols, req.rows, width, height);
         let client = c.client.clone();
         if !self.core.exited {
-            if req.own {
+            if req.own || (req.reclaim && self.core.owner.is_empty()) {
                 self.set_owner(&client);
             }
             if !client.is_empty() && client == self.core.owner {

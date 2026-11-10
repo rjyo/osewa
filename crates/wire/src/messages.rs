@@ -114,6 +114,11 @@ pub struct Request {
     pub height: i64,
     #[serde(default, skip_serializing_if = "is_false")]
     pub own: bool,
+    /// session.attach: claims ownership only if nobody owns the session,
+    /// so a resume after the grace can't take it from a client that took
+    /// over meanwhile.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reclaim: bool,
     /// session.color_scheme: "light" or "dark"
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color_scheme: String,

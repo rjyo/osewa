@@ -988,7 +988,7 @@ impl Conn {
             }
         }
         let mut guard = CloseOnDrop(Some(s.clone()));
-        s.0.attach(self, own).await?;
+        s.0.attach(self, own, false).await?;
         guard.0 = None;
         Ok(s)
     }

@@ -187,7 +187,7 @@ Methods (REQUEST `method`):
 | --- | --- | --- |
 | `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?,"tag"?,"creator"?}]}` |
 | `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`?, `tag`? | `{"session_id","reused"?}` |
-| `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
+| `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `reclaim`?, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
 | `session.detach` | `stream` | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
 | `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |
@@ -256,7 +256,7 @@ the server or an enrolled device, for tools on the host acting for one
 
 `argv` defaults to the account's login shell from passwd (not the server's
 `$SHELL`), run with `-l`. `own: true` claims ownership on
-attach.
+attach; `reclaim: true` claims it only when the session has no owner.
 
 ## Output log
 
@@ -404,7 +404,8 @@ INPUT payloads:
 
 Each session has at most one owner, a `client_id`. The PTY takes the owner's
 size. `session.own` takes ownership. Ownership lapses 30 s after the owner's
-last stream closes.
+last stream closes. A client resuming a session it owned last attaches with
+`reclaim`, so it owns it again if nobody took it meanwhile.
 
 ## Events
 

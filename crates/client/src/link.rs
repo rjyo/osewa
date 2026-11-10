@@ -228,7 +228,7 @@ impl Link {
             }
         }
         let mut guard = CloseOnDrop(Some(s.clone()));
-        s.0.attach(&c, own).await?;
+        s.0.attach(&c, own, false).await?;
         // Registered only once attached, or the run loop could resume it
         // alongside this first attach.
         {

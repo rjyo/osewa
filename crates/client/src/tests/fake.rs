@@ -1013,7 +1013,7 @@ fn attach(st: &mut FState, cid: u64, req: wire::Request) {
     }
     let client = st.conns[&cid].client_id.clone();
     let s = st.sessions.get_mut(&req.session).unwrap();
-    if req.own {
+    if req.own || (req.reclaim && s.owner.is_empty()) {
         s.owner = client.clone();
     }
     r.epoch = s.epoch.clone();

@@ -38,7 +38,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
 <h2>Owners and viewers</h2>
 <p>Any number of devices, or windows, can attach to one session. One is the <strong>owner</strong>: its keys reach the program and its window size is the session's size. The rest are <strong>viewers</strong>: they see the screen live, and what they type is dropped. A viewer sees:</p>
 <pre><code>viewing: laptop owns this session; Ctrl-T takes over</code></pre>
-<p>You become the owner when the session has none, when you already own it, or when you attach with <code>--take</code>. A viewer takes over with Ctrl-T, or <code>~t</code>. If the owner goes away, ownership lapses 30 seconds after its last connection drops, so a quick reconnect keeps it.</p>
+<p>You become the owner when the session has none, when you already own it, or when you attach with <code>--take</code>. A viewer takes over with Ctrl-T, or <code>~t</code>. If the owner goes away, ownership lapses 30 seconds after its last connection drops. When it reconnects, it owns the session again unless another client took over meanwhile.</p>
 
 <h2>Listing sessions</h2>
 <pre><code>{ls}</code></pre>
