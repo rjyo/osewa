@@ -122,6 +122,8 @@ impl Service {
     fn install_launchd(&mut self, argv: &[String]) -> Result<(), String> {
         let items: String = argv.iter().map(|a| format!("\t\t<string>{}</string>\n", xml_escape(a))).collect();
         let log = xml_escape(&log_path().to_string_lossy());
+        // ProcessType Interactive: launchd's default tier throttles the
+        // server, and the shells it starts, below ones started over sshd.
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -139,6 +141,8 @@ impl Service {
 		<key>SuccessfulExit</key>
 		<false/>
 	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>StandardOutPath</key>
 	<string>{log}</string>
 	<key>StandardErrorPath</key>

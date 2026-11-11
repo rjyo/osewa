@@ -160,7 +160,8 @@ fn service_launchd() {
     let path = home.path().join("Library/LaunchAgents/dev.osewa.server.plist");
     let b = std::fs::read_to_string(&path).unwrap();
     let log = log_path().display().to_string();
-    // Byte for byte the v0 agent, so a reinstall by any osewa is a no-op.
+    // The v0 agent plus ProcessType: without it launchd runs the server and
+    // its shells in the throttled default tier.
     let want = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -182,6 +183,8 @@ fn service_launchd() {
 		<key>SuccessfulExit</key>
 		<false/>
 	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>StandardOutPath</key>
 	<string>{log}</string>
 	<key>StandardErrorPath</key>
