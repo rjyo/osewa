@@ -19,6 +19,7 @@
 mod frames;
 #[cfg(test)]
 mod tests;
+mod udp;
 
 use std::collections::HashMap;
 use std::io;
@@ -167,8 +168,8 @@ pub fn client_config(mut tls: rustls::ClientConfig, cc: Congestion) -> io::Resul
 /// called within a tokio runtime, which drives it.
 pub fn endpoint(sock: UdpSocket, server: Option<quinn::ServerConfig>) -> io::Result<Endpoint> {
     grow_buffers(&sock);
-    let rt = quinn::default_runtime().ok_or_else(|| io::Error::other("quic: no async runtime"))?;
-    Endpoint::new(EndpointConfig::default(), server, sock, rt)
+    tokio::runtime::Handle::try_current().map_err(|_| io::Error::other("quic: no async runtime"))?;
+    Endpoint::new(EndpointConfig::default(), server, sock, Arc::new(udp::Tokio))
 }
 
 /// Raises the socket's buffers toward SOCKET_BUFFER; a
