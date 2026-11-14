@@ -9,6 +9,7 @@ mod channels;
 mod cli;
 mod commands;
 mod daemon;
+mod port;
 mod service;
 mod tty;
 mod ui;

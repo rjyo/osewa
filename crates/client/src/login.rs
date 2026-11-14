@@ -150,6 +150,17 @@ pub async fn login(mut o: Options) -> Result<Outcome, Error> {
             }
         }
         if let Err(e) = checked {
+            let port = o.addr.rsplit_once(':').map_or("", |(_, p)| p);
+            // The port reached a server, just not the one enrolled with: on
+            // a host with several users, most likely another user's.
+            if e.to_string().contains("does not match pin") {
+                return Err(Error::Other(format!(
+                    "a different osewa server answers at {1} (another user's on {0}?), and this user's \
+                     may have failed to start there; update osewa on {0} and log in again, which gives \
+                     this user's server a free port, or log in with --addr set to it; the host was not saved",
+                    o.target, o.addr
+                )));
+            }
             if o.via_ssh || proxied {
                 return Err(Error::Other(format!(
                     "the osewa server on {} is running, but it can't be reached through ssh ({e}): connecting runs \
@@ -158,7 +169,6 @@ pub async fn login(mut o: Options) -> Result<Outcome, Error> {
                     o.target
                 )));
             }
-            let port = o.addr.rsplit_once(':').map_or("", |(_, p)| p);
             return Err(Error::Other(format!(
                 "the osewa server on {} is running, but {} can't be reached from here ({e}): \
                  open TCP port {port} to this device (the host's firewall, a cloud security group), \
@@ -555,6 +565,10 @@ mod tests {
             "{err}"
         );
         assert!(hosts::find(&dir, "closed").is_err(), "unreachable host saved");
+        // #11: another user's server on the port isn't a closed port.
+        o.check = Some(Arc::new(|_, _| fail("auth: server key does not match pin")));
+        let err = crate::block_on(login(o.clone())).unwrap_err().to_string();
+        assert!(err.contains("a different osewa server answers at box.lan:7322") && !err.contains("open TCP port"), "{err}");
         // --no-check saves it anyway.
         o.no_check = true;
         crate::block_on(login(o)).unwrap();

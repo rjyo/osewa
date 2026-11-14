@@ -7,9 +7,6 @@ use tokio::net::TcpListener;
 
 use crate::{Config, Server};
 
-/// The port `osewa server` listens on, TCP and UDP.
-pub const DEFAULT_PORT: u16 = 7322;
-
 /// Runs `osewa server [--listen addr] [--name name] [--no-compress]
 /// [--no-forward] [--no-exec] [--no-quic]`; args are the arguments after
 /// "server". Returns the process exit code.
@@ -72,7 +69,7 @@ pub fn check_args(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn parse(args: &[String]) -> Result<(String, Config), String> {
     let mut fs = osewa_flag::FlagSet::new("server");
-    fs.value("listen", &format!(":{DEFAULT_PORT}"), "address to listen on")
+    fs.value("listen", &format!(":{}", osewa_paths::server_port()), "address to listen on")
         .value("name", "", "server name reported to clients (default hostname)")
         .bool("no-compress", false, "don't compress what is sent to clients")
         .bool("no-forward", false, "refuse forward.open (TCP forwarding)")

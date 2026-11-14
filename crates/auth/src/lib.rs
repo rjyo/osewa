@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub use devices::{Device, Devices};
-pub use enroll::{devices_path, enroll, enroll_main, identity_path, EnrollRequest, EnrollResponse, DEFAULT_PORT};
+pub use enroll::{devices_path, enroll, enroll_main, identity_path, EnrollRequest, EnrollResponse};
 pub use keys::{decode_key, encode_key, Identity, PublicKey};
 pub use tls::{auth_error, cert_key, client_config, peer_key, server_config};
 

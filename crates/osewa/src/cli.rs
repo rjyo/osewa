@@ -301,7 +301,7 @@ pub(crate) fn run(args: &[String], env: Env) -> i32 {
         "server" => return crate::daemon::server_main(rest, env.out(), env.err()),
         "service" => return crate::service::service_main(rest, env.out(), env.err()),
         "holder" => return osewa_holder::main(rest),
-        "enroll" => return osewa_auth::enroll_main(rest),
+        "enroll" => return osewa_auth::enroll_main(&crate::port::enroll_args(rest)),
         "local" => {
             return match osewa_server::local::main(rest, env.take_stdin().map(|s| Box::new(s) as Box<dyn std::io::Read>).unwrap_or_else(|| Box::new(std::io::empty())), env.out()) {
                 Ok(()) => 0,
