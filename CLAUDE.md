@@ -35,3 +35,13 @@ libghostty-vt. Wire protocol v0: `docs/PROTOCOL.md` is the wire contract,
   comparison.
 - No backwards-compatibility shims before v1, except for on-disk state.
 - Comments explain why, not what.
+
+## Issues
+
+On `rjyo/osewa`:
+
+1. Check the reported cause against `main` before fixing.
+2. One PR per issue: `Fixes #N`, a test that fails without the fix.
+3. Fable 5.2 reviews each PR.
+4. Merge fast-forward only.
+5. Release notes link the issue.
