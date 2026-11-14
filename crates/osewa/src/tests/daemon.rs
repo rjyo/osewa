@@ -364,3 +364,27 @@ fn port_choice() {
     assert_eq!(choose(7322, taken(&[7322, 7323, 7324]), |_| false), Some(7325), "the first spare free");
     assert_eq!(choose(7322, |_| false, |_| false), None, "nothing free");
 }
+
+/// #11: enroll moves this user's server off a saved port someone else
+/// took, keeps a free one, and leaves an explicit --port alone.
+#[test]
+fn enroll_moves_off_a_taken_port() {
+    let mut g = EnvGuard::new();
+    let (cfg, run) = (TempDir::new(), TempDir::new());
+    g.set("OSEWA_CONFIG_DIR", &cfg.0);
+    g.set("OSEWA_RUN_DIR", &run.0); // no server of ours running
+    let file = cfg.0.join("port");
+    let held = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    let taken = held.local_addr().unwrap().port();
+
+    std::fs::write(&file, format!("{taken}\n")).unwrap();
+    assert_eq!(crate::port::enroll_args(&args(&["--port=9"])), args(&["--port=9"]));
+    assert_eq!(osewa_paths::server_port(), taken, "an explicit --port left the file alone");
+
+    crate::port::enroll_args(&[]);
+    let moved = osewa_paths::server_port();
+    assert!(moved != taken && (7323..=7422).contains(&moved), "moved to {moved}");
+
+    crate::port::enroll_args(&[]);
+    assert_eq!(osewa_paths::server_port(), moved, "a free saved port stays");
+}

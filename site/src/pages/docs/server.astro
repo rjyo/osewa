@@ -6,10 +6,10 @@ osewa service uninstall               # stop it and remove the unit`;
 const daemon = `$ osewa server --daemon
 osewa server: started (pid 4821, [::]:7322, log /home/me/.local/state/osewa/server.log)`;
 const port = `# on the host
-osewa service install --listen :9000
+echo 9000 > ~/.config/osewa/port
 
 # on your machine
-osewa login --service --addr devbox.example.com:9000 me@devbox`;
+osewa login --service me@devbox`;
 const update = `osewa update devbox
 copied osewa (linux/amd64) to devbox
 devbox's server restarted with it`;
@@ -53,7 +53,7 @@ devbox's server restarted with it`;
 </table></div>
 
 <h2 id="port">Changing the port</h2>
-<p>login records the port the host's enroll reports, the one in <code>~/.config/osewa/port</code> or 7322, not one given with <code>--listen</code>. So after moving the server with <code>--listen</code>, log in again with <code>--addr</code> to point your machine at the new port:</p>
+<p>The server's port is the one in <code>~/.config/osewa/port</code> on the host, or 7322 without that file. Put the new one there, then log in again: login restarts the server on it and records it on your machine. Deleting the file goes back to 7322. A <code>--listen</code> given to <code>service install</code> isn't recorded, and the next login reinstalls the service without it.</p>
 <pre><code>{port}</code></pre>
 <p>Sessions survive the move: they don't live in the server. Do the second step on every device that uses the host.</p>
 <p>If 7322 is blocked where you are and only common ports get through, binding 443 needs root. Instead, keep osewa on a high port and redirect 443 to it with the host's firewall.</p>

@@ -155,9 +155,9 @@ pub async fn login(mut o: Options) -> Result<Outcome, Error> {
             // a host with several users, most likely another user's.
             if e.to_string().contains("does not match pin") {
                 return Err(Error::Other(format!(
-                    "the osewa server on {} is running, but a different osewa server answers at {} \
-                     (another user's on that host?); log in again with --addr set to this user's server, \
-                     or update osewa on {0}, whose enroll picks a free port; the host was not saved",
+                    "a different osewa server answers at {1} (another user's on {0}?), and this user's \
+                     may have failed to start there; update osewa on {0} and log in again, which gives \
+                     this user's server a free port, or log in with --addr set to it; the host was not saved",
                     o.target, o.addr
                 )));
             }
