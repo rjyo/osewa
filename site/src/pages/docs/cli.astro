@@ -21,8 +21,9 @@ const versionJson = `{"ghostty":"83fb9562…","osewa":"0.1.0","snapshot_version"
 </tbody></table></div>
 
 <h3 id="attach">osewa attach [flags] &lt;host&gt; [id]</h3>
-<p>Attach to a session. Without an id: the only running session it can attach, or a new one if there are none. See <a href="/docs/sessions">Sessions</a>.</p>
+<p>Attach to a session. Without an id: the only running session it can attach, or a new one if there are none; <code>--new</code> always starts one. See <a href="/docs/sessions">Sessions</a>.</p>
 <div class="tbl"><table><tbody>
+  <tr><td><code>--new</code></td><td>Start a session and attach to it, even when others are running. Not with an id.</td></tr>
   <tr><td><code>--take</code></td><td>Take ownership from another device.</td></tr>
   <tr><td><code>--predict auto|always|never</code></td><td>Local echo prediction. Default <code>auto</code>.</td></tr>
   <tr><td><code>--graphics auto|always|never</code></td><td>Kitty graphics. Default <code>auto</code>.</td></tr>

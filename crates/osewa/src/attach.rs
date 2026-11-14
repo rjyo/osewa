@@ -28,11 +28,11 @@ pub(crate) fn ask_appearance() -> String {
     format!("\x1b[?2031h\x1b[?996n\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b]4;{}\x1b\\", palette.join(";"))
 }
 
-/// Runs `attach [--take] [--quiet] [--predict auto|always|never]
+/// Runs `attach [--new] [--take] [--quiet] [--predict auto|always|never]
 /// [--graphics auto|always|never] [--clipboard-read] <host> [id]` and
 /// returns the exit code.
 pub(crate) async fn attach(ctx: &Ctx, env: &Env, args: &[String]) -> Result<i32> {
-    let mut fs = Flags::new(&[("take", Kind::Bool), ("quiet", Kind::Bool), ("predict", Kind::Str), ("graphics", Kind::Str), ("clipboard-read", Kind::Bool)]);
+    let mut fs = Flags::new(&[("new", Kind::Bool), ("take", Kind::Bool), ("quiet", Kind::Bool), ("predict", Kind::Str), ("graphics", Kind::Str), ("clipboard-read", Kind::Bool)]);
     let pos = fs.parse(args)?;
     let predict = if fs.all("predict").is_empty() { "auto".to_string() } else { fs.str("predict") };
     let mode = parse_predict_mode(&predict).map_err(Error::Msg)?;
@@ -42,13 +42,14 @@ pub(crate) async fn attach(ctx: &Ctx, env: &Env, args: &[String]) -> Result<i32>
         "never" => false,
         g => return Err(Error::Msg(format!("osewa: graphics mode {}: want auto, always or never", osewa_wire::quote(g)))),
     };
-    if pos.is_empty() || pos.len() > 2 {
+    // --new starts a session, so it names none.
+    if pos.is_empty() || pos.len() > 2 || (fs.bool("new") && pos.len() > 1) {
         return Err(Error::Usage);
     }
     let h = osewa_client::hosts::find(&env.dir, &pos[0])?;
     let cfg = env.config(&h)?;
     let l = Link::new(cfg);
-    let r = attach_on(ctx, env, &l, &pos, fs.bool("take"), fs.bool("quiet"), mode, graphics, fs.bool("clipboard-read")).await;
+    let r = attach_on(ctx, env, &l, &pos, fs.bool("new"), fs.bool("take"), fs.bool("quiet"), mode, graphics, fs.bool("clipboard-read")).await;
     l.close().await;
     r
 }
@@ -59,6 +60,7 @@ async fn attach_on(
     env: &Env,
     l: &Link,
     pos: &[String],
+    new: bool,
     take: bool,
     quiet: bool,
     mode: osewa_mirror::PredictMode,
@@ -69,6 +71,14 @@ async fn attach_on(
     let (cols, rows) = tty::term_size(1);
     let id = match pos.get(1) {
         Some(id) => id.clone(),
+        None if new => {
+            let (width, height) = tty::term_pixels(1);
+            let create = c.create(osewa_client::CreateOptions { cols, rows, width, height, ..Default::default() });
+            match ctx.run(create).await {
+                None => return Err(interrupted()),
+                Some(r) => r?,
+            }
+        }
         None => match ctx.run(pick_session(&c, cols, rows, tty::term_pixels(1))).await {
             None => return Err(interrupted()),
             Some(r) => r?,

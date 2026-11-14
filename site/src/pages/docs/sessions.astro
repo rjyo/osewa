@@ -5,6 +5,7 @@ osewa ls devbox                # list sessions
 osewa new devbox               # start another session, print its id
 osewa new devbox -- htop       # start one running a program
 osewa attach devbox 3f9c…      # attach to a session by id
+osewa attach --new devbox      # start a session and attach to it
 osewa kill devbox 3f9c…        # end a session`;
 const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  IDLE  STATUS   STATE
 3f9c2a7e5b1d48e6a0c4f2b97d1e5a83  claude  120x40  laptop  1         -     working  running
@@ -15,7 +16,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
 
 <h2>The basics</h2>
 <pre><code>{basics}</code></pre>
-<p><code>attach</code> with no id attaches to the host's session if there is exactly one, and starts a new one if there are none. With several, it lists them and asks you to pick. Ids are 32 hex characters, and commands need the whole id.</p>
+<p><code>attach</code> with no id attaches to the host's session if there is exactly one, and starts a new one if there are none. With several, it lists them and asks you to pick. <code>attach --new</code> starts a session of its own, even when others are running. Ids are 32 hex characters, and commands need the whole id.</p>
 <p>A new session runs your login shell, or the program after <code>--</code>. It starts in your home directory with a clean environment built from the host's account: <code>HOME</code>, <code>USER</code>, <code>SHELL</code>, a standard <code>PATH</code> (Homebrew first on macOS), your locale and time zone, and <code>TERM=xterm-256color</code>.</p>
 
 <h2>Detaching</h2>
@@ -64,6 +65,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
 <div class="tbl"><table>
   <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
   <tbody>
+    <tr><td><code>--new</code></td><td>Start a session and attach to it, even when others are running. Not with an id.</td></tr>
     <tr><td><code>--take</code></td><td>Become the owner even if another device owns the session.</td></tr>
     <tr><td><code>--predict auto|always|never</code></td><td>Local echo prediction. <code>auto</code>, the default, draws your keys before the host echoes them once the round trip reaches 30 ms. Nothing on a line is predicted until the host confirms one key, so passwords never show.</td></tr>
     <tr><td><code>--graphics auto|always|never</code></td><td>Kitty graphics. <code>auto</code> turns them on in kitty, Ghostty and WezTerm.</td></tr>
