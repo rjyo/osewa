@@ -303,7 +303,8 @@ fn live_attach_new() {
     assert_eq!(out.lines().filter(|l| l.contains("running")).count(), 2, "ls:\n{out}");
     a.stdin.write("exit 0\r");
     assert_eq!(a.code(), 0, "exit code");
-    assert!(h.run_ok(&["ls", "h"]).contains(&old), "the running session was left alone");
+    let out = h.run_ok(&["ls", "h"]);
+    assert!(out.lines().any(|l| l.contains(&old) && l.contains("running")), "the running session was left alone:\n{out}");
 
     let (code, _, _) = h.run(&["attach", "--new", "h", &old]);
     assert_eq!(code, 2, "--new with an id");

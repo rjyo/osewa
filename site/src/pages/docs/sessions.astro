@@ -64,6 +64,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
 <div class="tbl"><table>
   <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
   <tbody>
+    <tr><td><code>--new</code></td><td>Start a session and attach to it, even when others are running. Not with an id.</td></tr>
     <tr><td><code>--take</code></td><td>Become the owner even if another device owns the session.</td></tr>
     <tr><td><code>--predict auto|always|never</code></td><td>Local echo prediction. <code>auto</code>, the default, draws your keys before the host echoes them once the round trip reaches 30 ms. Nothing on a line is predicted until the host confirms one key, so passwords never show.</td></tr>
     <tr><td><code>--graphics auto|always|never</code></td><td>Kitty graphics. <code>auto</code> turns them on in kitty, Ghostty and WezTerm.</td></tr>
