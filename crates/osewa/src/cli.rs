@@ -31,12 +31,13 @@ client commands:
   login <ssh-target> [--name N] [--addr host:port] [--device N] [--no-install] [--service] [--no-check] [--via-ssh]
   ls <host>
   new <host> [-- argv...]
-  attach [--take] [--quiet] [--predict auto|always|never] [--graphics auto|always|never] [--clipboard-read] <host> [id]
+  attach [--new] [--take] [--quiet] [--predict auto|always|never] [--graphics auto|always|never] [--clipboard-read] <host> [id]
                                        ~. detaches (after a newline); while viewing,
                                        Ctrl-T takes ownership; --graphics shows Kitty
                                        graphics (auto: when the terminal is known to);
                                        --clipboard-read lets programs read this
-                                       terminal's clipboard (OSC 52), which it may ask
+                                       terminal's clipboard (OSC 52), which it may ask;
+                                       --new starts a session instead of joining one
   kill <host> <id>
   exec [--cwd dir] [--env K=V]... <host> -- argv...
                                        run a command on the host without a terminal;

@@ -290,6 +290,25 @@ fn live_attach_creates_and_exits() {
     assert_eq!(a.code(), 7, "exit code");
 }
 
+/// #14: --new starts a session of its own beside a running one, and names
+/// none.
+#[test]
+fn live_attach_new() {
+    let h = LiveHost::new();
+    let old = h.run_ok(&["new", "h"]).trim().to_string();
+    let a = attach_async(&h, &["--new", "h"]);
+    a.stdin.write("echo fresh-$((3*3))\r");
+    wait_for(&a.out, "fresh-9");
+    let out = h.run_ok(&["ls", "h"]);
+    assert_eq!(out.lines().filter(|l| l.contains("running")).count(), 2, "ls:\n{out}");
+    a.stdin.write("exit 0\r");
+    assert_eq!(a.code(), 0, "exit code");
+    assert!(h.run_ok(&["ls", "h"]).contains(&old), "the running session was left alone");
+
+    let (code, _, _) = h.run(&["attach", "--new", "h", &old]);
+    assert_eq!(code, 2, "--new with an id");
+}
+
 #[test]
 fn live_attach_several_sessions() {
     let h = LiveHost::new();
