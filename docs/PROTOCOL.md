@@ -188,7 +188,7 @@ Methods (REQUEST `method`):
 | `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?,"tag"?,"creator"?}]}` |
 | `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`?, `tag`? | `{"session_id","reused"?}` |
 | `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `reclaim`?, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
-| `session.detach` | `stream` | `{}` |
+| `session.detach` | `stream`, `release`? | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
 | `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |
 | `session.color_scheme` | `stream`, `color_scheme` (`light` or `dark`) | `{}` (applies only for the owner) |
@@ -404,7 +404,8 @@ INPUT payloads:
 
 Each session has at most one owner, a `client_id`. The PTY takes the owner's
 size. `session.own` takes ownership. Ownership lapses 30 s after the owner's
-last stream closes. A client resuming a session it owned last attaches with
+last stream closes, or at once when the owner detaches its last stream
+with `session.detach` and `release: true` (ignored from anyone else). A client resuming a session it owned last attaches with
 `reclaim`, so it owns it again if nobody took it meanwhile.
 
 ## Events
