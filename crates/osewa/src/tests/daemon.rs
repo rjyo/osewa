@@ -351,3 +351,16 @@ fn service_restart() {
     let err = sv.restart().unwrap_err();
     assert!(err.contains("no service and no server"), "{err}");
 }
+
+/// #11: the default port goes to the first server on a host; this user's
+/// own server keeps it, and anyone else's makes enroll pick a spare.
+#[test]
+fn port_choice() {
+    use crate::port::choose;
+    let taken = |ps: &'static [u16]| move |p: u16| !ps.contains(&p);
+    assert_eq!(choose(7322, taken(&[]), |_| false), None, "free default");
+    assert_eq!(choose(7322, taken(&[7322]), |p| p == 7322), None, "our own server has it");
+    assert_eq!(choose(7322, taken(&[7322]), |_| false), Some(7323), "another's");
+    assert_eq!(choose(7322, taken(&[7322, 7323, 7324]), |_| false), Some(7325), "the first spare free");
+    assert_eq!(choose(7322, |_| false, |_| false), None, "nothing free");
+}

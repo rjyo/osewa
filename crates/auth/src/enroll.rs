@@ -7,9 +7,6 @@ use crate::devices::{Device, Devices};
 use crate::keys::{encode_key, Identity};
 use crate::Error;
 
-/// The server's default TCP port.
-pub const DEFAULT_PORT: i64 = 7322;
-
 /// The line a device writes to `osewa enroll`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnrollRequest {
@@ -48,7 +45,7 @@ pub fn enroll(mut r: impl BufRead, mut w: impl Write, id: &Identity, d: &Devices
 /// `osewa enroll [--port N]`.
 pub fn enroll_main(args: &[String]) -> i32 {
     let mut fs = osewa_flag::FlagSet::new("enroll");
-    fs.value("port", &DEFAULT_PORT.to_string(), "port the server listens on, reported to the device");
+    fs.value("port", &osewa_paths::server_port().to_string(), "port the server listens on, reported to the device");
     let port = match fs.parse(args).and_then(|p| p.int("port")) {
         Ok(port) => port,
         Err(e) => {

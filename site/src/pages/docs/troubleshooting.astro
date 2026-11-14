@@ -56,7 +56,10 @@ OSEWA_CARRIER=quic osewa ls devbox   # UDP only`;
 <p>Each user runs one server. This one is already up; you don't need another. To restart with new flags, use <code>osewa service install</code> with the flags.</p>
 
 <h3>listen tcp :7322: bind: address already in use</h3>
-<p>Something else holds the port, often another user's osewa on the same host. Pick another port for one of them (<a href="/docs/server#port">Changing the port</a>).</p>
+<p>Something else holds the port, often another user's osewa on the same host. Update osewa on the host and log in again: login then gives this user's server a free port of its own. Or pick one yourself (<a href="/docs/server#port">Changing the port</a>).</p>
+
+<h3>a different osewa server answers at …</h3>
+<p>The port reached an osewa server, but not this user's: most likely another user's on the same host. Log in again with an updated osewa, which gives this user's server a free port, or with <code>--addr</code> set to this user's server.</p>
 
 <h3>The server is gone after a reboot</h3>
 <p>It was started with <code>--daemon</code>, which doesn't survive reboots. Log in again with <code>--service</code>, or run <code>osewa service install</code> on the host. On Linux, also run <code>loginctl enable-linger $USER</code> so it keeps running when you're logged out.</p>

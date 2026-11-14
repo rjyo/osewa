@@ -163,7 +163,7 @@ pub(crate) fn running_server() -> Option<i32> {
 /// Where the server will listen, from its flags, made dialable on this
 /// machine.
 pub(crate) fn listen_addr(args: &[String]) -> String {
-    let mut addr = format!(":{}", osewa_auth::DEFAULT_PORT);
+    let mut addr = format!(":{}", osewa_paths::server_port());
     for (i, a) in args.iter().enumerate() {
         if (a == "--listen" || a == "-listen") && i + 1 < args.len() {
             addr = args[i + 1].clone();
