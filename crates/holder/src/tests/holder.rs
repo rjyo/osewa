@@ -641,6 +641,31 @@ fn ownership_lapse() {
     assert_eq!(watch.info().owner, "");
 }
 
+/// #12: a detach with release gives ownership up at once, so the next
+/// attach from the same device (a new process, a new client id) owns the
+/// session; a plain detach and a lost connection keep it through the grace.
+#[test]
+fn detach_releases_ownership() {
+    let h = start(Config { owner_grace: Duration::from_secs(30), ..cfg(sh("sleep 30")) });
+    let mut watch = h.dial("watcher");
+    watch.attach(wire::Request::default());
+
+    let mut a = h.dial("a");
+    a.attach(own());
+    a.request(method(wire::METHOD_DETACH));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(watch.info().owner, "a", "a plain detach kept its grace");
+    a.attach(wire::Request::default());
+    a.request(wire::Request { release: true, ..method(wire::METHOD_DETACH) });
+    watch.wait_for("owner released", |c| c.has_event(|e| e.kind == wire::EVENT_OWNER && e.owner.is_empty()));
+
+    let mut b = h.dial("b");
+    b.attach(own());
+    b.close();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(watch.info().owner, "b", "a lost connection kept its grace");
+}
+
 /// #8: a resume after the grace claims an ownerless session back, but
 /// never takes one another client owns.
 #[test]

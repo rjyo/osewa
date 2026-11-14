@@ -39,6 +39,22 @@ pub fn config_dir() -> PathBuf {
     home().join(".config/osewa")
 }
 
+/// The server's port when nothing else was chosen, TCP and UDP.
+pub const DEFAULT_PORT: u16 = 7322;
+
+/// Holds this user's server port, when it isn't [`DEFAULT_PORT`]: on a
+/// host with several users, each runs a server, and the second can't have
+/// the first's port.
+pub fn port_path() -> PathBuf {
+    config_dir().join("port")
+}
+
+/// The port this user's server listens on unless told otherwise: the one
+/// in [`port_path`], else [`DEFAULT_PORT`].
+pub fn server_port() -> u16 {
+    fs::read_to_string(port_path()).ok().and_then(|s| s.trim().parse().ok()).filter(|&p| p != 0).unwrap_or(DEFAULT_PORT)
+}
+
 /// Creates dir with mode 0700 if it doesn't exist, then checks that it is a
 /// real directory owned by this user that nobody else can use. Holder
 /// sockets and keys live in these directories: whoever can write one could
@@ -102,6 +118,21 @@ mod tests {
         assert_eq!(config_dir(), Path::new("/xdg/osewa"));
         set("XDG_CONFIG_HOME", "");
         assert_eq!(config_dir(), Path::new("/h/.config/osewa"));
+    }
+
+    /// #11: a server port saved for this user wins over the default; a
+    /// file that doesn't hold one is ignored.
+    #[test]
+    fn server_port_from_file() {
+        let _g = ENV.lock().unwrap();
+        let d = tmp("port");
+        set("OSEWA_CONFIG_DIR", d.to_str().unwrap());
+        assert_eq!(server_port(), DEFAULT_PORT, "no file");
+        for (text, want) in [("7323\n", 7323), (" 7400 ", 7400), ("0\n", DEFAULT_PORT), ("nope", DEFAULT_PORT), ("99999", DEFAULT_PORT)] {
+            fs::write(port_path(), text).unwrap();
+            assert_eq!(server_port(), want, "{text:?}");
+        }
+        set("OSEWA_CONFIG_DIR", "");
     }
 
     fn tmp(name: &str) -> PathBuf {

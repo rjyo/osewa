@@ -31,6 +31,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
     <tr><td><code>~~</code></td><td>Send a literal <code>~</code></td></tr>
   </tbody>
 </table></div>
+<p>Running osewa inside an ssh session, ssh takes <code>~.</code> first and drops the ssh connection. Type <code>~~.</code> instead: ssh sends on one <code>~</code>, and osewa detaches.</p>
 <p>Ctrl-C goes to the remote program, as you'd expect. When the program exits, attach prints <code>[osewa: session ended, exit N]</code> and exits with the same code.</p>
 
 <h2>When the network drops</h2>
@@ -39,7 +40,7 @@ const ls = `ID                                TITLE   SIZE    OWNER   ATTACHED  
 <h2>Owners and viewers</h2>
 <p>Any number of devices, or windows, can attach to one session. One is the <strong>owner</strong>: its keys reach the program and its window size is the session's size. The rest are <strong>viewers</strong>: they see the screen live, and what they type is dropped. A viewer sees:</p>
 <pre><code>viewing: laptop owns this session; Ctrl-T takes over</code></pre>
-<p>You become the owner when the session has none, when you already own it, or when you attach with <code>--take</code>. A viewer takes over with Ctrl-T, or <code>~t</code>. If the owner goes away, ownership lapses 30 seconds after its last connection drops. When it reconnects, it owns the session again unless another client took over meanwhile.</p>
+<p>You become the owner when the session has none, when you already own it, or when you attach with <code>--take</code>. A viewer takes over with Ctrl-T, or <code>~t</code>. Detaching with <code>~.</code> gives ownership up at once, so attaching again owns the session. If the owner's connection drops instead, ownership lapses 30 seconds later. When it reconnects, it owns the session again unless another client took over meanwhile.</p>
 
 <h2>Listing sessions</h2>
 <pre><code>{ls}</code></pre>

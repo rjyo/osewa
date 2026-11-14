@@ -119,6 +119,10 @@ pub struct Request {
     /// over meanwhile.
     #[serde(default, skip_serializing_if = "is_false")]
     pub reclaim: bool,
+    /// session.detach: gives up ownership at once rather than after the
+    /// grace, for a client leaving on purpose.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub release: bool,
     /// session.color_scheme: "light" or "dark"
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color_scheme: String,

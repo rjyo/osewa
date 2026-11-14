@@ -1112,9 +1112,20 @@ impl Session {
         self.request(req).await.map(drop)
     }
 
-    /// Detaches the stream. The session keeps running on the host.
+    /// Detaches the stream. The session keeps running on the host, and our
+    /// ownership lasts through the grace, for coming back.
     pub async fn detach(&self) -> Result<()> {
-        let r = self.request(wire::Request { method: wire::METHOD_DETACH.into(), ..Default::default() }).await;
+        self.detach_with(false).await
+    }
+
+    /// Detaches the stream and gives up ownership at once, so whoever
+    /// attaches next owns the session.
+    pub async fn leave(&self) -> Result<()> {
+        self.detach_with(true).await
+    }
+
+    async fn detach_with(&self, release: bool) -> Result<()> {
+        let r = self.request(wire::Request { method: wire::METHOD_DETACH.into(), release, ..Default::default() }).await;
         let mut st = self.0.lock();
         if let Some(c) = &st.conn {
             c.drop_stream(st.stream);

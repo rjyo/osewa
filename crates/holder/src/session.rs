@@ -686,6 +686,9 @@ impl Session {
                 if let Some((core, c)) = self.split(cid) {
                     if c.stream_for(req.stream).is_some() {
                         core.end_stream(c, wire::END_DETACHED);
+                        if req.release {
+                            self.release(cid);
+                        }
                         self.check_lapse();
                     }
                 }
@@ -932,6 +935,21 @@ impl Session {
         }
         self.core.owner = client.into();
         self.emit(wire::EventMsg { kind: wire::EVENT_OWNER.into(), owner: client.into(), ..Default::default() });
+    }
+
+    /// Gives up the owner's ownership once it detached its last stream. The
+    /// grace is for a connection lost: a client that leaves on purpose
+    /// would only lock out its next process, which may have a new client
+    /// id (osewa attach has one per process).
+    fn release(&mut self, cid: u64) {
+        let Some(client) = self.conns.get(&cid).map(|c| c.client.clone()) else { return };
+        if client.is_empty() || client != self.core.owner || self.core.exited {
+            return;
+        }
+        if self.conns.values().any(|c| c.stream.is_some() && c.client == client) {
+            return;
+        }
+        self.set_owner("");
     }
 
     /// Starts the owner's grace period once its last stream is gone.
