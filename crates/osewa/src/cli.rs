@@ -32,7 +32,8 @@ client commands:
   ls <host>
   new <host> [-- argv...]
   attach [--take] [--quiet] [--predict auto|always|never] [--graphics auto|always|never] [--clipboard-read] <host> [id]
-                                       ~. detaches (after a newline); while viewing,
+                                       ~. detaches (after a newline; ~~. inside
+                                       ssh); while viewing,
                                        Ctrl-T takes ownership; --graphics shows Kitty
                                        graphics (auto: when the terminal is known to);
                                        --clipboard-read lets programs read this

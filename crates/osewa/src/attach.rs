@@ -185,7 +185,9 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
             }
         }
         _ = detach_rx => {
-            let _ = tokio::time::timeout(Duration::from_secs(2), s.detach()).await;
+            // A new attach is a new process with a new client id: keeping
+            // ownership through the grace would make it a viewer.
+            let _ = tokio::time::timeout(Duration::from_secs(2), s.leave()).await;
             let _ = write!(env.err(), "\r\n[osewa: detached; the session is still running]\r\n");
             Ok(0)
         }
