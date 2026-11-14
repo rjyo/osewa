@@ -949,8 +949,6 @@ impl Session {
         if self.conns.values().any(|c| c.stream.is_some() && c.client == client) {
             return;
         }
-        // A grace timer still pending must not clear a later owner.
-        self.core.owner_token += 1;
         self.set_owner("");
     }
 

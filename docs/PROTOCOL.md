@@ -404,8 +404,8 @@ INPUT payloads:
 
 Each session has at most one owner, a `client_id`. The PTY takes the owner's
 size. `session.own` takes ownership. Ownership lapses 30 s after the owner's
-last stream closes, or at once when it detaches that stream with
-`session.detach` and `release: true`. A client resuming a session it owned last attaches with
+last stream closes, or at once when the owner detaches its last stream
+with `session.detach` and `release: true` (ignored from anyone else). A client resuming a session it owned last attaches with
 `reclaim`, so it owns it again if nobody took it meanwhile.
 
 ## Events
