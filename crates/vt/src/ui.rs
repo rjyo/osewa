@@ -546,7 +546,7 @@ impl Ui {
             let quiet_typing = self.typed_at.is_none_or(|at| at.elapsed() >= TYPING_QUIET);
             if live && !self.quiet && (e.state == "blocked" || e.state == "done") && quiet_typing {
                 let who = if e.app.is_empty() { "program".to_string() } else { printable(&e.app) };
-                self.status_note = format!(" {who}: {} ", status_text(&e.state, "", &e.msg, e.progress));
+                self.status_note = format!(" {who}: {} ", status_text(&e.state, &e.status_kind, &e.msg, e.progress));
             }
             return;
         }

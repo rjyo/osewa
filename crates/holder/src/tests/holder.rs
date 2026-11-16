@@ -697,7 +697,7 @@ fn events() {
     let p = payload(
         &dir,
         "ev",
-        b"\x07\x1b]2;work\x1b\\\x1b]52;c;aGVsbG8=\x1b\\\x1b]7501;state=working:app=claude-code:msg=QXBwbHk/\x07DONE",
+        b"\x07\x1b]2;work\x1b\\\x1b]52;c;aGVsbG8=\x1b\\\x1b]7501;state=blocked:kind=permission:app=claude-code:title=V29yaw==:msg=QXBwbHk/\x07DONE",
     );
     let h = start(Config { run_dir: dir.0.join("run"), ..cfg(sh(&format!("stty -echo; read x; cat {p}; sleep 30"))) });
     let mut owner = h.dial("o");
@@ -719,7 +719,8 @@ fn events() {
         }
         assert!(e.kind != wire::EVENT_TITLE || e.title == "work", "title event {e:?}");
         assert!(
-            e.kind != wire::EVENT_STATUS || (e.state == "working" && e.app == "claude-code" && e.msg == "Apply?"),
+            e.kind != wire::EVENT_STATUS
+                || (e.state == "blocked" && e.status_kind == "permission" && e.app == "claude-code" && e.title == "Work" && e.msg == "Apply?"),
             "status event {e:?}"
         );
     }

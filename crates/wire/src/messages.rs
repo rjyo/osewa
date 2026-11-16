@@ -405,6 +405,10 @@ pub struct EventMsg {
     pub selection: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub state: String,
+    /// status: what a blocked program needs (permission, question, auth).
+    /// Not `kind`, which says what the event is.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub status_kind: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]

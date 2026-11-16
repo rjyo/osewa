@@ -589,7 +589,7 @@ fn live_status_notice() {
     let h = LiveHost::new();
     // The report comes after the attach (so it's live), and after the
     // typing quiet period that follows the newline the test sends.
-    let report = "echo ready; read x; sleep 2.2; printf '\\033]7501;state=blocked:kind=permission:app=claude-code:msg=QXBwbHk/\\007'; echo reported; sleep 30";
+    let report = "echo ready; read x; sleep 2.2; printf '\\033]7501;state=blocked:kind=permission:app=claude-code:title=V29yaw==:msg=QXBwbHk/\\007'; echo reported; sleep 30";
     for quiet in [false, true] {
         let id = h.run_ok(&["new", "h", "--", "/bin/sh", "-c", report]).trim().to_string();
         let mut argv = vec!["h", id.as_str()];
@@ -601,12 +601,12 @@ fn live_status_notice() {
         a.stdin.write("\r");
         wait_for(&a.out, "reported");
         if !quiet {
-            wait_for(&a.out, "claude-code: blocked: Apply?");
+            wait_for(&a.out, "claude-code: blocked: permission — Apply?");
         } else {
             std::thread::sleep(Duration::from_millis(200));
             assert!(!a.out.string().contains("claude-code: blocked"), "--quiet showed the notice");
         }
-        wait_for(&a.out, "\x1b]7501;state=blocked:app=claude-code:msg=QXBwbHk/\x1b\\");
+        wait_for(&a.out, "\x1b]7501;state=blocked:kind=permission:app=claude-code:title=V29yaw==:msg=QXBwbHk/\x1b\\");
         assert!(!a.out.string().contains("QXBwbHk/\x07"), "the program's own OSC 7501 passed through");
         a.stdin.close();
         a.code();

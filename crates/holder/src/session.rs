@@ -1151,8 +1151,10 @@ fn status_event(st: &ghostty::Status) -> wire::EventMsg {
     wire::EventMsg {
         kind: wire::EVENT_STATUS.into(),
         state: st.state.clone(),
+        status_kind: st.kind.clone(),
         id: st.id.clone(),
         app: st.app.clone(),
+        title: st.title.clone(),
         msg: st.message.clone(),
         progress: (st.progress >= 0).then_some(st.progress as i64),
         ..Default::default()

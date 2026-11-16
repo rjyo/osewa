@@ -389,21 +389,28 @@ pub const STATUS_CLEAR: &[u8] = b"\x1b]7501;state=clear\x1b\\";
 pub fn status_set(e: &osewa_wire::EventMsg) -> Option<Vec<u8>> {
     use base64::Engine as _;
     let plain = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.+-/".contains(&b));
-    if e.state.is_empty() || !plain(&e.state) || !plain(&e.id) || !plain(&e.app) {
+    if e.state.is_empty() || !plain(&e.state) || !plain(&e.status_kind) || !plain(&e.id) || !plain(&e.app) {
         return None;
     }
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
     let mut report = format!("\x1b]7501;state={}", e.state);
+    if !e.status_kind.is_empty() {
+        report += &format!(":kind={}", e.status_kind);
+    }
     if !e.id.is_empty() {
         report += &format!(":id={}", e.id);
     }
     if !e.app.is_empty() {
         report += &format!(":app={}", e.app);
     }
+    if !e.title.is_empty() {
+        report += &format!(":title={}", b64(&e.title));
+    }
     if let Some(progress) = e.progress {
         report += &format!(":progress={}", progress.clamp(0, 100));
     }
     if !e.msg.is_empty() {
-        report += &format!(":msg={}", base64::engine::general_purpose::STANDARD.encode(&e.msg));
+        report += &format!(":msg={}", b64(&e.msg));
     }
     report += "\x1b\\";
     Some(report.into_bytes())

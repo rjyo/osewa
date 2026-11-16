@@ -116,11 +116,12 @@ fn status_events_report_locally() {
     assert_eq!(out.string(), "", "a catch-up status was reported");
     a.m.event(&status("done:x=1"), true).unwrap();
     a.m.event(&osewa_wire::EventMsg { app: "fx\x1b\\".into(), ..status("done") }, true).unwrap();
+    a.m.event(&osewa_wire::EventMsg { status_kind: "auth:x=1".into(), ..status("blocked") }, true).unwrap();
     assert_eq!(out.string(), "", "a status that breaks out of the sequence was reported");
-    a.m.event(&osewa_wire::EventMsg { msg: "Apply?".into(), ..status("blocked") }, true).unwrap();
+    a.m.event(&osewa_wire::EventMsg { msg: "Apply?".into(), status_kind: "permission".into(), title: "Work\x1b\\".into(), ..status("blocked") }, true).unwrap();
     a.m.event(&osewa_wire::EventMsg { progress: Some(250), ..status("working") }, true).unwrap();
     a.m.event(&status("clear"), true).unwrap();
-    assert_eq!(out.string(), "\x1b]7501;state=blocked:app=fx:msg=QXBwbHk/\x1b\\\x1b]7501;state=working:app=fx:progress=100\x1b\\\x1b]7501;state=clear:app=fx\x1b\\");
+    assert_eq!(out.string(), "\x1b]7501;state=blocked:kind=permission:app=fx:title=V29yaxtc:msg=QXBwbHk/\x1b\\\x1b]7501;state=working:app=fx:progress=100\x1b\\\x1b]7501;state=clear:app=fx\x1b\\");
 }
 
 /// Leaving clears a status the local terminal still shows, once; one the

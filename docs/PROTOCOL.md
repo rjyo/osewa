@@ -419,7 +419,7 @@ EVENT JSON, by `kind`:
 | `clipboard` | `data` (base64), only to the owner |
 | `clipboard_read` | `selection` (`c`, `p` or `s`), only to the owner |
 | `title` | `title` |
-| `status` | OSC 7501 record: `state`, `id`?, `app`?, `msg`? |
+| `status` | OSC 7501 record: `state`, `status_kind`? (its `kind`), `id`?, `app`?, `title`?, `msg`?, `progress`? |
 | `owner` | `owner` |
 | `exit` | `code` |
 | `input_mode` | `echo`, `canonical`: the PTY's ECHO and ICANON flags, sent at attach and whenever they change |
