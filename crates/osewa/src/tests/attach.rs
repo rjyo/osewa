@@ -561,7 +561,7 @@ fn live_recovers_from_blackhole() {
 
 /// A program reporting blocked (OSC 7501) gets a notice in osewa attach,
 /// and nothing with --quiet; either way the terminal gets the status as an
-/// OSC 7501 osewa builds itself.
+/// OSC 7501 osewa builds itself, and leaving clears it.
 #[test]
 fn live_status_notice() {
     let h = LiveHost::new();
@@ -588,6 +588,9 @@ fn live_status_notice() {
         assert!(!a.out.string().contains("QXBwbHk/\x07"), "the program's own OSC 7501 passed through");
         a.stdin.close();
         a.code();
+        let out = a.out.string();
+        let (shown, clear) = (out.rfind("state=blocked").unwrap(), out.rfind("\x1b]7501;state=clear\x1b\\"));
+        assert!(clear.is_some_and(|c| c > shown), "leaving didn't clear the status");
     }
 }
 

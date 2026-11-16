@@ -380,6 +380,9 @@ pub fn notify_set(title: &str, body: &str) -> Vec<u8> {
     }
 }
 
+/// Clears every status the local terminal holds (OSC 7501 without an id).
+pub const STATUS_CLEAR: &[u8] = b"\x1b]7501;state=clear\x1b\\";
+
 /// The program's status (OSC 7501) for the local terminal, rebuilt from the
 /// event's fields so the host can't slip other bytes into the sequence. The
 /// terminal applies the protocol's own rules.

@@ -147,6 +147,8 @@ pub struct Ui {
     /// since a notice must not land on what the user is typing.
     pub quiet: bool,
     status_note: String,
+    /// The local terminal was given a status (OSC 7501) not yet cleared.
+    status_shown: bool,
     pub typed_at: Option<Instant>,
     /// The local cursor sits after predicted text while an overlay shows
     /// (displaced); real output must then first go back to the mirror's
@@ -203,6 +205,7 @@ impl Ui {
             later: None,
             quiet,
             status_note: String::new(),
+            status_shown: false,
             typed_at: None,
             displaced: false,
             real_x: 0,
@@ -262,6 +265,16 @@ impl Ui {
     fn sync_end(&mut self, t: &Terminal) {
         if !t.mode(2026, false) {
             self.write(SYNC_END);
+        }
+    }
+
+    /// Clears the status the local terminal was given, as the attach ends:
+    /// the terminal outlives it, and would show a working or blocked
+    /// program that it no longer hears from.
+    pub fn clear_status(&mut self) {
+        if std::mem::take(&mut self.status_shown) {
+            self.write(STATUS_CLEAR);
+            self.flush();
         }
     }
 
@@ -507,8 +520,15 @@ impl Ui {
     pub fn event(&mut self, e: &wire::EventMsg, live: bool) {
         if e.kind == wire::EVENT_STATUS {
             // Only live ones: a status from a catch-up is old news.
-            if let Some(report) = status_set(e).filter(|_| live) {
-                self.write(&report);
+            if live {
+                if let Some(report) = status_set(e) {
+                    self.write(&report);
+                    if e.state != "clear" {
+                        self.status_shown = true;
+                    } else if e.id.is_empty() {
+                        self.status_shown = false;
+                    }
+                }
             }
             let quiet_typing = self.typed_at.is_none_or(|at| at.elapsed() >= TYPING_QUIET);
             if live && !self.quiet && (e.state == "blocked" || e.state == "done") && quiet_typing {
@@ -692,6 +712,11 @@ impl Attached {
         lock(&ui).later = Some(Later { m: m.clone(), ui: Arc::downgrade(&ui) });
         let s = lock(&ui).session.clone();
         Attached { ui, m, s, id, wake: Arc::default(), look: Arc::default() }
+    }
+
+    /// Clears the local terminal's status; see Ui::clear_status.
+    pub fn clear_status(&self) {
+        lock(&self.ui).clear_status();
     }
 
     pub fn session(&self) -> Option<Session> {

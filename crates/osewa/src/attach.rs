@@ -106,6 +106,7 @@ async fn attach_on(
         s.close();
     }
     a.m.close();
+    a.clear_status();
     if let Some(restore) = restore {
         let _ = env.out().write_all(RESET_MODES.as_bytes());
         restore();

@@ -117,6 +117,32 @@ fn status_events_report_locally() {
     assert_eq!(out.string(), "\x1b]7501;state=blocked:app=fx:msg=QXBwbHk/\x1b\\\x1b]7501;state=clear:app=fx\x1b\\");
 }
 
+/// Leaving clears a status the local terminal still shows, once; one the
+/// program cleared, or a task's own clear followed by nothing, needs none.
+#[test]
+fn status_cleared_on_leave() {
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let status = |state: &str, id: &str| osewa_wire::EventMsg { state: state.into(), id: id.into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_STATUS) };
+    let clear = "\x1b]7501;state=clear\x1b\\";
+    for (events, want_clear) in [
+        (vec![], false),
+        (vec![status("working", "")], true),
+        (vec![status("working", ""), status("clear", "")], false),
+        (vec![status("working", "build"), status("clear", "build")], true),
+    ] {
+        let out = Buf::default();
+        let a = Attached::new(Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())), "me".into());
+        for e in &events {
+            a.m.event(e, true).unwrap();
+        }
+        let before = out.string();
+        a.clear_status();
+        a.clear_status();
+        let added = out.string()[before.len()..].to_string();
+        assert_eq!(added, if want_clear { clear } else { "" }, "after {events:?}");
+    }
+}
+
 /// With --clipboard-read a live read asks the local terminal; old ones
 /// from a catch-up don't, and without the flag it is never asked.
 #[test]
