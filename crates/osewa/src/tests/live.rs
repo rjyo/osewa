@@ -32,10 +32,10 @@ pub(crate) struct LiveHost {
 type Holder = (tokio::sync::oneshot::Sender<()>, JoinHandle<Result<(), String>>);
 
 /// Holders run in this process, each on its own thread.
-fn inproc(holders: &Rc<RefCell<Vec<Holder>>>) -> osewa_server::Spawn {
+fn inproc(holders: &Rc<RefCell<Vec<Holder>>>, exit_retention: Duration) -> osewa_server::Spawn {
     let holders = holders.clone();
     Rc::new(move |mut cfg: osewa_holder::Config| {
-        cfg.exit_retention = Duration::from_millis(200);
+        cfg.exit_retention = exit_retention;
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
         let h = std::thread::spawn(move || {
@@ -60,6 +60,11 @@ fn inproc(holders: &Rc<RefCell<Vec<Holder>>>) -> osewa_server::Spawn {
 
 impl LiveHost {
     pub fn new() -> LiveHost {
+        LiveHost::retaining(Duration::from_millis(200))
+    }
+
+    /// A host whose holders keep an exited session this long.
+    pub fn retaining(exit_retention: Duration) -> LiveHost {
         let home = osewa_paths::sandbox_home();
         let shome = home.clone();
         let (host, dir) = (TempDir::new(), TempDir::new());
@@ -93,7 +98,7 @@ impl LiveHost {
                         devices: Some(devices.clone()),
                         run_dir: run_dir.clone(),
                         name: "live".into(),
-                        spawn: Some(inproc(&holders)),
+                        spawn: Some(inproc(&holders, exit_retention)),
                         shell: vec!["/bin/sh".into()],
                         home: Some(shome.clone()),
                         ..Default::default()

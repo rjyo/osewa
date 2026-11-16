@@ -69,7 +69,10 @@ fn reports_leave_typing() {
         // Keys: a lone ESC, Alt-], arrows and other reports pass, now.
         (&["\x1b", "x"], "\x1bx", &[]),
         (&["\x1b]", "x"], "\x1b]x", &[]),
-        (&["\x1b[A\x1b[?1;2c"], "\x1b[A\x1b[?1;2c", &[]),
+        (&["\x1b[A\x1b[?1;2c"], "\x1b[A", &[Answered]),
+        // #19: device attributes, cut anywhere, say the replies are in.
+        (&["\x1b]11;rgb:0/0/0\x07\x1b[?6", "2;22c"], "", &[Background([0, 0, 0]), Answered]),
+        (&["\x1b[?c"], "\x1b[?c", &[]),
         (&["\x1b[?997;9n"], "", &[]),
         (&["\x1b[?997;12345n"], "\x1b[?997;12345n", &[]),
         // Malformed replies are taken but say nothing.
@@ -123,6 +126,25 @@ fn forward_input_sends_takes_and_detaches() {
     let s = Sink::default();
     forward_input(&ctx(), &mut "x".as_bytes(), &s);
     assert!(s.got.lock().unwrap().concat() == "x" && *s.flushed.lock().unwrap() == 1, "got {:?}", s.got.lock().unwrap());
+    // #19: no more replies come after EOF, so leaving needn't wait.
+    assert_eq!(*s.reports.lock().unwrap(), [crate::attach::Report::Answered]);
+}
+
+/// #19: after ~. stdin is left alone: what is typed next is the shell's.
+#[test]
+fn forward_input_leaves_stdin_after_detach() {
+    struct Reads(std::collections::VecDeque<&'static [u8]>);
+    impl Read for Reads {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let Some(b) = self.0.pop_front() else { return Ok(0) };
+            buf[..b.len()].copy_from_slice(b);
+            Ok(b.len())
+        }
+    }
+    let s = Sink::default();
+    let mut r = Reads([&b"a\r~."[..], b"ls\r"].into());
+    forward_input(&ctx(), &mut r, &s);
+    assert_eq!(r.0.len(), 1, "read past ~.");
 }
 
 /// #12: keys right after ~t wait for the takeover instead of being refused
@@ -618,6 +640,35 @@ fn live_end_and_detach_messages() {
     wait_for(&a.err, "session ended, exit 3");
     assert_eq!(a.code(), 3, "first window exit code");
     assert_eq!(c.code(), 3, "closing window exit code");
+}
+
+/// #19: attaching to an ended session shows its last screen with no owner
+/// notice, and waits for the local terminal's replies to what attach asked,
+/// so none land in the shell after it; it waits only so long.
+#[test]
+fn live_attach_ended_waits_for_replies() {
+    let h = LiveHost::retaining(Duration::from_secs(60));
+    let id = h.run_ok(&["new", "h"]).trim().to_string();
+    let a = attach_with(&h, "mac-aaaa", None, &["h", &id]);
+    a.stdin.write("echo last-$((1+1)); exit 3\r");
+    assert_eq!(a.code(), 3);
+    let raw: crate::cli::RawFn = Arc::new(|| Ok(Some(Box::new(|| {}) as Box<dyn FnOnce() + Send>)));
+    for answer in [true, false] {
+        let b = attach_with(&h, "mac-bbbb", Some(raw.clone()), &["h", &id]);
+        wait_for(&b.out, "\x1b[c");
+        wait_for(&b.err, "session ended, exit 3");
+        if answer {
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(b.code.try_recv().is_err(), "returned before the terminal answered");
+            b.stdin.write("\x1b]11;rgb:0/0/0\x07\x1b[?62;22c");
+        }
+        let started = Instant::now();
+        assert_eq!(b.code(), 3);
+        assert!(started.elapsed() < Duration::from_secs(if answer { 1 } else { 4 }), "waited {:?}", started.elapsed());
+        let out = b.out.string();
+        assert!(out.contains("last-2"), "no last screen: {out:?}");
+        assert!(!out.contains("owns this session"), "an owner notice for an ended session");
+    }
 }
 
 /// Attach over QUIC against a live server: echo.

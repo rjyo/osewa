@@ -22,11 +22,16 @@ pub(crate) const RESET_MODES: &str = "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b
 
 /// Asks the local terminal for its appearance, for the programs that ask
 /// the holder: dark or light, now (DSR 996) and whenever that changes
-/// (mode 2031), and its colors.
+/// (mode 2031), and its colors. Then for its device attributes (DA1), which
+/// every terminal answers, in order: its reply says the others are in
+/// (Report::Answered).
 pub(crate) fn ask_appearance() -> String {
     let palette: Vec<String> = (0..256).map(|i| format!("{i};?")).collect();
-    format!("\x1b[?2031h\x1b[?996n\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b]4;{}\x1b\\", palette.join(";"))
+    format!("\x1b[?2031h\x1b[?996n\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b]4;{}\x1b\\\x1b[c", palette.join(";"))
 }
+
+/// How long leaving waits for the local terminal's replies.
+const REPLIES_WAIT: Duration = Duration::from_secs(2);
 
 /// Runs `attach [--new] [--take] [--quiet] [--predict auto|always|never]
 /// [--graphics auto|always|never] [--clipboard-read] <host> [id]` and
@@ -98,7 +103,8 @@ async fn attach_on(
         ui = ui.with_clipboard_read();
     }
     let a = Attached::new(ui, me.clone());
-    if restore.is_some() {
+    let asked = restore.is_some();
+    if asked {
         let _ = env.out().write_all(ask_appearance().as_bytes());
     }
     let r = run_attached(ctx, env, l, &a, &id, cols, rows, take).await;
@@ -107,6 +113,15 @@ async fn attach_on(
     }
     a.m.close();
     a.clear_status();
+    if asked {
+        // Replies still on their way when we exit would land in the shell
+        // (#19): an attach to an ended session is over before they come.
+        if let Some(mut stdin) = env.take_stdin() {
+            let h = a.clone();
+            std::thread::spawn(move || drain_reports(&mut stdin, &h, Reports::default()));
+        }
+        let _ = tokio::time::timeout(REPLIES_WAIT, a.answered.notified()).await;
+    }
     if let Some(restore) = restore {
         let _ = env.out().write_all(RESET_MODES.as_bytes());
         restore();
@@ -152,17 +167,24 @@ async fn run_attached(ctx: &Ctx, env: &Env, l: &Link, a: &Attached, id: &str, co
     *a.s.lock().unwrap() = Some(s.clone());
 
     // Someone else's session is only taken when asked; otherwise we watch.
+    // An ended one (#19) has nobody to own it: it shows its last screen.
     let owner = s.owner();
-    if owner.is_empty() || owner == a.id || take {
+    if s.exit_code().is_some() {
+    } else if owner.is_empty() || owner == a.id || take {
         match ctx.run(s.own()).await {
             None => return Ok(1), // interrupted, as in the loop below
-            Some(r) => r?,
+            Some(Err(_)) if s.exit_code().is_some() => {}
+            Some(r) => {
+                r?;
+                a.sync_owner();
+                a.send_appearance().await;
+            }
         }
-        a.sync_owner();
-        a.send_appearance().await;
     } else {
         let _ = tokio::time::timeout(Duration::from_secs(5), a.m.wait_text("")).await;
-        a.notice(&viewer_notice(&owner, &a.id));
+        if s.exit_code().is_none() {
+            a.notice(&viewer_notice(&owner, &a.id));
+        }
     }
 
     let (detach_tx, detach_rx) = tokio::sync::oneshot::channel::<()>();
@@ -228,7 +250,8 @@ async fn resize_on_winch(s: Session) {
 
 /// Sends stdin to the session as text until `~.` or EOF, then returns; `~t`
 /// takes ownership. On EOF it first waits until the holder has everything,
-/// so `printf 'make\r' | osewa attach` runs make.
+/// so `printf 'make\r' | osewa attach` runs make. Nothing reads stdin after
+/// `~.`: what is typed then is for the shell.
 pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
     let mut esc = Escaper { nl: true, tilde: false };
     let mut carry: Vec<u8> = Vec::new();
@@ -238,6 +261,7 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
         let n = match r.read(&mut buf) {
             Ok(0) | Err(_) => {
                 h.flush(ctx);
+                h.reports(&[Report::Answered]);
                 return;
             }
             Ok(n) => n,
@@ -268,6 +292,25 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
     }
 }
 
+/// Reads stdin for the local terminal's replies alone, until it ends, for an
+/// attach that ended before it read any: what is typed has nowhere to go.
+pub(crate) fn drain_reports(r: &mut dyn Read, h: &dyn InputHandler, mut reports: Reports) {
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = match r.read(&mut buf) {
+            Ok(0) | Err(_) => {
+                h.reports(&[Report::Answered]);
+                return;
+            }
+            Ok(n) => n,
+        };
+        let (_, got) = reports.feed(&buf[..n]);
+        if !got.is_empty() {
+            h.reports(&got);
+        }
+    }
+}
+
 /// Takes the local terminal's reports out of what is typed. A report cut
 /// by a read is held for the next one, but only from "ESC [ ?" or "ESC ]"
 /// and a digit on: a lone ESC is a key that must not wait. Except right
@@ -278,8 +321,6 @@ pub(crate) fn forward_input(ctx: &Ctx, r: &mut dyn Read, h: &dyn InputHandler) {
 pub(crate) struct Reports {
     held: Vec<u8>,
 }
-
-const SCHEME_REPORT: &[u8] = b"\x1b[?997;";
 
 /// The longest color reply held for the next read.
 const COLOR_REPORT_MAX: usize = 64;
@@ -326,43 +367,72 @@ impl Reports {
                 }
                 continue;
             }
-            let n = rest.len().min(SCHEME_REPORT.len());
-            if rest[..n] != SCHEME_REPORT[..n] {
+            let n = rest.len().min(CSI_PRIVATE.len());
+            if rest[..n] != CSI_PRIVATE[..n] {
                 out.push(rest[0]);
                 i += 1;
                 continue;
             }
-            if n < SCHEME_REPORT.len() {
-                if n >= 3 {
-                    self.held = rest.to_vec();
-                } else {
-                    out.extend_from_slice(rest);
-                }
+            if n < CSI_PRIVATE.len() {
+                out.extend_from_slice(rest);
                 break;
             }
-            // At most 3 digits, then n.
-            let digits = rest[n..].iter().take_while(|b| b.is_ascii_digit()).count();
-            match rest.get(n + digits) {
-                Some(b'n') if (1..=3).contains(&digits) => {
-                    match &rest[n..n + digits] {
-                        b"1" => schemes.push(Report::Scheme(true)),
-                        b"2" => schemes.push(Report::Scheme(false)),
-                        _ => {}
-                    }
-                    i += n + digits + 1;
+            match private_report(&rest[n..]) {
+                PrivateReport::Done(len, r) => {
+                    schemes.extend(r);
+                    i += n + len;
                     after_report = true;
                 }
-                None if digits <= 3 => {
+                PrivateReport::Partial => {
                     self.held = rest.to_vec();
                     break;
                 }
-                _ => {
+                PrivateReport::Not => {
                     out.push(rest[0]);
                     i += 1;
                 }
             }
         }
         (out, schemes)
+    }
+}
+
+/// How every report this reads starts: CSI ?.
+const CSI_PRIVATE: &[u8] = b"\x1b[?";
+
+/// The longest parameters of a CSI ? reply held for the next read.
+const PRIVATE_REPORT_MAX: usize = 32;
+
+enum PrivateReport {
+    /// A reply this long after CSI ?, and what it said if anything.
+    Done(usize, Option<Report>),
+    Partial,
+    Not,
+}
+
+/// Reads the rest of a CSI ? reply: the color scheme (997;1|2 n, at most 3
+/// digits after the 997), or primary device attributes (… c), which asks
+/// nothing of us but says the terminal has answered all that came before.
+fn private_report(b: &[u8]) -> PrivateReport {
+    let params = b.iter().take_while(|c| c.is_ascii_digit() || **c == b';').count();
+    let Some(&end) = b.get(params) else {
+        return if params <= PRIVATE_REPORT_MAX { PrivateReport::Partial } else { PrivateReport::Not };
+    };
+    let p = &b[..params];
+    match end {
+        b'n' => match p.strip_prefix(b"997;") {
+            Some(d) if (1..=3).contains(&d.len()) && d.iter().all(u8::is_ascii_digit) => PrivateReport::Done(
+                params + 1,
+                match d {
+                    b"1" => Some(Report::Scheme(true)),
+                    b"2" => Some(Report::Scheme(false)),
+                    _ => None,
+                },
+            ),
+            _ => PrivateReport::Not,
+        },
+        b'c' if !p.is_empty() && params <= PRIVATE_REPORT_MAX => PrivateReport::Done(params + 1, Some(Report::Answered)),
+        _ => PrivateReport::Not,
     }
 }
 

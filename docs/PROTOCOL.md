@@ -187,7 +187,7 @@ Methods (REQUEST `method`):
 | --- | --- | --- |
 | `session.list` | | `{"sessions":[{"id","title","cols","rows","created","exited","exit_code","owner","attached","idle_seconds","status"?,"build"?,"incompatible"?,"tag"?,"creator"?}]}` |
 | `session.create` | `cols`, `rows`, `width`?, `height`?, `argv`?, `cwd`?, `env`?, `color_scheme`?, `foreground`?, `background`?, `cursor`?, `palette`?, `tag`? | `{"session_id","reused"?}` |
-| `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `reclaim`?, `epoch`?, `position`? | `{"epoch","owner","resumed","head"}` |
+| `session.attach` | `session`, `stream`, `cols`, `rows`, `width`?, `height`?, `own`, `reclaim`?, `epoch`?, `position`? | `{"epoch","owner","resumed","head","exit_code"?}`; `exit_code` when the child had already exited, and the stream ends after its snapshot |
 | `session.detach` | `stream`, `release`? | `{}` |
 | `session.own` | `stream` | `{"owner"}` |
 | `session.resize` | `stream`, `cols`, `rows`, `width`?, `height`? | `{}` (applies only for the owner) |

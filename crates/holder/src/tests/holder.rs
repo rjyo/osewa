@@ -550,7 +550,7 @@ fn exit_code() {
     let tune = crate::Tunables { drain_wait: Duration::from_millis(200), ..Default::default() };
     let mut h = start(Config { exit_retention: Duration::from_millis(500), tune, ..cfg(sh("read x; echo bye; exit 7")) });
     let mut c = h.dial("dev1");
-    c.attach(own());
+    assert_eq!(c.attach(own()).exit_code, None, "a running session's attach");
     c.text_input(1, "\r");
     c.wait_for("stream end", |c| c.ended.is_some());
     let end = c.ended.clone().unwrap();
@@ -563,7 +563,8 @@ fn exit_code() {
     let mut c2 = h.dial("dev2");
     let info = c2.info();
     assert!(info.exited && info.exit_code == 7, "info = {info:?}");
-    c2.attach(own());
+    // #19: the attach itself says so, before the stream ends.
+    assert_eq!(c2.attach(own()).exit_code, Some(7), "an ended session's attach");
     c2.wait_for("stream end", |c| c.ended.is_some());
     assert!(c2.text().contains("bye") && c2.ended.as_ref().unwrap().exit_code == Some(7), "after exit: {:?} {:?}", c2.text(), c2.ended);
     let resp = c2.request(wire::Request { stream: 7, ..method(wire::METHOD_OWN) });

@@ -352,6 +352,9 @@ impl SessionInner {
                     st.gen = 0;
                 }
                 st.head = r.head.unwrap_or(st.pos);
+                if r.exit_code.is_some() {
+                    st.exit_code = r.exit_code;
+                }
             })
         };
         // Dropped before the answer (the caller gave up): undo as for an

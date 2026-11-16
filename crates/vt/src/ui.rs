@@ -29,6 +29,9 @@ pub enum Report {
     Cursor([u8; 3]),
     /// OSC 4 replies.
     Palette(u8, [u8; 3]),
+    /// The terminal has answered every question asked before the last DA1
+    /// (its reply, CSI ? … c), or will answer no more (stdin ended).
+    Answered,
 }
 
 /// A client id as people know it: the device name, without the per-process
@@ -688,6 +691,8 @@ pub struct Attached {
     pub id: String,
     /// Wakes the ticker (attach.rs) when predictions start pending.
     pub wake: Arc<Notify>,
+    /// Report::Answered came.
+    pub answered: Arc<Notify>,
     /// What the local terminal said of its appearance.
     look: Arc<Mutex<Look>>,
 }
@@ -721,7 +726,7 @@ impl Attached {
         });
         lock(&ui).later = Some(Later { m: m.clone(), ui: Arc::downgrade(&ui) });
         let s = lock(&ui).session.clone();
-        Attached { ui, m, s, id, wake: Arc::default(), look: Arc::default() }
+        Attached { ui, m, s, id, wake: Arc::default(), answered: Arc::default(), look: Arc::default() }
     }
 
     /// Clears the local terminal's status; see Ui::clear_status.
@@ -876,6 +881,7 @@ impl Attached {
                     Report::Background(c) => look.colors.background = Some(c),
                     Report::Cursor(c) => look.colors.cursor = Some(c),
                     Report::Palette(i, c) => look.colors.palette[i as usize] = Some(c),
+                    Report::Answered => self.answered.notify_one(),
                     Report::Clipboard(ref data) => {
                         if let Some(s) = self.session() {
                             let _ = osewa_client::block_on(osewa_client::timeout(Duration::from_secs(5), s.clipboard(data)));

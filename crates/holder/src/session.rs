@@ -782,6 +782,7 @@ impl Session {
         resp.epoch = self.core.epoch.clone();
         resp.owner = self.core.owner.clone();
         resp.head = Some(self.core.log.end);
+        resp.exit_code = self.core.exited.then_some(self.core.exit_code);
         Ok(AttachPlan { st, recs })
     }
 

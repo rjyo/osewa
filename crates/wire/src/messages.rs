@@ -210,6 +210,10 @@ pub struct Response {
     pub resumed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<u64>,
+    /// session.attach: the child had already exited, with this code; the
+    /// stream ends after its snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
     // session.attach, session.own
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub owner: String,
