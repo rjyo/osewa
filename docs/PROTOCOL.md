@@ -425,6 +425,9 @@ EVENT JSON, by `kind`:
 | `input_mode` | `echo`, `canonical`: the PTY's ECHO and ICANON flags, sent at attach and whenever they change |
 | `notify` | `title` (may be empty), `msg`: a desktop notification (OSC 9, OSC 777) |
 
+The `status` event's `status_kind` is the record's `kind`, as session.list's
+`status` names it: the event's own `kind` field says what the event is.
+
 Events are log records, so they are ordered exactly with output. Clients fire
 effects (`bell`, `clipboard`, `notify`, `status`) only for records received live, never
 during a snapshot or a resume catch-up.

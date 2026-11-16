@@ -42,7 +42,9 @@ typedef struct osewa_callbacks {
   void (*stats)(void *ctx, uint32_t srtt_us, const char *carrier);
   /* JSON events: {"type":"session","id":"<hex>"} once attached (persist it),
      {"type":"title","title":...}, {"type":"bell"}, {"type":"exit","code":n},
-     {"type":"notify",...}, anything else the holder sends, passed through. */
+     {"type":"notify",...}, {"type":"status","state":...,"status_kind"?,
+     "id"?,"app"?,"title"?,"msg"?,"progress"?} (OSC 7501), anything else
+     the holder sends, passed through. */
   void (*event)(void *ctx, const char *json);
 } osewa_callbacks;
 
