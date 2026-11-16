@@ -39,7 +39,9 @@ client commands:
                                        --clipboard-read lets programs read this
                                        terminal's clipboard (OSC 52), which it may ask;
                                        --new starts a session instead of joining one
-  kill <host> <id>
+  kill <host> <id>... | kill --exited <host>
+                                       end sessions: those named, or every one whose
+                                       program has exited
   exec [--cwd dir] [--env K=V]... <host> -- argv...
                                        run a command on the host without a terminal;
                                        stdin, stdout and stderr pass through, and osewa

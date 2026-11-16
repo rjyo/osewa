@@ -148,11 +148,44 @@ impl Env {
         Ok(())
     }
 
+    /// Runs `kill <host> <id>...` or `kill --exited <host>`: ends the
+    /// sessions named, or every one whose program has exited. One that
+    /// can't be ended doesn't stop the rest.
     pub(crate) async fn kill(&self, ctx: &Ctx, args: &[String]) -> Result<()> {
-        let (c, rest) = self.connect(ctx, args, 2, 2).await?;
-        let r = ctx.run(c.kill(&rest[0])).await;
+        let mut fs = Flags::new(&[("exited", Kind::Bool)]);
+        let pos = fs.parse(args)?;
+        let exited = fs.bool("exited");
+        if pos.is_empty() || (exited && pos.len() > 1) || (!exited && pos.len() < 2) {
+            return Err(Error::Usage);
+        }
+        let (c, named) = self.connect(ctx, &pos, 1, usize::MAX).await?;
+        let r = ctx
+            .run(async {
+                let ids: Vec<String> = if exited { c.list().await?.into_iter().filter(|s| s.exited).map(|s| s.id).collect() } else { named };
+                let mut failed = Vec::new();
+                for id in &ids {
+                    match c.kill(id).await {
+                        // Gone since the list, as --exited wants it.
+                        Err(e) if exited && e.is_code(wire::ERR_NOT_FOUND) => {}
+                        Err(e) => failed.push((id.clone(), e)),
+                        Ok(()) => {}
+                    }
+                }
+                Ok::<_, Error>((ids.len(), failed))
+            })
+            .await;
         c.close().await;
-        Ok(r.ok_or_else(crate::cli::interrupted)??)
+        let (tried, mut failed) = r.ok_or_else(crate::cli::interrupted)??;
+        if !exited && tried == 1 && failed.len() == 1 {
+            return Err(failed.remove(0).1.into());
+        }
+        for (id, e) in &failed {
+            writeln!(self.err(), "osewa kill: {}: {}", printable(id), printable_lines(&e.to_string()))?;
+        }
+        match failed.len() {
+            0 => Ok(()),
+            n => Err(Error::Msg(format!("{n} of {tried} sessions not killed"))),
+        }
     }
 }
 

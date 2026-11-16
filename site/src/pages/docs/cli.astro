@@ -38,8 +38,8 @@ const versionJson = `{"ghostty":"83fb9562…","osewa":"0.1.0","snapshot_version"
 <h3 id="new">osewa new &lt;host&gt; [-- argv...]</h3>
 <p>Start a session without attaching, and print its id. Runs your login shell, or <code>argv</code>.</p>
 
-<h3 id="kill">osewa kill &lt;host&gt; &lt;id&gt;</h3>
-<p>End a session. This works on <code>incompatible</code> sessions too, which can't be attached.</p>
+<h3 id="kill">osewa kill &lt;host&gt; &lt;id&gt;... | osewa kill --exited &lt;host&gt;</h3>
+<p>End sessions: the ones named, or with <code>--exited</code> every one whose program has exited (an exited session otherwise stays a day, so its last screen can be read). This works on <code>incompatible</code> sessions too, which can't be attached. One that can't be ended doesn't stop the rest.</p>
 
 <h3 id="exec">osewa exec [--cwd dir] [--env K=V]... &lt;host&gt; -- argv...</h3>
 <p>Run a command on the host without a terminal; exits with its code. See <a href="/docs/forward-exec">Forwards and exec</a>.</p>

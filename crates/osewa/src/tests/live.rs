@@ -212,6 +212,37 @@ fn live_new_ls_kill() {
     assert_eq!(code, 1, "kill unknown: {err}");
 }
 
+/// #18: kill takes several ids, going on past one it can't end, or ends
+/// every exited session with --exited and leaves the running ones.
+#[test]
+fn live_kill_many_and_exited() {
+    let h = LiveHost::retaining(Duration::from_secs(60));
+    let new = |argv: &[&str]| {
+        let mut a = vec!["new", "h", "--"];
+        a.extend_from_slice(argv);
+        h.run_ok(&a).trim().to_string()
+    };
+    let (a, b) = (new(&["/bin/sh"]), new(&["/bin/sh"]));
+    let (code, _, err) = h.run(&["kill", "h", &a, "0123", &b]);
+    assert!(code == 1 && err.contains("osewa kill: 0123: ") && err.contains("1 of 3 sessions not killed"), "kill with an unknown id: {code} {err}");
+    eventually(|| {
+        let out = h.run_ok(&["ls", "h"]);
+        !out.contains(&a) && !out.contains(&b)
+    });
+
+    let running = new(&["/bin/sh"]);
+    let ended: Vec<String> = (0..2).map(|_| new(&["/bin/sh", "-c", "exit 0"])).collect();
+    eventually(|| h.run_ok(&["ls", "h"]).matches("exited 0").count() == 2);
+    h.run_ok(&["kill", "--exited", "h"]);
+    eventually(|| {
+        let out = h.run_ok(&["ls", "h"]);
+        out.contains(&running) && ended.iter().all(|id| !out.contains(id.as_str()))
+    });
+    for bad in [&["kill", "--exited", "h", &running][..], &["kill", "h"]] {
+        assert_eq!(h.run(bad).0, 2, "{bad:?}");
+    }
+}
+
 /// Login's check reaches a real server, and fails on a port nothing serves.
 #[test]
 fn login_checks_host() {
