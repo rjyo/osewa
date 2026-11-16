@@ -400,7 +400,7 @@ pub fn status_set(e: &osewa_wire::EventMsg) -> Option<Vec<u8>> {
         report += &format!(":app={}", e.app);
     }
     if let Some(progress) = e.progress {
-        report += &format!(":progress={progress}");
+        report += &format!(":progress={}", progress.clamp(0, 100));
     }
     if !e.msg.is_empty() {
         report += &format!(":msg={}", base64::engine::general_purpose::STANDARD.encode(&e.msg));

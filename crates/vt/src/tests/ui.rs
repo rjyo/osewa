@@ -105,16 +105,22 @@ fn notify_events_notify_locally() {
 fn status_events_report_locally() {
     use osewa_mirror::{Predictor, PredictorConfig};
     let out = Buf::default();
-    let a = Attached::new(Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())), "me".into());
     let status = |state: &str| osewa_wire::EventMsg { state: state.into(), app: "fx".into(), ..osewa_wire::EventMsg::kind(osewa_wire::EVENT_STATUS) };
+    // An app embedding osewa gets statuses as events, not in its terminal.
+    let a = Attached::new(Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())), "me".into());
+    a.m.event(&status("blocked"), true).unwrap();
+    a.clear_status();
+    assert_eq!(out.string(), "", "a status forwarded without with_status_forward");
+    let a = Attached::new(Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())).with_status_forward(), "me".into());
     a.m.event(&status("done"), false).unwrap();
     assert_eq!(out.string(), "", "a catch-up status was reported");
     a.m.event(&status("done:x=1"), true).unwrap();
     a.m.event(&osewa_wire::EventMsg { app: "fx\x1b\\".into(), ..status("done") }, true).unwrap();
     assert_eq!(out.string(), "", "a status that breaks out of the sequence was reported");
     a.m.event(&osewa_wire::EventMsg { msg: "Apply?".into(), ..status("blocked") }, true).unwrap();
+    a.m.event(&osewa_wire::EventMsg { progress: Some(250), ..status("working") }, true).unwrap();
     a.m.event(&status("clear"), true).unwrap();
-    assert_eq!(out.string(), "\x1b]7501;state=blocked:app=fx:msg=QXBwbHk/\x1b\\\x1b]7501;state=clear:app=fx\x1b\\");
+    assert_eq!(out.string(), "\x1b]7501;state=blocked:app=fx:msg=QXBwbHk/\x1b\\\x1b]7501;state=working:app=fx:progress=100\x1b\\\x1b]7501;state=clear:app=fx\x1b\\");
 }
 
 /// Leaving clears a status the local terminal still shows, once; one the
@@ -131,7 +137,7 @@ fn status_cleared_on_leave() {
         (vec![status("working", "build"), status("clear", "build")], true),
     ] {
         let out = Buf::default();
-        let a = Attached::new(Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())), "me".into());
+        let a = Attached::new(Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())).with_status_forward(), "me".into());
         for e in &events {
             a.m.event(e, true).unwrap();
         }

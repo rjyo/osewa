@@ -90,7 +90,7 @@ async fn attach_on(
     // so no late remote mode lands after the reset.
     let restore = make_raw(env)?;
     let me = env.client_id();
-    let mut ui = Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() })).with_legacy_viewer();
+    let mut ui = Ui::new(Box::new(env.out()), quiet, Predictor::new(PredictorConfig { mode, ..Default::default() })).with_legacy_viewer().with_status_forward();
     if graphics {
         ui = ui.with_graphics();
     }

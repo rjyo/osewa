@@ -147,7 +147,10 @@ pub struct Ui {
     /// since a notice must not land on what the user is typing.
     pub quiet: bool,
     status_note: String,
-    /// The local terminal was given a status (OSC 7501) not yet cleared.
+    /// Programs' statuses (OSC 7501) go on to the local terminal; an app
+    /// embedding osewa gets them as events instead. status_shown: one was
+    /// given and not yet cleared.
+    status_forward: bool,
     status_shown: bool,
     pub typed_at: Option<Instant>,
     /// The local cursor sits after predicted text while an overlay shows
@@ -205,6 +208,7 @@ impl Ui {
             later: None,
             quiet,
             status_note: String::new(),
+            status_forward: false,
             status_shown: false,
             typed_at: None,
             displaced: false,
@@ -230,6 +234,12 @@ impl Ui {
     /// its images along with the screen.
     pub fn with_graphics(mut self) -> Ui {
         self.filter.graphics = true;
+        self
+    }
+
+    /// Gives the local terminal the programs' statuses (OSC 7501).
+    pub fn with_status_forward(mut self) -> Ui {
+        self.status_forward = true;
         self
     }
 
@@ -520,7 +530,7 @@ impl Ui {
     pub fn event(&mut self, e: &wire::EventMsg, live: bool) {
         if e.kind == wire::EVENT_STATUS {
             // Only live ones: a status from a catch-up is old news.
-            if live {
+            if live && self.status_forward {
                 if let Some(report) = status_set(e) {
                     self.write(&report);
                     if e.state != "clear" {
