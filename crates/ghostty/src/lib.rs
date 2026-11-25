@@ -22,6 +22,17 @@ pub use input::*;
 /// Reported for people; peers compare SNAPSHOT_VERSION.
 pub const COMMIT: &str = "83fb95624b0439ee660c2679b43b38c8b63769cd";
 
+/// The holder's XTVERSION answer: Ghostty at COMMIT's version (its
+/// build.zig.zon), bumped with COMMIT. Programs know Ghostty by name and
+/// version; libghostty-vt alone reports "libghostty", which none know.
+pub const XTVERSION: &str = "ghostty 1.4.0";
+
+#[no_mangle]
+extern "C" fn osewa_rs_xtversion(len: *mut usize) -> *const u8 {
+    unsafe { *len = XTVERSION.len() };
+    XTVERSION.as_ptr()
+}
+
 /// osewa's version of the snapshot bytes the pinned commit writes. The
 /// fixtures in fixtures/snapshot-v<N> pin them: when a libghostty bump
 /// encodes any of them differently, bump this (and

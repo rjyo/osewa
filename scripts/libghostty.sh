@@ -15,6 +15,7 @@
 # ReleaseSmall into its own LIBGHOSTTY_OUT.
 set -euo pipefail
 
+# Bumping it: osewa_ghostty::COMMIT, and XTVERSION to its build.zig.zon version.
 GHOSTTY_COMMIT=83fb95624b0439ee660c2679b43b38c8b63769cd
 GHOSTTY_REPO=${GHOSTTY_REPO:-https://github.com/ghostty-org/ghostty.git}
 

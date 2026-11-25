@@ -137,6 +137,12 @@ fn query_replies() {
     replies.borrow_mut().clear();
     term.write(b"\x1b[?7$p");
     assert!(replies.borrow().starts_with(b"\x1b[?7;"), "DECRQM reply = {:?}", replies.borrow());
+    replies.borrow_mut().clear();
+    // XTVERSION names Ghostty (with a version), which programs know, not
+    // libghostty's default.
+    term.write(b"\x1b[>0q");
+    let reply = String::from_utf8_lossy(&replies.borrow()).into_owned();
+    assert!(reply.starts_with("\x1bP>|ghostty 1.") && reply.ends_with("\x1b\\"), "XTVERSION reply = {reply:?}");
 }
 
 #[test]

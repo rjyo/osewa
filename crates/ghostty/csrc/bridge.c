@@ -149,6 +149,21 @@ static bool on_size(GhosttyTerminal t, void *ud, GhosttySizeReportSize *out) {
   return true;
 }
 
+// XTVERSION (CSI > q) names Ghostty, whose terminal the holder runs, at the
+// pinned commit's Ghostty version (osewa_ghostty::XTVERSION).
+// Programs pick features by it: libghostty's default "libghostty" is a
+// name none know, and a Kitty graphics program then falls back to
+// resending whole frames.
+extern const uint8_t *osewa_rs_xtversion(size_t *len);
+
+static GhosttyString on_xtversion(GhosttyTerminal t, void *ud) {
+  (void)t;
+  (void)ud;
+  GhosttyString v;
+  v.ptr = osewa_rs_xtversion(&v.len);
+  return v;
+}
+
 int osewa_term_new(uint16_t cols, uint16_t rows, GhosttyTerminal *out) {
   return ghostty_terminal_new(NULL, out, cols, rows);
 }
@@ -167,6 +182,8 @@ void osewa_term_install(GhosttyTerminal t, void *ud, bool write_pty) {
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                          (const void *)on_write_pty);
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_SIZE, (const void *)on_size);
+    ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_XTVERSION,
+                         (const void *)on_xtversion);
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
                          (const void *)on_color_scheme);
     ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ,
