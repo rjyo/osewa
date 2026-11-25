@@ -234,3 +234,33 @@ fn an_owner_read_never_undoes_a_newer_event() {
     ui.read_owner("", events);
     assert!(out.string().ends_with("\x1b[=5;1u"), "{:?}", out.string());
 }
+
+/// A redraw part way through a graphics transmission must not write into
+/// it: the local terminal gets the transmission cut off, and the image
+/// from the mirror once the mirror has it whole. (Without a pixel size the
+/// image covers no cells, so there is no placement to check.)
+#[test]
+fn redraw_mid_image_places_it_from_the_mirror() {
+    use osewa_ghostty::{self as ghostty, Terminal};
+    use osewa_mirror::{Predictor, PredictorConfig};
+    let out = Buf::default();
+    let ui = Ui::new(Box::new(out.clone()), true, Predictor::new(PredictorConfig::default())).with_graphics();
+    let a = Attached::new(ui, "me".into());
+    let mut t = Terminal::new(20, 4, ghostty::Options::default()).unwrap();
+    t.write(b"$ ");
+    let snap = t.snapshot().unwrap();
+    a.m.snapshot_begin(&osewa_wire::SnapshotBegin { history: Some(false), ..Default::default() }).unwrap();
+    a.m.snapshot_data(&snap[..ghostty::ready_end(&snap)], false).unwrap();
+    a.m.snapshot_ready().unwrap();
+    a.m.snapshot_end().unwrap();
+
+    a.m.output(b"\x1b_Ga=T,f=24,s=2,v=1,i=9,m=1;AA").unwrap();
+    let before = out.string().len();
+    a.redraw();
+    let redraw = out.string()[before..].to_string();
+    assert!(redraw.starts_with('\x18'), "the partial command isn't cut first: {redraw:?}");
+    a.m.output(b"AA\x1b\\\x1b_Gm=0;AAAA\x1b\\").unwrap();
+    let after = out.string()[before + redraw.len()..].to_string();
+    assert!(!after.contains("m=0,q=2;AAAA"), "the cut transmission's last chunk passed: {after:?}");
+    assert!(after.contains("a=t,f=24,s=2,v=1,i=9,"), "the image wasn't sent from the mirror: {after:?}");
+}

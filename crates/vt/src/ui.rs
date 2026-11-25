@@ -170,6 +170,9 @@ pub struct Ui {
     /// The images the local terminal has, while graphics pass
     /// (filter.graphics).
     sent: SentImages,
+    /// A redraw cut off a graphics transmission (QueryFilter::cut_graphics):
+    /// the images are placed again from the mirror once it is whole.
+    images_stale: bool,
     /// The pointer shape the local terminal was last given (OSC 22).
     pointer: &'static str,
     /// The local terminal may have colors a program set.
@@ -220,6 +223,7 @@ impl Ui {
             ticking: false,
             ticker_wakes: 0,
             sent: SentImages::new(),
+            images_stale: false,
             pointer: "text",
             colored: false,
             clipboard_read: false,
@@ -336,6 +340,7 @@ impl Ui {
     /// was replaced. Unlike ready, the remote stream goes on from where it
     /// is: the filter keeps what it holds.
     pub fn redraw(&mut self, t: &Terminal) {
+        self.cut_graphics();
         self.sync_begin();
         self.write(&attach_redraw(t));
         self.displaced = false;
@@ -366,6 +371,7 @@ impl Ui {
     /// be encoded: redraw instead.
     pub fn redraw_snapshot(&mut self, t: &Terminal, deliver: &mut dyn FnMut(&[u8])) -> bool {
         let Ok(snapshot) = t.snapshot() else { return false };
+        self.cut_graphics();
         // Output drawn before the snapshot comes before it.
         self.flush();
         deliver(&snapshot);
@@ -388,6 +394,19 @@ impl Ui {
         self.paint_buffered(t);
         self.flush();
         true
+    }
+
+    /// Ends a graphics transmission the local terminal is part way through
+    /// before a redraw writes into the stream.
+    fn cut_graphics(&mut self) {
+        if !self.filter.graphics {
+            return;
+        }
+        let mut out = Vec::new();
+        if self.filter.cut_graphics(&mut out) {
+            self.write(&out);
+            self.images_stale = true;
+        }
     }
 
     /// After a redraw, which can switch the local screen under the modes
@@ -483,6 +502,11 @@ impl Ui {
                 if let Some(hash) = t.image(id).as_ref().and_then(pixels_hash) {
                     self.sent.insert(id, hash);
                 }
+            }
+            if self.images_stale && !self.filter.transmitting() {
+                self.images_stale = false;
+                let draw = images_draw(t, &mut self.sent);
+                self.write(&draw);
             }
         } else if saw {
             // The mirror placed images this terminal never saw, moving the

@@ -54,6 +54,14 @@ pub struct QueryFilter {
     loading: Option<u32>,
     /// The rest of a dropped chunked transmission is dropped too.
     drop_chunks: bool,
+    /// The image the graphics command passing now transmits, and whether
+    /// more chunks follow it (m=1).
+    streaming: Option<u32>,
+    more: bool,
+    /// A chunk with more to come passed whole: the local terminal is
+    /// loading a chunked transmission, and takes any command as its next
+    /// chunk.
+    local_loading: bool,
     /// A color set or reset (OSC 4, 10-12, 21, 104, 110-112) passed since
     /// the UI last cleared it.
     pub passed_colors: bool,
@@ -131,6 +139,46 @@ impl QueryFilter {
         let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
         *self = QueryFilter { buf, sgr: style.to_vec(), graphics: self.graphics, passed_colors: self.passed_colors, ..Default::default() };
+    }
+
+    /// Cuts off a graphics transmission the local terminal is part way
+    /// through, for drawing that is about to go out mid-stream (a redraw):
+    /// written into it, that drawing would end the command early or load
+    /// as its next chunk. The local terminal gets what discards the part it
+    /// has, the rest of the transmission is dropped here, and the image is
+    /// not counted as sent. True when it cut one: the image then comes from
+    /// the mirror, once the mirror has it whole (see transmitting).
+    pub fn cut_graphics(&mut self, out: &mut Vec<u8>) -> bool {
+        let passing = self.state == FState::Str && self.pass && self.in_graphics;
+        if !passing && !self.local_loading {
+            return false;
+        }
+        if passing {
+            out.push(CAN);
+            self.pass = false;
+            self.drop = true;
+            if let Some(id) = self.streaming.take() {
+                self.sent_images.retain(|&i| i != id);
+            }
+        }
+        if self.local_loading {
+            // An empty last chunk ends the load; what it loaded doesn't
+            // decode, and q=2 keeps the error quiet.
+            out.extend_from_slice(b"\x1b_Gm=0,q=2;\x1b\\");
+            self.local_loading = false;
+        }
+        if self.loading.take().is_some() {
+            // The chunks still to come, the last (m=0) included.
+            self.drop_chunks = !passing || self.more;
+        }
+        true
+    }
+
+    /// Whether a graphics transmission (or any string being passed) is part
+    /// way through, here or on the local terminal, so drawing can't go out
+    /// between its bytes.
+    pub fn transmitting(&self) -> bool {
+        (self.state == FState::Str && self.pass) || self.local_loading || self.drop_chunks || self.loading.is_some()
     }
 
     /// Whether a graphics command went by since the last call, and the
@@ -342,9 +390,13 @@ impl QueryFilter {
         if self.drop {
         } else if self.pass {
             out.extend_from_slice(st);
+            if self.in_graphics {
+                self.local_loading = self.more;
+            }
         } else if self.kind == b'_' {
             if self.buf.len() >= 3 && self.graphics_cmd(out, false) {
                 out.extend_from_slice(st);
+                self.local_loading = self.more;
             }
         } else {
             let body = &self.buf[2..];
@@ -393,6 +445,8 @@ impl QueryFilter {
             self.drop = true;
             return false;
         }
+        self.more = more;
+        self.streaming = self.loading;
         if let Some(id) = self.loading {
             if !more {
                 self.loading = None;
@@ -407,6 +461,7 @@ impl QueryFilter {
             }
             let id = get(b'i').and_then(|v| std::str::from_utf8(v).ok()?.parse::<u32>().ok());
             if let (Some(id), b"t" | b"T" | b"f") = (id, action) {
+                self.streaming = Some(id);
                 if more {
                     self.loading = Some(id);
                 } else {

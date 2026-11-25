@@ -152,6 +152,64 @@ fn query_filter_graphics() {
     assert_eq!(f.take_graphics(), (true, vec![]));
 }
 
+/// A redraw part way through a graphics transmission cuts it off: the local
+/// terminal discards what it has, the rest is dropped here, the image isn't
+/// counted as sent, and later commands pass again.
+#[test]
+fn query_filter_cut_graphics() {
+    // (name, before the cut, what the cut writes, after the cut, what passes after)
+    let cases: &[(&str, &str, &str, &str, &str)] = &[
+        ("mid payload", "\x1b_Ga=T,f=24,s=1,v=1,i=7;AA", "\x18", "AA\x1b\\x", "x"),
+        (
+            "mid first chunk",
+            "\x1b_Ga=T,f=24,s=2,v=1,i=5,m=1;AA",
+            "\x18",
+            "AA\x1b\\\x1b_Gm=0;AAAA\x1b\\x",
+            "x",
+        ),
+        (
+            "between chunks",
+            "\x1b_Ga=T,f=24,s=3,v=1,i=5,m=1;AAAA\x1b\\",
+            "\x1b_Gm=0,q=2;\x1b\\",
+            "\x1b_Gm=1;AAAA\x1b\\\x1b_Gm=0;AAAA\x1b\\x",
+            "x",
+        ),
+        (
+            "mid a later chunk",
+            "\x1b_Ga=T,f=24,s=3,v=1,i=5,m=1;AAAA\x1b\\\x1b_Gm=1;AA",
+            "\x18\x1b_Gm=0,q=2;\x1b\\",
+            "AA\x1b\\\x1b_Gm=0;AAAA\x1b\\x",
+            "x",
+        ),
+        (
+            "mid the last chunk",
+            "\x1b_Ga=T,f=24,s=2,v=1,i=5,m=1;AAAA\x1b\\\x1b_Gm=0;AA",
+            "\x18\x1b_Gm=0,q=2;\x1b\\",
+            "AA\x1b\\\x1b_Ga=d,d=A\x1b\\",
+            "\x1b_Ga=d,d=A,q=2\x1b\\",
+        ),
+    ];
+    for (name, before, cut, after, passes) in cases {
+        let mut f = QueryFilter::default();
+        f.graphics = true;
+        f.filter(before.as_bytes());
+        assert!(f.transmitting(), "{name}: transmitting before the cut");
+        let mut out = Vec::new();
+        assert!(f.cut_graphics(&mut out), "{name}: cut");
+        assert_eq!(String::from_utf8_lossy(&out), *cut, "{name}: cut writes");
+        assert_eq!(String::from_utf8_lossy(&f.filter(after.as_bytes())), *passes, "{name}: after");
+        assert!(!f.transmitting(), "{name}: still transmitting");
+        assert_eq!(f.take_graphics().1, Vec::<u32>::new(), "{name}: counted as sent");
+    }
+    // Nothing to cut between whole commands, or in other strings.
+    let mut f = QueryFilter::default();
+    f.graphics = true;
+    f.filter(b"\x1b_Ga=T,f=24,s=1,v=1,i=7;AAAA\x1b\\\x1b]2;tit");
+    let mut out = Vec::new();
+    assert!(!f.cut_graphics(&mut out));
+    assert!(out.is_empty());
+}
+
 #[test]
 fn query_filter_size_reports() {
     for (input, want) in [("\x1b[14t\x1b[16t\x1b[18t\x1b[19t\x1b[21t\x1b[11t\x1b[13;2t", ""), ("\x1b[22;0t\x1b[23;0t\x1b[8;24;80t", "\x1b[22;0t\x1b[23;0t\x1b[8;24;80t")] {
